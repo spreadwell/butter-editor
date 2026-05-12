@@ -1,7 +1,7 @@
 {
   "id": "butter-editor",
   "name": "Butter Editor",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "minAppVersion": "1.4.5",
   "description": "A WYSIWYG editing mode powered by ProseMirror + markdown-it (custom bridge, no prosemirror-markdown)",
   "author": "Butter Editor",
