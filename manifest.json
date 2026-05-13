@@ -1,9 +1,9 @@
 {
   "id": "butter-editor",
   "name": "Butter Editor",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "minAppVersion": "1.4.5",
-  "description": "A WYSIWYG editing mode powered by ProseMirror + markdown-it (custom bridge, no prosemirror-markdown)",
+  "description": "WYSIWYG editing mode. Renders Markdown in place; files stay canonical.",
   "author": "Butter Editor",
   "authorUrl": "https://github.com/spreadwell/butter-editor",
   "isDesktopOnly": false

@@ -1,16 +1,55 @@
-Copyright (c) 2026 Butter Editor
+Butter Editor — Proprietary License
 
-All rights reserved.
+Copyright © 2026 Butter Editor. All Rights Reserved.
 
-This software is proprietary and confidential. Use of this software is
-governed by the End User License Agreement available at:
+================================================================================
+NO RIGHTS ARE GRANTED BY POSSESSION OF THIS SOFTWARE.
+================================================================================
+
+This software is the proprietary property of Butter Editor. Possession of
+this software, whether obtained directly or indirectly, grants you NO right
+to use, copy, modify, distribute, or otherwise exploit it.
+
+Lawful use requires a valid, current Butter Editor license (or active free
+trial) obtained from https://buttereditor.com and is governed exclusively by
+the End User License Agreement at:
 
     https://buttereditor.com/terms
 
-No part of this software may be copied, reproduced, modified, distributed,
-sublicensed, sold, decompiled, disassembled, or reverse-engineered except
-as expressly permitted by the End User License Agreement or as required
-by applicable law.
 
-This distribution contains only the compiled software bundle. Source code
-is not provided.
+WITHOUT EXPRESS WRITTEN PERMISSION YOU MAY NOT:
+
+  * Copy, reproduce, or distribute this software, in whole or in part, in
+    any form (binary, source, derivative, or otherwise).
+  * Modify, adapt, translate, port, or create derivative works based on
+    this software or any portion of it.
+  * Decompile, disassemble, reverse-engineer, or otherwise attempt to
+    derive the source code, except to the minimum extent expressly
+    permitted by mandatory applicable law that cannot be contractually
+    waived.
+  * Sublicense, sell, rent, lease, lend, transfer, host, or make this
+    software available to any third party, including via SaaS, network
+    redistribution, or aggregation with another product.
+  * Use this software, or any portion of its output, code, behavior, or
+    interface, as training data, fine-tuning data, evaluation data, or
+    reference material for any machine-learning or AI system.
+  * Remove, alter, or obscure any copyright notice, trademark, attribution,
+    licensing notice, or proprietary marking present in this software.
+  * Use this software for any purpose other than the personal, internal
+    purpose explicitly authorized by the End User License Agreement.
+
+"Butter Editor" and "Butter" are trademarks of Butter Editor. Use of these
+marks is not licensed by this distribution.
+
+Any violation of these terms automatically and immediately terminates any
+license you may hold, without notice, and without limiting any other
+remedies available to Butter Editor under contract, copyright, trademark,
+trade secret, computer-fraud, or other applicable law.
+
+THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. SEE THE END
+USER LICENSE AGREEMENT FOR THE COMPLETE TERMS THAT GOVERN YOUR USE.
+
+================================================================================
+If you do not agree to these terms, you must delete all copies of this
+software in your possession. Use of this software constitutes acceptance.
+================================================================================

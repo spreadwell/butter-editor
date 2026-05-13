@@ -1,4 +1,76 @@
+/* ── Butter locked-file view ──
+   Replaces a leaf whose file failed to open with a permission error.
+   Uses Obsidian's native `.empty-state` + `.empty-state-action`
+   classes for layout and action-button styling (pill on mobile,
+   text link on desktop), with Butter-specific additions for the
+   icon, message, and footnote. Container size auto-grows on the
+   container's native max-height to fit our extra content. */
+.empty-state.butter-locked-state .empty-state-container {
+  max-height: none;
+}
+.butter-locked-state .butter-locked-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 8px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.butter-locked-state .butter-locked-icon svg {
+  width: 56px;
+  height: 56px;
+}
+.butter-locked-state .butter-locked-message {
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0 auto;
+  font-size: 0.95em;
+  max-width: 420px;
+}
+.butter-locked-state .butter-locked-filename {
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  background: var(--background-secondary);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
 /* ── Butter Editor — Live Preview–matching styles ── */
+
+/* Subtle entrance animation — fade + small slide-up — for the first
+   ~15 top-level blocks when a note loads in Butter. The class
+   `.butter-just-loaded` is toggled on `.butter-editor-view` by the
+   view's `setViewData` (and removed ~1.1s later). GPU-only properties
+   (`opacity` + `transform`), so cost is negligible even with many
+   blocks. Respects `prefers-reduced-motion`. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes butter-block-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .butter-editor-view.butter-just-loaded > .inline-title,
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(-n+15) {
+    animation: butter-block-in 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .butter-editor-view.butter-just-loaded > .inline-title              { animation-delay:   0ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(1)  { animation-delay:  30ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(2)  { animation-delay:  60ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(3)  { animation-delay:  90ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(4)  { animation-delay: 120ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(5)  { animation-delay: 150ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(6)  { animation-delay: 180ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(7)  { animation-delay: 210ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(8)  { animation-delay: 240ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(9)  { animation-delay: 270ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(10) { animation-delay: 300ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(11) { animation-delay: 330ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(12) { animation-delay: 360ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(13) { animation-delay: 390ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(14) { animation-delay: 420ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(15) { animation-delay: 450ms; }
+}
 
 /* ── Layout ── */
 .butter-editor-view {
@@ -33,11 +105,22 @@
   --list-indent: 4ch;
 }
 
-/* Force inline-title visible in our view */
-.butter-editor-view > .inline-title {
+/* Inline title: respect Obsidian's "Show inline title" setting.
+   When ON (`body.show-inline-title`), force-show it in our view —
+   without `!important`, Obsidian's default-hide rule for unknown
+   view types would override us and our inline title never renders.
+   When OFF, fall through to Obsidian's hidden default; no rule
+   needed, but explicit display:none keeps it bulletproof against
+   any other cascade quirk. Honoring the setting prevents an empty
+   1.5em reservation from pushing content down on users who've
+   turned the title off. */
+body.show-inline-title .butter-editor-view > .inline-title {
   display: block !important;
   outline: none;
   min-height: 1.5em;
+}
+body:not(.show-inline-title) .butter-editor-view > .inline-title {
+  display: none !important;
 }
 
 /* Soft fade below the view-header — opaque at top (chrome edge)
@@ -175,22 +258,110 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"]:has(.butter-ta
   display: none;
 }
 
-/* Mobile: give the workspace-leaf-content a bg-color matching
-   the view-content's bg. Default Obsidian/Primary leaves the
-   leaf-content's bg as workspace-leaf's color (a slightly
-   darker shade than --editor-bg-color in many themes), and
-   .view-content has a top margin of `var(--view-top-spacing)`
-   ≈ 79 px on phone-floating-nav. That margin reveals the
-   leaf-content's bg in the area above .view-content — and since
-   the colors differ, it shows as a visible band between the
-   view-header buttons. Painting leaf-content with the same
-   --editor-bg-color view-content uses makes the gap invisible
-   without changing layout (content still starts BELOW the
-   view-header, not behind it). */
+/* Mirror Obsidian's markdown layout for our view type — partial.
+   Obsidian's app.css line 5657 sets `padding: 0; overflow: hidden;`
+   on markdown view-content. Without this, our view-content
+   inherits the generic rule with `padding: var(--size-4-3)…`
+   which puts a visible space band at the top of the editor.
+   We zero the padding. `overflow: hidden` is NOT applied here —
+   our `.butter-editor-view` inner element is the scroller and
+   needs view-content to allow scroll-through; locking it
+   `overflow: hidden` collapses the scrollable area on mobile. */
+.workspace-leaf-content[data-type="butter-editor"] .view-content {
+  padding: 0;
+}
+
+/* Mobile native-parity layout for our custom view type. Three rules:
+
+   1. Paint workspace-leaf-content with --background-primary. The
+      ancestor chain has a darker `--background-secondary` shade on
+      `workspace-leaf.mod-active`; without this paint, that darker
+      bg shows through wherever leaf-content's transparent regions
+      expose it. Painting leaf-content the editor color makes the
+      whole region uniform.
+
+   2. Make view-content's chrome-clearing margin-top zero — i.e.
+      view-content extends ALL the way to the top of leaf-content
+      (under the fixed chrome). Combined with rule 3, content can
+      scroll under the chrome like native floating-nav. */
 .is-mobile
   .workspace-leaf-content[data-type="butter-editor"] {
-  background-color: var(--editor-bg-color);
+  background-color: var(--background-primary);
 }
+.is-mobile
+  .workspace-leaf-content[data-type="butter-editor"]
+  .view-content {
+  margin-top: 0 !important;
+}
+
+/* 3. View-header: TRANSPARENT bg + no border. Now that view-content
+   extends under the chrome, the user sees their scrolling content
+   through the transparent header — only the translucent nav-button
+   ovoid shapes remain visible, floating over content. Plus the
+   scroll-hide transition the JS listener (in main.ts) drives via
+   the `.butter-scroll-hide` body class. */
+.is-mobile
+  .workspace-leaf-content[data-type="butter-editor"]
+  .view-header {
+  background-color: transparent !important;
+  border-bottom: none !important;
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+/* Padding-top on the scroller so at scroll-top, content isn't
+   rendered DIRECTLY under the floating chrome. Once user scrolls,
+   content slides up under it. Mirror native's reserved chrome area
+   = safe-area-inset-top + chrome height. */
+.is-mobile
+  .workspace-leaf-content[data-type="butter-editor"]
+  .butter-editor-view {
+  padding-top: calc(var(--safe-area-inset-top, 0px) + var(--view-header-height, 50px)) !important;
+}
+/* Both classes live on the SAME body element, so they must be
+   chained without a descendant combinator. */
+body.is-mobile.butter-scroll-hide
+  .workspace-leaf-content[data-type="butter-editor"]
+  .view-header {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-100%);
+}
+
+/* Mobile-navbar at the bottom of the screen — Obsidian's chrome
+   for sidebar toggles + drawer. Native floating-nav slides this
+   down out of view when the user is reading/scrolling the note,
+   then brings it back on scroll-up. Mirror that here. The element
+   is global (not Butter-scoped), but the `butter-scroll-hide` body
+   class is only set when scrolling a Butter view, so it doesn't
+   leak into native views. */
+body.is-mobile .mobile-navbar {
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+body.is-mobile.butter-scroll-hide .mobile-navbar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(100%);
+}
+
+/* Mobile: paint NOTHING in the leaf-content / view-content layer.
+   Two earlier attempts here landed in the wrong place:
+     (a) Painting leaf-content with --editor-bg-color made the
+         entire area under the nav buttons look opaque/filled —
+         unlike native, where you can see the workspace bg through
+         the transparent view-header.
+     (b) Painting only .view-content with --editor-bg-color matched
+         the editor body color but exposed leaf-content's (different)
+         bg through the ~79 px gap above view-content (the
+         `var(--view-top-spacing)` margin on phone-floating-nav),
+         producing a visible color band between view-header and
+         editor body.
+   Native markdown views work because EVERYTHING transparent layers
+   above the editor's own bg, so the workspace background shows
+   through uniformly and the view-header floats over it. To match
+   that, leave the workspace-leaf-content + view-content layers
+   alone and rely on Obsidian's cascade. .butter-editor-view doesn't
+   paint a background itself, so it inherits / shows through to the
+   workspace bg too. No band, header reads as transparent. */
 
 
 /* Match native layout: content centered with file-line-width,
@@ -2319,28 +2490,44 @@ body.butter-mobile-table-active .butter-mobile-toolbar.butter-mobile-bar {
    specificity these `display: none` rules are ignored and every
    button stays visible. */
 .butter-mobile-bar .mobile-toolbar-option.butter-mobile-swap-btn,
-.butter-mobile-bar .mobile-toolbar-option.butter-mobile-close-btn {
+.butter-mobile-bar .mobile-toolbar-option.butter-mobile-close-btn,
+.butter-mobile-bar .mobile-toolbar-option.butter-mobile-hide-kb-btn {
   display: none;
 }
 
+/* Default state (main bar, no drawer, not in-table-prefer-main):
+   show the hide-keyboard button so users have a fast way to dismiss
+   the on-screen keyboard. The other slot states (drawer, in-table)
+   override this with their higher-priority buttons. */
+.butter-mobile-bar[data-mobile-style="butter"].butter-mobile-toolbar
+  .mobile-toolbar-option.butter-mobile-hide-kb-btn {
+  display: flex;
+}
+
 /* In-table state (table bar visible, OR main bar with prefer-main
-   override): show the swap toggle. */
+   override): show the swap toggle. Hide-keyboard yields to it. */
 .butter-mobile-table-toolbar .mobile-toolbar-option.butter-mobile-swap-btn {
   display: flex;
+}
+.butter-mobile-table-toolbar .mobile-toolbar-option.butter-mobile-hide-kb-btn {
+  display: none !important;
 }
 body.butter-mobile-table-active.butter-mobile-prefer-main
   .butter-mobile-toolbar .mobile-toolbar-option.butter-mobile-swap-btn {
   display: flex;
 }
+body.butter-mobile-table-active.butter-mobile-prefer-main
+  .butter-mobile-toolbar .mobile-toolbar-option.butter-mobile-hide-kb-btn {
+  display: none !important;
+}
 
-/* Drawer-open priority: close button replaces the swap toggle and
-   the overflow `⋯` while the insert drawer is showing. Any other
-   slot button is force-hidden via `!important` so close has the
-   slot to itself regardless of in-table state. */
+/* Drawer-open priority: close button replaces every other slot
+   button. */
 body.butter-mobile-drawer-open .butter-mobile-bar .mobile-toolbar-option.butter-mobile-close-btn {
   display: flex;
 }
 body.butter-mobile-drawer-open .butter-mobile-bar .mobile-toolbar-option.butter-mobile-swap-btn,
+body.butter-mobile-drawer-open .butter-mobile-bar .mobile-toolbar-option.butter-mobile-hide-kb-btn,
 body.butter-mobile-drawer-open .butter-mobile-bar .mobile-toolbar-option.butter-mobile-overflow-auto {
   display: none !important;
 }
@@ -2365,18 +2552,18 @@ body.butter-mobile-drawer-open .butter-mobile-toolbar.butter-mobile-bar {
   padding-bottom: 0 !important;
 }
 
-/* Butter chrome wrapper visibility — collapses entirely when no
-   inner button should show, so the formatting row gets the full
-   bar width. Body-class driven, no `:has()` needed.
+/* Butter chrome wrapper visibility — now always shown because the
+   default-state hide-keyboard button always occupies the slot.
+   Inner-button visibility (swap/close/hide-kb) is selected by the
+   body-class state machine above.
 
-   • Main bar: hidden by default; shown when drawer is open OR
-     when caret is in a cell + prefer-main is active.
-   • Table bar: always shown (swap-to-main always relevant).
-   Native's chrome pill has the `⋯` overflow as a fallback so it
-   stays visible; no equivalent rule needed. */
-.butter-mobile-bar[data-mobile-style="butter"].butter-mobile-toolbar
-  .butter-mobile-bar-chrome {
-  display: none;
+   • Main bar default: hide-keyboard visible
+   • Main bar + drawer-open: close (x) visible
+   • Main bar + prefer-main + in-table: swap visible
+   • Table bar: swap visible (table-active is always on when table bar shows)
+   Native's chrome pill has the `⋯` overflow as a fallback. */
+.butter-mobile-bar[data-mobile-style="butter"] .butter-mobile-bar-chrome {
+  display: flex;
 }
 .butter-mobile-bar[data-mobile-style="butter"].butter-mobile-table-toolbar
   .butter-mobile-bar-chrome {
