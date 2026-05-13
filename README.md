@@ -52,11 +52,30 @@ One payment, $16. Covers Butter Editor v1 forever, all v1 updates included. Up t
 
 See [buttereditor.com/pricing](https://buttereditor.com/pricing) for details.
 
+## Network use
+
+Butter Editor talks to one set of servers, and only for license operations. The plugin **never** transmits your note contents.
+
+- **`https://api.buttereditor.com`** — license validation, trial activation, session refresh, device-list management. Called when the License tab is opened, when a session token is near expiry, when you start or end a trial, or when you deactivate a device.
+- **`https://license.buttereditor.com`** — legacy hostname for the same API surface; some older sessions still call it. Same data, same purpose.
+- **`https://licenses.buttereditor.com`** — customer portal in your browser only. The plugin opens this URL externally when you tap *Manage license*; it is not a runtime endpoint.
+
+All requests go through Obsidian's `requestUrl()` (not raw `fetch`) so they're CORS-safe on mobile and respect Obsidian's request semantics. There is no analytics service, no telemetry pipeline, no third-party tracker. Full data-handling details are in the [privacy policy](https://buttereditor.com/privacy).
+
 ## Privacy
 
-Butter stores the bare minimum needed to run a license: customer email, device list, license-key registry. No analytics, no telemetry on your notes, no third-party tracking. The plugin runs locally; only license validation talks to a server.
+Butter stores the bare minimum needed to run a license: customer email, device list, license-key registry. No analytics, no telemetry on your notes, no third-party tracking. The plugin runs locally; only license validation talks to a server (see *Network use* above).
 
 Full policy: [buttereditor.com/privacy](https://buttereditor.com/privacy).
+
+## Third-party code
+
+Butter bundles the following open-source libraries. Their licenses are preserved in the compiled bundle and listed here for attribution:
+
+- **[ProseMirror](https://prosemirror.net/)** (MIT) — the toolkit Butter's editor is built on (`prosemirror-model`, `prosemirror-state`, `prosemirror-view`, `prosemirror-transform`, `prosemirror-keymap`, `prosemirror-commands`, `prosemirror-history`, `prosemirror-inputrules`, `prosemirror-schema-list`, `prosemirror-tables`, `prosemirror-dropcursor`, `prosemirror-gapcursor`, `prosemirror-collab`).
+- **[markdown-it](https://github.com/markdown-it/markdown-it)** (MIT) — the Markdown parser Butter uses on the way into ProseMirror, with our own custom plugin chain for Obsidian-flavored syntax.
+
+The Obsidian-Markdown bridge, schema, serializer, NodeViews, and every other surface listed in *What it does* are original Butter Editor code, not derived from any other Obsidian plugin.
 
 ## Support
 
