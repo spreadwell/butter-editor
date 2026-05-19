@@ -57,7 +57,6 @@ See [buttereditor.com/pricing](https://buttereditor.com/pricing) for details.
 Butter Editor talks to one set of servers, and only for license operations. The plugin **never** transmits your note contents.
 
 - **`https://api.buttereditor.com`** — license validation, trial activation, session refresh, device-list management. Called when the License tab is opened, when a session token is near expiry, when you start or end a trial, or when you deactivate a device.
-- **`https://license.buttereditor.com`** — legacy hostname for the same API surface; some older sessions still call it. Same data, same purpose.
 - **`https://licenses.buttereditor.com`** — customer portal in your browser only. The plugin opens this URL externally when you tap *Manage license*; it is not a runtime endpoint.
 
 All requests go through Obsidian's `requestUrl()` (not raw `fetch`) so they're CORS-safe on mobile and respect Obsidian's request semantics. There is no analytics service, no telemetry pipeline, no third-party tracker. Full data-handling details are in the [privacy policy](https://buttereditor.com/privacy).

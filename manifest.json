@@ -1,7 +1,7 @@
 {
   "id": "butter-editor",
   "name": "Butter Editor",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "minAppVersion": "1.4.5",
   "description": "WYSIWYG editing mode. Renders Markdown in place; files stay canonical.",
   "author": "Butter Editor",

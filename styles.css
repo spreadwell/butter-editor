@@ -37,9 +37,9 @@
   border-radius: 4px;
 }
 
-/* ── Butter Editor — Live Preview–matching styles ── */
+/* ── Butter Editor - Live Preview–matching styles ── */
 
-/* Subtle entrance animation — fade + small slide-up — for the first
+/* Subtle entrance animation - fade + small slide-up - for the first
    ~15 top-level blocks when a note loads in Butter. The class
    `.butter-just-loaded` is toggled on `.butter-editor-view` by the
    view's `setViewData` (and removed ~1.1s later). GPU-only properties
@@ -49,6 +49,18 @@
   @keyframes butter-block-in {
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
+  }
+  /* Pre-animation hidden state. Applied synchronously by setViewData
+     BEFORE the PM dispatch, so the first paint already has the
+     first 15 children at the animation's `from` visuals. Swapping
+     to `.butter-just-loaded` then starts the staggered fade-in with
+     no visual seam - both classes share the same initial state, so
+     there's no flash of full-opacity content in the rAF gap between
+     PM dispatch and animation start. */
+  .butter-editor-view.butter-anim-prepped > .inline-title,
+  .butter-editor-view.butter-anim-prepped .ProseMirror > *:nth-child(-n+15) {
+    opacity: 0;
+    transform: translateY(8px);
   }
   .butter-editor-view.butter-just-loaded > .inline-title,
   .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(-n+15) {
@@ -81,7 +93,7 @@
   padding: 0 !important;
 
   /* Unified block-chrome radius. One knob controls the corner
-     shape of every rounded "card" in Butter — code block shell,
+     shape of every rounded "card" in Butter - code block shell,
      image, drag ghost card, selection ring, heading-margin
      indicator, raw-block banner, base-widget frame. Sourced from
      Obsidian's `--callout-radius` so Butter's blocks visually
@@ -99,14 +111,14 @@
      up to "100." centered without overflow regardless of font scale.
      One variable drives: top-level list padding, sublist nesting,
      bullet / number / checkbox column width, and the indentation-
-     guide column position — change this one value to retune all four
+     guide column position - change this one value to retune all four
      together. Scoped to `.butter-editor-view` so other Obsidian views
      in the workspace keep their theme's value. */
   --list-indent: 4ch;
 }
 
 /* Inline title: respect Obsidian's "Show inline title" setting.
-   When ON (`body.show-inline-title`), force-show it in our view —
+   When ON (`body.show-inline-title`), force-show it in our view
    without `!important`, Obsidian's default-hide rule for unknown
    view types would override us and our inline title never renders.
    When OFF, fall through to Obsidian's hidden default; no rule
@@ -123,7 +135,7 @@ body:not(.show-inline-title) .butter-editor-view > .inline-title {
   display: none !important;
 }
 
-/* Soft fade below the view-header — opaque at top (chrome edge)
+/* Soft fade below the view-header - opaque at top (chrome edge)
    fading to transparent below, so document text scrolling upward
    disappears smoothly into the chrome instead of getting cut off.
    Anchored to .view-header (NOT view-content) so the fade lives
@@ -135,24 +147,24 @@ body:not(.show-inline-title) .butter-editor-view > .inline-title {
    header's, so its opaque bg covers the fade where they overlap.
    Pulled out of .butter-editor-view::before because the drag-
    ghost wrapper also uses class "butter-editor-view" to inherit
-   the editor's layout cascade — and pseudo-elements would leak
+   the editor's layout cascade - and pseudo-elements would leak
    into every dragged ghost. */
-/* Desktop only — `:not(.is-mobile)` ancestor scope. The
+/* Desktop only - `:not(.is-mobile)` ancestor scope. The
    z-index lift creates a stacking context above .view-content
    so the fade pseudo (defined below) overlays document content.
    On mobile, Obsidian owns the view-header chrome; touching it
    makes the bar render subtly differently from a native note
    (visible most clearly under themes like Primary that render
    the chrome with custom backgrounds). Leave it alone on
-   mobile — let Obsidian + theme rules apply unmodified. */
+   mobile - let Obsidian + theme rules apply unmodified. */
 body:not(.is-mobile) .butter-view-root .view-header {
   position: relative;
   z-index: 10;
 }
-/* Desktop only — same reasoning. The top fade is a desktop
+/* Desktop only - same reasoning. The top fade is a desktop
    chrome treatment that smooths the boundary between the leaf
    header and scrolling content. On mobile it has nowhere right
-   to sit (the header isn't always in the same place — fixed in
+   to sit (the header isn't always in the same place - fixed in
    floating-nav, static otherwise) and visually pushes the note
    content down by adding a 24-80 px gradient strip below the
    header. Disable on mobile entirely. */
@@ -188,13 +200,13 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="top"]:has(.butter-table
   height: 116px;
 }
 
-/* Symmetric bottom fade — content scrolling DOWN past the visible
+/* Symmetric bottom fade - content scrolling DOWN past the visible
    area fades into the bottom edge instead of cutting off sharply.
    Anchored to the leaf containerEl (.butter-view-root) at its
    bottom edge. Direction: opaque at the leaf's bottom edge,
    fading to transparent above. z-index: 5 keeps it ABOVE
    document content (z:auto = 0) but BELOW any bottom toolbar
-   (z:10) — so when the toolbar is bottom-positioned, the fade
+   (z:10) - so when the toolbar is bottom-positioned, the fade
    sits behind the toolbar and the toolbar's opaque background
    covers it where they overlap. Visible portion of the fade is
    the gap below the toolbar plus a small band above it (for
@@ -212,7 +224,7 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="top"]:has(.butter-table
 body:not(.is-mobile) .butter-view-root {
   position: relative;
 }
-/* Desktop only — same reasoning as the top fade. The mobile
+/* Desktop only - same reasoning as the top fade. The mobile
    bottom edge belongs to Obsidian's navbar / our keyboard-
    accessory bar, not to a desktop chrome fade. */
 body:not(.is-mobile) .butter-view-root::after {
@@ -248,7 +260,7 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"]:has(.butter-ta
    view-header-title-container when `show-inline-title` is on
    (the title is rendered in the body via `.inline-title`, so the
    header version would be redundant). Native markdown's rule is
-   scoped to `[data-type="markdown"]`, so Butter doesn't match —
+   scoped to `[data-type="markdown"]`, so Butter doesn't match
    our title-container stays visible in the header chrome,
    creating an unwanted middle band between the left/right
    button groups. Same fix scoped to our view-type. */
@@ -258,12 +270,12 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"]:has(.butter-ta
   display: none;
 }
 
-/* Mirror Obsidian's markdown layout for our view type — partial.
+/* Mirror Obsidian's markdown layout for our view type - partial.
    Obsidian's app.css line 5657 sets `padding: 0; overflow: hidden;`
    on markdown view-content. Without this, our view-content
    inherits the generic rule with `padding: var(--size-4-3)…`
    which puts a visible space band at the top of the editor.
-   We zero the padding. `overflow: hidden` is NOT applied here —
+   We zero the padding. `overflow: hidden` is NOT applied here
    our `.butter-editor-view` inner element is the scroller and
    needs view-content to allow scroll-through; locking it
    `overflow: hidden` collapses the scrollable area on mobile. */
@@ -280,7 +292,7 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"]:has(.butter-ta
       expose it. Painting leaf-content the editor color makes the
       whole region uniform.
 
-   2. Make view-content's chrome-clearing margin-top zero — i.e.
+   2. Make view-content's chrome-clearing margin-top zero - i.e.
       view-content extends ALL the way to the top of leaf-content
       (under the fixed chrome). Combined with rule 3, content can
       scroll under the chrome like native floating-nav. */
@@ -296,7 +308,7 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"]:has(.butter-ta
 
 /* 3. View-header: TRANSPARENT bg + no border. Now that view-content
    extends under the chrome, the user sees their scrolling content
-   through the transparent header — only the translucent nav-button
+   through the transparent header - only the translucent nav-button
    ovoid shapes remain visible, floating over content. Plus the
    scroll-hide transition the JS listener (in main.ts) drives via
    the `.butter-scroll-hide` body class. */
@@ -327,7 +339,7 @@ body.is-mobile.butter-scroll-hide
   transform: translateY(-100%);
 }
 
-/* Mobile-navbar at the bottom of the screen — Obsidian's chrome
+/* Mobile-navbar at the bottom of the screen - Obsidian's chrome
    for sidebar toggles + drawer. Native floating-nav slides this
    down out of view when the user is reading/scrolling the note,
    then brings it back on scroll-up. Mirror that here. The element
@@ -346,7 +358,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 /* Mobile: paint NOTHING in the leaf-content / view-content layer.
    Two earlier attempts here landed in the wrong place:
      (a) Painting leaf-content with --editor-bg-color made the
-         entire area under the nav buttons look opaque/filled —
+         entire area under the nav buttons look opaque/filled
          unlike native, where you can see the workspace bg through
          the transparent view-header.
      (b) Painting only .view-content with --editor-bg-color matched
@@ -430,17 +442,17 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   caret-color: transparent;
 }
 
-/* Selected block — PM NodeSelection, one rule for every block type.
+/* Selected block - PM NodeSelection, one rule for every block type.
    CSS `outline` (not ::after pseudo) because outline paints outside
-   the element's border-box regardless of host clipping — so it
+   the element's border-box regardless of host clipping - so it
    actually shows on callouts / code blocks / tables that have their
    own overflow:hidden or contain:paint. Offset is symmetric 6px
    (outline-offset takes a single value). Follows the element's own
    border-radius, which with Option B theming reflects per-type
-   theme choices — callouts use --callout-radius, code blocks use
+   theme choices - callouts use --callout-radius, code blocks use
    --code-radius, plain blocks fall back to --butter-block-radius. */
 /* The selected-block highlight ring is rendered by selection-overlay.ts
-   as a `position: fixed` overlay in `document.body` — that escapes
+   as a `position: fixed` overlay in `document.body` - that escapes
    `.butter-editor-view`'s `overflow-y: auto` which (per CSS spec) also
    clips horizontal overflow. The previous `outline + outline-offset`
    approach got clipped on themes with narrow `--file-margins` because
@@ -456,7 +468,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    the old outline used. Border + border-radius copied from the
    block's computed styles so the ring follows per-block-type
    corner rounding (callouts, code, plain blocks all match).
-   Always rendered (display: block) but invisible by default — the
+   Always rendered (display: block) but invisible by default - the
    `.is-visible` class triggers a fade+scale-in transition. Keeping
    it in the DOM means the transition can fire on first appearance
    instead of snapping (display:none → block can't transition opacity
@@ -469,7 +481,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   border: 3px solid hsla(var(--color-accent-hsl), 0.3);
   box-sizing: border-box;
   opacity: 0;
-  /* Start slightly LARGER and settle inward — feels like the ring
+  /* Start slightly LARGER and settle inward - feels like the ring
      is converging on the block (vs. a "popping outward" growth from
      0.96 → 1). Subtle 4% so it reads as a soft settle, not a zoom. */
   transform: scale(1.04);
@@ -504,7 +516,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 }
 
 
-/* Heading "forehead" margin indicator removed — the dashed box
+/* Heading "forehead" margin indicator removed - the dashed box
    above a selected heading was visual noise that didn't help users
    understand selection scope. The ring around the heading itself
    communicates selection well enough on its own. */
@@ -519,7 +531,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    Every rule below mirrors one that Obsidian has in its own CSS
    but scopes to `.markdown-rendered` / `.markdown-source-view`
    (Reading mode / Live Preview view containers). Butter's wrapper
-   is `.butter-editor-view` — not one of those — so Obsidian's
+   is `.butter-editor-view` - not one of those - so Obsidian's
    scoped rules don't match here. We bridge the scope gap with
    our own zero-specificity rules via `:where()`.
 
@@ -551,14 +563,14 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 }
 
 /* ── Headings ──
-   margin-bottom: 0 is deliberate and matches native — the gap
+   margin-bottom: 0 is deliberate and matches native - the gap
    between heading and the following block comes from the next
    block's margin-top via CSS margin collapse. Setting both here
    would double-up when the following block is a paragraph.
 
    margin-top uses `var(--heading-spacing)` directly. In Obsidian
    the variable holds the final spacing value (e.g. 40px in stock),
-   not a small base that needs multiplying — any theme retuning it
+   not a small base that needs multiplying - any theme retuning it
    carries through 1:1. Fallback 2.5rem is a reasonable default if
    nothing defines the variable.
 
@@ -566,7 +578,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    rather than :where() because something in the cascade (Obsidian
    core, CM6 styles, or a theme) sets h2 margin-top at spec ≥ 0,1,0
    and zero-spec rules lose to it. 0,2,0 beats bare-class theme
-   rules at 0,1,0 and ties with rules like `.theme-dark h2` — source
+   rules at 0,1,0 and ties with rules like `.theme-dark h2` - source
    order decides ties (plugin CSS loads late, Butter wins). Themes
    that explicitly want to retune Butter headings can still override
    by targeting `.butter-editor-view h2` directly or using any
@@ -639,7 +651,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 /* ── Paragraphs ──
    Both top AND bottom margin, same as native. Margin collapse
    between adjacent blocks means the visible gap is still just
-   --p-spacing — but first-child-inside-container and last-child
+   --p-spacing - but first-child-inside-container and last-child
    both flush correctly because margins exist on both sides. */
 :where(.butter-editor-view p) {
   margin-top: var(--p-spacing, 1em);
@@ -647,7 +659,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 }
 
 /* ── Lists ──
-   Real specificity (.butter-editor-view ul = 0,1,1) not :where —
+   Real specificity (.butter-editor-view ul = 0,1,1) not :where
    same reasoning as headings: something in the cascade (Obsidian
    core, CM6, theme) sets list margin at spec ≥ 0,0,1 and zero-spec
    loses. 0,1,1 beats bare ul/ol and CM6-line list rules.
@@ -655,13 +667,13 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    Top-level list gets --p-spacing margin for the block-break rhythm.
    NESTED lists (li > ul / li > ol) zero their margin so the sublist
    doesn't add extra vertical space between the parent item's content
-   and its children — matches native Reading mode where the list-item's
+   and its children - matches native Reading mode where the list-item's
    natural spacing does the job, not the sublist's own margin. Theme-
    specific rules at 0,2,0+ still win. */
 /* ── Flat list-item rendering ──
  *
  * Each `.butter-list-item` is a top-level block. Layout (Notion-style
- * indentation — the marker stays INSIDE the editor's content area at
+ * indentation - the marker stays INSIDE the editor's content area at
  * every depth, never in the page-margin zone where some themes clip):
  *
  *   [(depth+1) * --list-indent of padding-left, with the LAST
@@ -689,7 +701,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 .butter-editor-view .butter-list-item[data-depth="7"] { --depth: 7; }
 .butter-editor-view .butter-list-item[data-depth="8"] { --depth: 8; }
 
-/* Inter-item spacing — tight items (default) collapse to no extra
+/* Inter-item spacing - tight items (default) collapse to no extra
    gap; loose items inherit paragraph-like spacing. */
 .butter-editor-view .butter-list-item[data-tight="true"] + .butter-list-item[data-tight="true"] {
   margin-top: 0;
@@ -699,7 +711,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   margin-bottom: var(--p-spacing, 1em);
 }
 
-/* Marker column — bullets / ordered numbers drawn via ::before,
+/* Marker column - bullets / ordered numbers drawn via ::before,
    sized exactly --list-indent wide, positioned just to the LEFT of
    the content edge (= depth * --list-indent inside the padding
    zone). `data-kind="task"` skips ::before; the checkbox widget
@@ -721,7 +733,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 .butter-editor-view .butter-list-item[data-kind="bullet"]::before {
   content: "•";
 }
-/* Ordered marker — `data-number` attr written by the
+/* Ordered marker - `data-number` attr written by the
    listNumberingPlugin. Falls back to "1" if the plugin hasn't run
    yet (e.g., during the very first paint). */
 .butter-editor-view .butter-list-item[data-kind="ordered"]::before {
@@ -737,13 +749,13 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   margin-bottom: 0;
 }
 
-/* Indentation guides — one thin vertical hairline per ANCESTOR
+/* Indentation guides - one thin vertical hairline per ANCESTOR
    marker column. For a depth-N item, draws N guides at X positions
    (i + 0.5) * --list-indent for i = 0..N-1. Implementation uses a
    `repeating-linear-gradient` background sized to N * --list-indent
    wide: the gradient pattern is one --list-indent cycle with a
    centered hairline, and `background-size` constrains the tile so
-   the pattern repeats exactly N times — landing one guide in each
+   the pattern repeats exactly N times - landing one guide in each
    ancestor's marker column, none in the item's own column or under
    its content. Cleaner than per-depth ::after rules and arbitrarily
    deep without code changes. */
@@ -777,7 +789,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   font-style: var(--blockquote-font-style, normal);
 }
 
-/* The accent left-bar is the blockquote's defining visual — it
+/* The accent left-bar is the blockquote's defining visual - it
    should read as a clean rectangular strip. The default
    --butter-block-radius (applied by the .ProseMirror > :is(...)
    rule near the top of the file) rounds every corner, which
@@ -815,7 +827,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 /* ── Tables ── */
 /* Table layout baseline. Real specificity (not :where) because
    Obsidian + several themes set `border-collapse: separate` with
-   `border-spacing` on `.markdown-rendered table` — zero-specificity
+   `border-spacing` on `.markdown-rendered table` - zero-specificity
    :where() rules lose to those, leaving stray vertical padding
    inside the table's border-box (the red-border diagnostic made
    this visible). Explicit `padding: 0` + `border-spacing: 0` to
@@ -896,7 +908,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    Obsidian keeps paragraph margins at container boundaries, so the
    visible gap inside callouts / blockquotes / doc-top is the
    container's own padding PLUS the first/last paragraph's margin.
-   Our earlier reset rules were over-engineering — dropping them
+   Our earlier reset rules were over-engineering - dropping them
    makes paragraph rhythm uniform (16/16 everywhere) and matches
    native. If a specific container needs different behavior,
    Obsidian handles it at its own level. */
@@ -958,20 +970,20 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    Butter's callout NodeView outputs native Obsidian class names
    (`.callout` + `.callout-title` + `.callout-icon` +
    `.callout-title-inner` + `.callout-content`) alongside the
-   `data-callout` attribute — see `editableCallout` in nodeviews.ts.
+   `data-callout` attribute - see `editableCallout` in nodeviews.ts.
    Obsidian's unscoped `.callout` rules (shell border, background,
    radius, per-type --callout-color mappings) cascade in for free.
 
    What DOESN'T cascade in: the sub-element padding rules. Obsidian
    scopes those to `.markdown-rendered` / `.markdown-source-view`
    (Reading mode / Live Preview view containers). Butter's wrapper
-   is `.butter-editor-view` — not one of those — so the title +
+   is `.butter-editor-view` - not one of those - so the title +
    content padding rules don't match. Without them, the callout
    looks right on the outside but has no inner breathing room.
 
    We re-emit the missing rules at zero specificity via `:where()`
-   so any theme rule — bare `.callout-title`, `.markdown-rendered
-   .callout-title`, or anything else — beats ours automatically.
+   so any theme rule - bare `.callout-title`, `.markdown-rendered
+   .callout-title`, or anything else - beats ours automatically.
    These fire only when nothing else is styling the sub-elements,
    pulling values straight from Obsidian's own `--callout-*` vars.
 
@@ -990,13 +1002,13 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
     0 var(--size-4-3, 12px) var(--size-4-2, 10px));
 }
 
-/* Empty-body callout — keep the body in the layout but slim it down
+/* Empty-body callout - keep the body in the layout but slim it down
    so it visually approximates LP's title-only look without the
    complications of `display: none` (PM's editor-root focus model
    means the body can never be `:focus-within` and a hidden body
    swallows the caret on Enter-from-title). The body is always
    focusable, and a single empty paragraph sits there as the
-   editable target — same shape as LP's empty body line. */
+   editable target - same shape as LP's empty body line. */
 .butter-editor-view .butter-callout-view[data-empty-body] .butter-callout-content {
   padding-block: 0;
   min-height: 0;
@@ -1163,7 +1175,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    visual weight on the left where the action sits, so the eye
    reads `+ ─────────·` (icon-anchored) rather than a free-floating
    ruler. Element is fixed-positioned, parented to <body>, with
-   pointer-events disabled — never interferes with PM coords or
+   pointer-events disabled - never interferes with PM coords or
    the underlying mousedown that actually spawns the paragraph.
    The element's `left` is set to (block.left − 30) by the JS, so
    the first 22px (matching `.butter-drag-handle` width) lines up
@@ -1181,11 +1193,11 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   opacity: 0;
   transition: opacity 100ms ease-out;
 }
-/* Plus glyph — fills the 22×22 drag-handle column, exactly the
+/* Plus glyph - fills the 22×22 drag-handle column, exactly the
    same box the handle occupies on a hovered block. Drawn as an
    SVG via CSS mask (not a typographic "+") so the icon is
    geometrically centered regardless of the active font's glyph
-   metrics — text-based "+" has font-dependent side-bearing /
+   metrics - text-based "+" has font-dependent side-bearing /
    math-axis offsets that misalign with the indicator line. The
    mask reveals only the stroke; the visible color comes from
    `background-color: var(--text-faint)`, so the icon inherits
@@ -1201,15 +1213,14 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   top: 0;
   width: 22px;
   height: 22px;
-  background-color: var(--text-faint);
+  background-color: var(--interactive-accent);
   --butter-plus-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'><path d='M12 5v14M5 12h14'/></svg>");
   mask: var(--butter-plus-mask) center / 16px 16px no-repeat;
   -webkit-mask: var(--butter-plus-mask) center / 16px 16px no-repeat;
 }
-/* The horizontal line — starts at the block's left edge (the
-   gutter ends at 30px from hint-left) and fades to transparent
-   on the right. Holding most of the visible weight in the first
-   ~70% keeps the line feeling decisively connected to the `+`. */
+/* The horizontal line - solid edge-to-edge, starting at the
+   block's left edge (the gutter ends at 30px from hint-left)
+   and running flush to the right boundary. */
 .butter-spawn-hint::after {
   content: "";
   position: absolute;
@@ -1218,12 +1229,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   top: 50%;
   height: 1px;
   margin-top: -0.5px;
-  background: linear-gradient(
-    to right,
-    var(--text-faint),
-    var(--text-faint) 65%,
-    transparent
-  );
+  background: var(--interactive-accent);
   border-radius: 1px;
 }
 .butter-spawn-hint.is-visible {
@@ -1241,7 +1247,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    Durations: in 160ms, out 140ms. The OUT keyframe uses `forwards`
    so the paragraph stays at opacity 0 / height 0 after the
    keyframe ends; the JS timer in click-to-spawn.ts then dispatches
-   the actual delete tr (LEAVE_ANIMATION_MS = 140ms — keep these
+   the actual delete tr (LEAVE_ANIMATION_MS = 140ms - keep these
    in lockstep). */
 @keyframes butter-spawn-in {
   from {
@@ -1282,7 +1288,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 
 /* Tables get paragraph-equivalent vertical spacing so they breathe
    like prose blocks. Headings have `margin-bottom: 0` (Obsidian
-   convention — the gap comes from the next element's top margin),
+   convention - the gap comes from the next element's top margin),
    so a table immediately after a heading needs the same `--p-spacing`
    that a paragraph would contribute, otherwise the heading visually
    collapses onto the table's top edge. Same value bottom-side keeps
@@ -1295,7 +1301,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 /* ══════════════════════════════════════════
    Formatting Toolbar
    ══════════════════════════════════════════ */
-/* Toolbar — pin top or bottom of the view's scroll area, full pane
+/* Toolbar - pin top or bottom of the view's scroll area, full pane
    width (NOT body-width). The data-toolbar-pos attribute selects
    sticky-top vs sticky-bottom mode; the toolbar DOM is moved into
    the matching position by main.ts so sticky positioning has the
@@ -1309,12 +1315,12 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    pane while the hairline border anchors it as toolbar chrome. */
 /* ── Desktop chrome (body-scoped) ─────────────────────────────────
    Every rule in this section is prefixed with `body:not(.is-mobile)`
-   so desktop chrome physically can't style a mobile bar — even if
+   so desktop chrome physically can't style a mobile bar - even if
    a future change introduces an overlapping class name. Mobile bars
    live under `.butter-mobile-bar` (see "Mobile toolbar" section
    above) and never carry these desktop classes. */
 body:not(.is-mobile) .butter-toolbar {
-  /* `position: relative` makes z-index actually apply — without it
+  /* `position: relative` makes z-index actually apply - without it
      the toolbar paints in normal flow under view-header's
      z:10 ::after pseudo (which is the chrome fade gradient). With
      it, the toolbar lifts into the same stacking context as view-
@@ -1356,7 +1362,7 @@ body:not(.is-mobile) .butter-toolbar::-webkit-scrollbar-thumb {
   background: var(--background-modifier-border-hover);
   border-radius: 3px;
 }
-/* Children keep natural width — no shrinking when we're at the
+/* Children keep natural width - no shrinking when we're at the
    point of overflow. Without this, flex would compress the buttons
    into illegibly thin strips before activating the scroll. */
 body:not(.is-mobile) .butter-toolbar > * {
@@ -1365,7 +1371,7 @@ body:not(.is-mobile) .butter-toolbar > * {
 
 /* ── Attached / chrome-row style ──
    Lives BETWEEN view-header and view-content (or after content for
-   bottom mode). Real chrome row — content scrolls underneath it
+   bottom mode). Real chrome row - content scrolls underneath it
    without sticky tricks. Hairline border separates it from the
    document. Default style. */
 body:not(.is-mobile) .butter-toolbar[data-toolbar-style="attached"][data-toolbar-pos="top"],
@@ -1387,7 +1393,7 @@ body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"][data-toolb
    Toolbar lives INSIDE the view-header itself, between the title
    pill and view-actions. The view-header becomes a single row:
      [nav buttons] [title pill] [toolbar (centered)] [view-actions]
-   Position (top/bottom) is ignored — view-header is always at top.
+   Position (top/bottom) is ignored - view-header is always at top.
    The toolbar is transparent and borderless here so it inherits
    the view-header's own background. */
 body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"] {
@@ -1406,7 +1412,7 @@ body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"] .butter-to
   min-width: 0;
 }
 
-/* View-header marker class — applied by applyToolbarPosition when
+/* View-header marker class - applied by applyToolbarPosition when
    integrated is active. Lets the title-container restyle as a pill
    without affecting other Obsidian views. */
 .view-header.butter-integrated-header .view-header-title-container {
@@ -1429,7 +1435,7 @@ body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"] .butter-to
 /* ── Detached / floating-card style ──
    Lives INSIDE view-content with sticky positioning. Body-width
    (matches `--file-line-width`), with backdrop blur and border on
-   all sides — reads as a HUD floating above the document, not as
+   all sides - reads as a HUD floating above the document, not as
    chrome. The button group still centers within the card. */
 /* Toolbar stack wrapper. Holds main + table toolbars as siblings so
    they read as a single unit. Two structural roles:
@@ -1496,7 +1502,7 @@ body:not(.is-mobile) .butter-toolbar[data-toolbar-style="detached"][data-toolbar
   /* Sticky lives on the stack now; flow child here. */
 }
 
-/* Transparent variant — kept as an opt-in for users who want a
+/* Transparent variant - kept as an opt-in for users who want a
    floating-card look. Defaults DON'T set this any more. */
 body:not(.is-mobile) .butter-toolbar[data-bg="transparent"] {
   background: transparent;
@@ -1560,20 +1566,20 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="filled"] .butter-btn.is-
   background: var(--interactive-accent-hover, var(--interactive-accent));
 }
 
-/* Soft — tinted bg, accent icon */
+/* Soft - tinted bg, accent icon */
 body:not(.is-mobile) .butter-toolbar[data-active-style="soft"] .butter-btn.is-active {
   background: hsla(var(--interactive-accent-hsl), 0.15);
   color: var(--interactive-accent);
 }
 
-/* Outlined — ring border */
+/* Outlined - ring border */
 body:not(.is-mobile) .butter-toolbar[data-active-style="outlined"] .butter-btn.is-active {
   background: hsla(var(--interactive-accent-hsl), 0.08);
   color: var(--interactive-accent);
   box-shadow: inset 0 0 0 1.5px var(--interactive-accent);
 }
 
-/* Underline — accent bar under icon */
+/* Underline - accent bar under icon */
 body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.is-active {
   color: var(--interactive-accent);
 }
@@ -1659,7 +1665,7 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   margin: var(--size-2-2, 4px) calc(var(--size-2-2, 4px) * -1);
 }
 
-/* Heading preview sizes — deliberately scaled-down from the real
+/* Heading preview sizes - deliberately scaled-down from the real
    --h{1..6}-size so the dropdown items stay compact. Font weights
    use Obsidian's --font-{bold,semibold} so theme weight choices
    (e.g. a "lighter headings" theme) carry through. */
@@ -1710,11 +1716,96 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   text-align: center;
 }
 
+/* ── Color palette popover ──────────────────────────────────────
+   Two-row swatch grid + footer with Clear / Custom. Same chrome
+   conventions as the table grid picker so the popover language
+   stays consistent across the toolbar. */
+.butter-color-palette {
+  background: var(--background-primary);
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-radius: var(--radius-m, 6px);
+  box-shadow: var(--shadow-l, 0 12px 32px rgba(0,0,0,0.12));
+  padding: var(--size-4-2, 10px);
+  z-index: 100;
+  animation: butter-dropdown-in 140ms ease;
+  min-width: 220px;
+}
+.butter-color-grid {
+  display: grid;
+  grid-template-columns: repeat(9, 22px);
+  gap: var(--size-2-2, 4px);
+}
+.butter-color-cell {
+  width: 22px;
+  height: 22px;
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 80ms ease;
+}
+.butter-color-cell:hover {
+  transform: scale(1.15);
+  border-color: var(--interactive-accent);
+}
+.butter-color-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1, 4px);
+  margin-top: var(--size-4-2, 10px);
+  padding-top: var(--size-4-2, 10px);
+  border-top: var(--border-width, 1px) solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller, 12px);
+  color: var(--text-muted);
+}
+.butter-color-clear,
+.butter-color-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-2-2, 4px);
+  padding: var(--size-2-2, 4px) var(--size-4-2, 8px);
+  border: var(--border-width, 1px) solid transparent;
+  border-radius: var(--radius-s, 4px);
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+.butter-color-clear:hover,
+.butter-color-custom:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--background-modifier-border);
+}
+.butter-color-clear .svg-icon,
+.butter-color-custom .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+.butter-color-custom-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.butter-color-custom {
+  position: relative;
+}
+
+/* In-modal variant - the modal already provides chrome, so drop the
+   redundant border/shadow/padding from the popover wrapper. */
+.butter-color-palette-in-modal {
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  background: transparent;
+}
+
 /* ── Link popover ── */
 /* ── Link popover ──────────────────────────────────────────────
    Same chrome as the other Butter toolbar popovers (submenu popup,
    icon picker): rounded, border, shadow. Two stacked input rows
-   each with a leading icon — the target row's icon swaps between
+   each with a leading icon - the target row's icon swaps between
    `globe` (external URL) and `file-text` (wikilink) as the user
    types so the detected link type is obvious at a glance. A small
    hint line below mirrors the same intent in plain language. */
@@ -1810,15 +1901,15 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
 }
 
 /* ── Mobile toolbar (shared positioning) ────────────────────────
-   Two physical bars — main (`.butter-mobile-toolbar`) and table
-   (`.butter-mobile-table-toolbar`) — share `.butter-mobile-bar` for
+   Two physical bars - main (`.butter-mobile-toolbar`) and table
+   (`.butter-mobile-table-toolbar`) - share `.butter-mobile-bar` for
    positioning + safe-area handling. Visual chrome (background,
    pill design, button geometry) is split by `[data-mobile-style]`
    variant. Drift between main and table bars is structurally
    impossible because both bars run through the same selectors.
 
    Pinned above the soft keyboard via `--keyboard-height` (Obsidian
-   sets this on `:root` as the keyboard's pixel height — we
+   sets this on `:root` as the keyboard's pixel height - we
    piggyback the same variable that drives the native mobile bar so
    our bar tracks the keyboard exactly the same way). */
 .butter-mobile-bar {
@@ -1828,13 +1919,13 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   bottom: var(--keyboard-height, 0px);
   z-index: 50;
   /* Safe-area insets for iOS notch / Android display cutouts.
-     Native does this too — without them, a portion of the bar
+     Native does this too - without them, a portion of the bar
      can fall under the home-indicator gesture area. */
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
 }
 
-/* Visibility — controlled via opacity + transform instead of
+/* Visibility - controlled via opacity + transform instead of
    display so the bar fades in/out alongside the keyboard slide
    instead of appearing suddenly. The bar stays in layout always
    (display: block + position: fixed = no document reflow); only
@@ -1843,13 +1934,13 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
    Default state: hidden, translated down by 100% of the bar's
    own height. Combined with `bottom: var(--keyboard-height)`,
    the bar's hidden position is FLUSH with the bar's layout
-   position offset downward — when the keyboard's final height
+   position offset downward - when the keyboard's final height
    pushes the bar up to its docked position, the transform pulls
    it back down so it visually starts at the keyboard's top edge
    (or below the viewport when no keyboard is up) and slides
    UP into place. Matches the keyboard's upward motion direction.
 
-   `cubic-bezier(0.2, 0.8, 0.2, 1)` is a snappy ease-out — the bar
+   `cubic-bezier(0.2, 0.8, 0.2, 1)` is a snappy ease-out - the bar
    accelerates out of its starting offset quickly, then settles
    gently into place. Same curve the drawer uses, for consistency. */
 .butter-mobile-toolbar.butter-mobile-bar,
@@ -1868,11 +1959,11 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   transform: translateY(0);
 }
 
-/* ── "Native" style — pill design (1:1 with Obsidian) ──────────
+/* ── "Native" style - pill design (1:1 with Obsidian) ──────────
    Faithful reproduction of Obsidian's built-in mobile toolbar:
 
      • Outer bar fills the viewport width with `--background-primary`
-       (no border, no blur) — flush with the document so the only
+       (no border, no blur) - flush with the document so the only
        visible element is the pill floating in it.
      • Inner pill is a horizontal capsule:
          - height = `--touch-size-m` (44px)
@@ -1882,7 +1973,7 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
            on desktop where that variable is undefined
          - centered, takes natural width up to the bar's edges
      • Buttons inside the pill are 40px wide (phone) / 50px (tablet)
-       — Obsidian's exact values via `--toolbar-option-width`
+       - Obsidian's exact values via `--toolbar-option-width`
      • Icons rendered at `--icon-l` (18px) with the theme's stroke
      • Hover / press / active states cascade from `.clickable-icon`
        (added on each button by `toolbar-mobile.ts` /
@@ -1897,8 +1988,8 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
    neutral hover tint / 40px). Result: the bar looks identical on
    mobile (where Obsidian provides the tokens) and stays sensibly-
    sized on desktop (where Butter's tests run). */
-.butter-mobile-bar[data-mobile-style="native"] {
-  /* Outer bar is invisible — only the pill is visible chrome.
+.butter-mobile-bar[data-mobile-style="detached"] {
+  /* Outer bar is invisible - only the pill is visible chrome.
      Obsidian's native bar fills the same area with `--background-
      primary` (which blends seamlessly with the doc above the
      keyboard on real mobile), but in our test contexts and on
@@ -1907,23 +1998,23 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
      matches Obsidian's `.is-floating-nav` variant where the pill
      floats with just a soft shadow against whatever's behind it. */
   background: transparent;
-  /* Local override of Obsidian's touch sizing — shrinks the pill
+  /* Local override of Obsidian's touch sizing - shrinks the pill
      from the default 44px to a slightly slimmer 40px to feel less
      bulky over the keyboard. The pill's radius tracks the height
      so it stays a perfect capsule. */
   --touch-size-m: 40px;
   --touch-radius-m: 40px;
 }
-.butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-options-list-container,
-.butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-floating-options {
+.butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-options-list-container,
+.butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-floating-options {
   /* Soft shadow under each pill so it reads as a distinct layer
-     above the doc — same idea as Obsidian's `.is-floating-nav`. */
+     above the doc - same idea as Obsidian's `.is-floating-nav`. */
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
 }
 /* Container row mirrors Obsidian's `.mobile-toolbar-options-
-   container` — flex row centered, with breathing room above and
+   container` - flex row centered, with breathing room above and
    below, gap between the floating pills and the main pill. */
-.butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-options-container {
+.butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-options-container {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1938,7 +2029,7 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
 /* Container that wraps + clips the scrolling main pill. The
    border-radius + overflow:hidden produces the perfect capsule
    shape regardless of whether the list overflows. */
-.butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-options-list-container {
+.butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-options-list-container {
   display: flex;
   flex: 0 1 auto;
   min-width: 0;
@@ -1946,7 +2037,7 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   overflow: hidden;
   background: var(--touch-background, var(--background-modifier-hover));
 }
-.butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-options-list {
+.butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-options-list {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
@@ -1961,13 +2052,13 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
 }
-.butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-options-list::-webkit-scrollbar {
+.butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-options-list::-webkit-scrollbar {
   display: none;
 }
-/* Floating pill — separate small capsule on the side of the main
+/* Floating pill - separate small capsule on the side of the main
    pill (matches Obsidian's right-side tab-switcher pill). Used for
    the swap-between-bars control + the auto-overflow `⋯`. */
-.butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-floating-options {
+.butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-floating-options {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
@@ -1975,10 +2066,10 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   min-width: var(--touch-size-m, 44px);
   background: var(--touch-background, var(--background-modifier-hover));
   border-radius: var(--touch-radius-m, 44px);
-  /* No padding — the inner button fills the pill */
+  /* No padding - the inner button fills the pill */
   padding: 0;
 }
-.butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-option {
+.butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-option {
   flex: 0 0 auto;
   min-width: var(--toolbar-option-width, 40px);
   width: var(--toolbar-option-width, 40px);
@@ -1987,11 +2078,11 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   align-items: center;
   justify-content: center;
   /* Inside the pill, buttons have NO individual radius / hover bg
-     by default — the pill is the visual element. `.clickable-icon`
+     by default - the pill is the visual element. `.clickable-icon`
      hover/press/active states inside the pill use the theme's
      pressed-state tokens (set below) for a subtle focus inkblot.
      Reset UA chrome that survives our padding/border/font resets
-     on `<button>` elements (defensive — we use `<div>` today). */
+     on `<button>` elements (defensive - we use `<div>` today). */
   -webkit-appearance: none;
   appearance: none;
   background: transparent;
@@ -2009,24 +2100,24 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   --icon-size: var(--icon-l, 18px);
   --icon-stroke: var(--icon-l-stroke-width, 1.75px);
 }
-.butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-option svg {
+.butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-option svg {
   width: var(--icon-l, 18px);
   height: var(--icon-l, 18px);
   stroke-width: var(--icon-l-stroke-width, 1.75px);
 }
-/* Active state — when a mark / block is currently applied at the
+/* Active state - when a mark / block is currently applied at the
    caret. Subtle accent-tinted fill that reads as a pressed pill
    segment, not a separate button. `.clickable-icon.is-active` from
    the host theme already paints a similar background; this rule
    shapes the segment to match the pill (full-height, no radius,
    inset margin so the pill's outer rounding stays visible). */
-.butter-mobile-bar[data-mobile-style="native"]
+.butter-mobile-bar[data-mobile-style="detached"]
   .mobile-toolbar-option.is-active {
   background: var(--background-modifier-active-hover);
   color: var(--icon-color-active, var(--interactive-accent));
   border-radius: var(--radius-s, 4px);
 }
-.butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-separator {
+.butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-separator {
   flex: 0 0 auto;
   width: 1px;
   height: 18px;
@@ -2040,12 +2131,12 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
    50px; }` (see app.css:19960). The fallback above already covers
    phone width; this rule supplies the wider width when the body
    class is present and the variable is undefined. */
-body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-option {
+body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-option {
   min-width: var(--toolbar-option-width, 50px);
   width: var(--toolbar-option-width, 50px);
 }
 
-/* ── "Butter" style — solid keyboard-chrome bar ───────────────
+/* ── "Butter" style - solid keyboard-chrome bar ───────────────
    Reads as a continuation of the soft keyboard's chrome rather
    than a floating UI: full-width solid surface with a hairline
    top border, no rounded pill, no backdrop blur. The DOM shape
@@ -2056,33 +2147,33 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-op
          └─ .butter-mobile-bar-chrome  (right-side swap toggle, only
               visible per the body-class state machine)
    The `+` button opens the insert drawer (see
-   `.butter-mobile-insert-drawer` rules below) — a 2-column grid
+   `.butter-mobile-insert-drawer` rules below) - a 2-column grid
    of slash-menu items that takes the place of the keyboard while
    the toolbar stays anchored. */
-.butter-mobile-bar[data-mobile-style="butter"] {
+.butter-mobile-bar[data-mobile-style="attached"] {
   background: var(--background-secondary);
   border-top: 1px solid var(--background-modifier-border);
   /* Anchor at viewport bottom (overriding the shared `bottom:
      var(--keyboard-height)`), then push the bar's content row up
      via padding-bottom equal to the keyboard's height. The bar's
-     bg fills the entire box from row-top to viewport-bottom — so
+     bg fills the entire box from row-top to viewport-bottom - so
      while the keyboard slides UP into its docked position, the
      space below the row is already covered with toolbar bg
      instead of briefly showing note content. */
   bottom: 0;
   padding-bottom: var(--keyboard-height, 0px);
 }
-.butter-mobile-bar[data-mobile-style="butter"] .butter-mobile-bar-row {
+.butter-mobile-bar[data-mobile-style="attached"] .butter-mobile-bar-row {
   display: flex;
   align-items: stretch;
   /* List takes all remaining width; chrome (swap) sits on the right
-     at its natural width. 40px tall — slim enough to feel like
+     at its natural width. 40px tall - slim enough to feel like
      keyboard chrome but still hits the Material/Apple touch-target
      minimum width-wise (button width stays at 44px). */
   width: 100%;
   height: 40px;
 }
-.butter-mobile-bar[data-mobile-style="butter"] .butter-mobile-bar-list {
+.butter-mobile-bar[data-mobile-style="attached"] .butter-mobile-bar-list {
   display: flex;
   flex: 1 1 auto;
   align-items: center;
@@ -2095,7 +2186,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-op
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
   min-width: 0;
-  /* Right-edge fade — buttons that scroll past the visible area
+  /* Right-edge fade - buttons that scroll past the visible area
      appear to fade INTO the chrome rather than getting hard-clipped
      against it. Combined with the chrome's left-side shadow below,
      the effect reads as "buttons slide under the toggle". The fade
@@ -2112,21 +2203,21 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-op
     black calc(100% - 16px),
     transparent 100%
   );
-  /* Hint the compositor — the rubber-band overscroll handler
+  /* Hint the compositor - the rubber-band overscroll handler
      (`installOverscrollRubberBand` in `toolbar-mobile.ts`) sets a
      `translateX` here on edge over-drag. */
   will-change: transform;
 }
-.butter-mobile-bar[data-mobile-style="butter"] .butter-mobile-bar-list::-webkit-scrollbar {
+.butter-mobile-bar[data-mobile-style="attached"] .butter-mobile-bar-list::-webkit-scrollbar {
   display: none;
 }
-/* Right-side chrome — swap toggle, separated from the formatting
+/* Right-side chrome - swap toggle, separated from the formatting
    row by a soft shadow on its left edge so the buttons appear to
    scroll UNDER the toggle (not next to it). Replaces the previous
-   hairline border — the shadow does the same divider job while
+   hairline border - the shadow does the same divider job while
    adding depth, and pairs with the list's right-edge fade-mask
    above. */
-.butter-mobile-bar[data-mobile-style="butter"] .butter-mobile-bar-chrome {
+.butter-mobile-bar[data-mobile-style="attached"] .butter-mobile-bar-chrome {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -2139,7 +2230,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-op
   /* 1px hairline matching the bar's top border, plus a soft halo
      shadow tinted in the toolbar's own bg color. The shadow
      extends `--background-secondary` leftward into the formatting
-     row, blending seamlessly with the toolbar surface — the fade-
+     row, blending seamlessly with the toolbar surface - the fade-
      mask on the list (right edge → transparent) reveals what's
      "behind" the buttons, which is this halo of toolbar-color.
      Net effect: scrolling buttons literally dissolve into the
@@ -2147,11 +2238,11 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-op
   border-left: 1px solid var(--background-modifier-border);
   box-shadow: -8px 0 10px -2px var(--background-secondary);
 }
-/* `+` insert button — visually identical to other formatting
+/* `+` insert button - visually identical to other formatting
    buttons (per spec: "just like the others"); only its handler
    differs (opens the insert drawer instead of dispatching a
    single command). */
-.butter-mobile-bar[data-mobile-style="butter"] .mobile-toolbar-option {
+.butter-mobile-bar[data-mobile-style="attached"] .mobile-toolbar-option {
   flex: 0 0 auto;
   min-width: 44px;
   width: 44px;
@@ -2172,15 +2263,15 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-op
   box-sizing: border-box;
   --icon-size: 20px;
 }
-.butter-mobile-bar[data-mobile-style="butter"] .mobile-toolbar-option svg {
+.butter-mobile-bar[data-mobile-style="attached"] .mobile-toolbar-option svg {
   width: 20px;
   height: 20px;
 }
-.butter-mobile-bar[data-mobile-style="butter"] .mobile-toolbar-option.is-active {
+.butter-mobile-bar[data-mobile-style="attached"] .mobile-toolbar-option.is-active {
   background: hsla(var(--interactive-accent-hsl), 0.18);
   color: var(--interactive-accent);
 }
-.butter-mobile-bar[data-mobile-style="butter"] .mobile-toolbar-separator {
+.butter-mobile-bar[data-mobile-style="attached"] .mobile-toolbar-separator {
   flex: 0 0 auto;
   width: 1px;
   height: 24px;
@@ -2231,7 +2322,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-op
   margin: 4px 0;
 }
 
-/* Mobile overflow bottom sheet — opened from the auto-injected
+/* Mobile overflow bottom sheet - opened from the auto-injected
    `⋯` button at the end of the mobile toolbar (or an explicit
    `{type:"overflow"}` item the user added). Slides in from the
    bottom of the viewport, lists every action in the current
@@ -2335,7 +2426,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-op
   font-size: var(--font-ui-medium, 14px);
 }
 
-/* Modal action row (Cancel / Insert etc.) — right-aligned, gap'd. */
+/* Modal action row (Cancel / Insert etc.) - right-aligned, gap'd. */
 .butter-mobile-modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -2381,15 +2472,193 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-op
   padding: 0 16px;
 }
 
-/* Desktop / Mobile segmented switcher in the settings tab — sits
-   above the primary-toolbar layout editor. Uses Obsidian's native
-   setting-item chrome; only specific tweak is gap + tighter button
-   spacing so the two buttons read as a group. */
-.butter-toolbar-segment-switcher .setting-item-control {
-  gap: 6px;
+/* Tab-level Desktop / Mobile platform switcher.
+   Sliding-pill segmented control. Container matches the corner
+   radius and surface tone of Obsidian's native setting-group cards
+   so it reads as part of the same visual hierarchy. The accent-
+   colored pill is a single absolutely-positioned element that
+   translates between the two segments - it's the pill that moves,
+   not the buttons that fill, so the eye tracks the active position
+   rather than seeing two separate buttons. */
+.butter-toolbar-platform-switcher {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  margin: var(--size-4-3, 12px) 0 var(--size-4-4, 16px);
+  padding: 4px;
+  background: var(--background-secondary);
+  /* Match Obsidian's setting-group card radius. Default desktop is
+     `--radius-l` (12px). Mobile setting cards are visibly larger -
+     they use the iOS-style chunky radius - so override below. */
+  border-radius: var(--radius-l, 12px);
+  isolation: isolate;
 }
-.butter-toolbar-segment-switcher .setting-item-control > button {
-  padding: 4px 12px;
+.is-mobile .butter-toolbar-platform-switcher {
+  /* Bump to match Obsidian's mobile setting-group card radius.
+     Mobile uses a chunkier iOS-style radius on cards; try the
+     `--mobile-radius` var Obsidian exposes on mobile, falling
+     back to a literal value that empirically matches the
+     setting-group corners. */
+  border-radius: var(--mobile-radius, 22px);
+}
+.butter-toolbar-platform-switcher__indicator {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  background: var(--interactive-accent);
+  /* Indicator radius is the container radius minus the 4px inner
+     padding so the pill sits nested inside the track with even
+     edges all around. */
+  border-radius: calc(var(--radius-l, 12px) - 4px);
+  transform: translateX(0);
+  transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+  z-index: 0;
+}
+.is-mobile .butter-toolbar-platform-switcher__indicator {
+  border-radius: calc(var(--mobile-radius, 22px) - 4px);
+}
+.butter-toolbar-platform-switcher[data-segment="mobile"]
+  .butter-toolbar-platform-switcher__indicator {
+  transform: translateX(100%);
+}
+/* All-state reset. Obsidian's settings pane scopes its button
+   styling under `.modal-content button` / `.vertical-tab-content
+   button` (0,1,1 = 11 specificity), which beats a single-class
+   selector at rest. Prefixing every rule with the parent class
+   raises us to 0,2,0 = 20 across ALL states (including the resting
+   base), so the native button chrome can't leak through anywhere.
+   Mobile-specific: `-webkit-tap-highlight-color` is the gray
+   overlay iOS / Chrome on Android paint on tap. Killing it plus
+   the `:active` state prevents the native button flash that
+   shows for ~1 frame between touchstart and the JS state swap. */
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn,
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn:hover,
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn:active,
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn:focus,
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn:focus-within,
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn:focus-visible {
+  /* `!important` on every reset property because Obsidian's mobile
+     bundle scopes button styling under `body.is-mobile ...` /
+     `body.is-phone ...` selectors that out-specificity even a
+     parent-prefixed class chain. Without `!important`, the resting
+     state lands ours but `:active` (during touchstart) flickers
+     through Obsidian's mobile button chrome for ~1 frame. */
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  transform: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+  -webkit-tap-highlight-color: transparent !important;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.is-mobile .butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn {
+  border-radius: calc(var(--mobile-radius, 22px) - 4px);
+}
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: calc(var(--radius-l, 12px) - 4px);
+  padding: 7px 14px;
+  min-height: 30px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  /* Slight delay on the color transition so the text-on-accent
+     swap doesn't happen before the pill has moved underneath. */
+  transition: color 180ms ease 60ms;
+}
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn:hover:not(.is-active) {
+  color: var(--text-normal);
+}
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn.is-active {
+  color: var(--text-on-accent);
+}
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+.butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__icon .svg-icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* `.butter-setting-group` is a scope marker, intentionally without
+   any rules of its own. Markup-only class so future Butter-specific
+   tweaks (or temporary overrides) have a hook that won't conflict
+   with Obsidian native or other plugins' `.setting-group` styling. */
+
+/* Icon prefix on the "Customize buttons" intro row. The icon shares
+   the row's text color and sits inline with the title, separated by
+   a small gap. Vertical centering with the text via inline-flex on
+   the icon wrap plus baseline alignment. */
+.butter-customize-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  vertical-align: -3px;
+  color: var(--text-muted);
+}
+.butter-customize-icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Dimmed-italic platform tag rendered next to a setting-group
+   heading (e.g. "Layout [monitor] Desktop"). Mirrors the existing
+   .butter-preset-tag treatment for "Experimental" so segment-aware
+   sections read with the same visual rhythm as the rest of the
+   settings UI. */
+.butter-platform-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 0.5em;
+  color: var(--text-muted);
+  font-style: italic;
+  font-weight: normal;
+  vertical-align: baseline;
+}
+/* Dot separator. Sits before the icon as a flex item so it picks
+   up the same 5px gap on both sides for symmetric spacing.
+   Non-italic so the dot stays vertically aligned with the heading
+   baseline rather than tilting. */
+.butter-platform-tag::before {
+  content: "·";
+  font-style: normal;
+  opacity: 0.7;
+}
+.butter-platform-tag__icon {
+  display: inline-flex;
+  align-items: center;
+}
+.butter-platform-tag__icon .svg-icon {
+  width: 13px;
+  height: 13px;
 }
 .butter-toolbar-segment-body {
   margin-bottom: var(--size-4-4, 16px);
@@ -2397,7 +2666,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="native"] .mobile-toolbar-op
 
 /* Suppress Obsidian's native mobile toolbar inside Butter views.
    `body.butter-mobile-active` is toggled by the view whenever any
-   Butter editor holds focus — so non-Butter notes still show the
+   Butter editor holds focus - so non-Butter notes still show the
    native bar normally. The `:not(.butter-mobile-bar)` exclusion is
    defense-in-depth: today neither of our bars carries the
    `.mobile-toolbar` class, but if a future change reintroduces it
@@ -2410,13 +2679,13 @@ body.butter-mobile-active .mobile-toolbar:not(.butter-mobile-bar) {
    When the caret enters a table cell on mobile, the table toolbar
    plugin (`src/table-toolbar.ts`) flips on `body.butter-mobile-
    table-active`. The class hides the main mobile toolbar and
-   reveals the table toolbar in its place — same screen real estate,
+   reveals the table toolbar in its place - same screen real estate,
    swapped chrome.
 
    ALL chrome (size, padding, button geometry, native vs butter
    styling) lives on `.butter-mobile-bar` above and applies to both
    bars. The mobile bar wears `.butter-mobile-table-toolbar` (no
-   `.butter-table-toolbar`) — the class namespaces are kept disjoint
+   `.butter-table-toolbar`) - the class namespaces are kept disjoint
    on purpose, so desktop rules can't leak into the mobile bar via
    shared class names. Only visibility logic lives in this block. */
 /* Show the table bar ONLY when caret is in a cell AND the editor
@@ -2424,10 +2693,10 @@ body.butter-mobile-active .mobile-toolbar:not(.butter-mobile-bar) {
    `refreshButterMobileBodyClass` in main.ts whenever an element
    inside a Butter view has focus. When the user dismisses the
    keyboard, the editor blurs, that body class clears, and the
-   table bar fades out — matching the main bar's focus-driven
+   table bar fades out - matching the main bar's focus-driven
    visibility. (Without the focus gate the table bar would persist
    at the bottom of the screen with no keyboard, since the table-
-   active class only clears on caret-leaves-cell — which doesn't
+   active class only clears on caret-leaves-cell - which doesn't
    fire on a simple keyboard dismiss.) */
 body.butter-mobile-active.butter-mobile-table-active
   .butter-mobile-table-toolbar.butter-mobile-bar {
@@ -2435,7 +2704,7 @@ body.butter-mobile-active.butter-mobile-table-active
   pointer-events: auto;
   transform: translateY(0);
 }
-/* Caret in cell — fade out the main bar (table bar takes over).
+/* Caret in cell - fade out the main bar (table bar takes over).
    Higher specificity than the focus-driven `toolbar-visible` rule
    so it wins when both apply. */
 body.butter-mobile-table-active .butter-mobile-toolbar.butter-mobile-bar {
@@ -2445,15 +2714,15 @@ body.butter-mobile-table-active .butter-mobile-toolbar.butter-mobile-bar {
 }
 
 /* ── Floating-options pills (swap + overflow) ─────────────────
-   Each mobile bar can have one or two siblings of the main pill —
+   Each mobile bar can have one or two siblings of the main pill
    `.mobile-toolbar-floating-options` containers, the same shape
    Obsidian uses for its right-side tab-switcher pill. We use them
    for: the swap-between-bars control (left) + the auto-overflow
    `⋯` (right, on main bar only).
 
    Visibility state machine (body classes):
-     • `butter-mobile-table-active` — caret is in a table cell
-     • `butter-mobile-prefer-main`  — user manually preferred the
+     • `butter-mobile-table-active` - caret is in a table cell
+     • `butter-mobile-prefer-main`  - user manually preferred the
        main bar (from the table bar's swap pill)
    The state combos drive which bar AND which pills show:
      • Default (caret outside table): main bar visible, only
@@ -2467,16 +2736,16 @@ body.butter-mobile-table-active .butter-mobile-toolbar.butter-mobile-bar {
    rules above (same specificity wins by source order) so the
    overrides below take effect. */
 /* ── Chrome slot state machine (right side of every bar) ───────
-   The chrome slot — `.mobile-toolbar-floating-options.butter-
+   The chrome slot - `.mobile-toolbar-floating-options.butter-
    mobile-chrome-pill` (native) or `.butter-mobile-bar-chrome`
-   (butter) — sits on the RIGHT side of every mobile bar. It
+   (butter) - sits on the RIGHT side of every mobile bar. It
    contains up to three buttons; CSS shows exactly one (or none)
    based on the body-class state machine, in priority order:
 
      1. Drawer open       → `.butter-mobile-close-btn` (close `x`)
      2. In-table override → `.butter-mobile-swap-btn`  (swap toggle)
      3. Main bar default  → `.butter-mobile-overflow-auto` (`⋯`,
-                            native only — butter has no overflow)
+                            native only - butter has no overflow)
 
    Predictable-position policy: any toolbar action lives in the
    right slot, so muscle memory tracks ONE position regardless of
@@ -2486,7 +2755,7 @@ body.butter-mobile-table-active .butter-mobile-toolbar.butter-mobile-bar {
    `.mobile-toolbar-option` to match the specificity of the style-
    specific rules that set `display: flex` on every option (the
    `.butter-mobile-bar[data-mobile-style="..."] .mobile-toolbar-
-   option { display: flex }` rules above) — without the matched
+   option { display: flex }` rules above) - without the matched
    specificity these `display: none` rules are ignored and every
    button stays visible. */
 .butter-mobile-bar .mobile-toolbar-option.butter-mobile-swap-btn,
@@ -2499,7 +2768,7 @@ body.butter-mobile-table-active .butter-mobile-toolbar.butter-mobile-bar {
    show the hide-keyboard button so users have a fast way to dismiss
    the on-screen keyboard. The other slot states (drawer, in-table)
    override this with their higher-priority buttons. */
-.butter-mobile-bar[data-mobile-style="butter"].butter-mobile-toolbar
+.butter-mobile-bar[data-mobile-style="attached"].butter-mobile-toolbar
   .mobile-toolbar-option.butter-mobile-hide-kb-btn {
   display: flex;
 }
@@ -2538,7 +2807,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar .mobile-toolbar-option.butter-
    focus). The drawer needs to blur the editor to dismiss the
    keyboard, which otherwise fades the bar out. Drawer-open forces
    the bar back on so it stays anchored above the drawer. (Table
-   bar isn't included — drawer can only open from main bar; if the
+   bar isn't included - drawer can only open from main bar; if the
    user was in prefer-main + cell when they tapped `+`, the table
    bar stays correctly hidden via the prefer-main rule above.) */
 body.butter-mobile-drawer-open .butter-mobile-toolbar.butter-mobile-bar {
@@ -2547,12 +2816,12 @@ body.butter-mobile-drawer-open .butter-mobile-toolbar.butter-mobile-bar {
   transform: translateY(0) !important;
   /* Bar above the drawer. For butter style, also reset the
      keyboard-height padding (the drawer is the visible element
-     below the bar — bar's padding would overlap and hide it). */
+     below the bar - bar's padding would overlap and hide it). */
   bottom: var(--butter-mobile-drawer-height, 320px) !important;
   padding-bottom: 0 !important;
 }
 
-/* Butter chrome wrapper visibility — now always shown because the
+/* Butter chrome wrapper visibility - now always shown because the
    default-state hide-keyboard button always occupies the slot.
    Inner-button visibility (swap/close/hide-kb) is selected by the
    body-class state machine above.
@@ -2562,30 +2831,30 @@ body.butter-mobile-drawer-open .butter-mobile-toolbar.butter-mobile-bar {
    • Main bar + prefer-main + in-table: swap visible
    • Table bar: swap visible (table-active is always on when table bar shows)
    Native's chrome pill has the `⋯` overflow as a fallback. */
-.butter-mobile-bar[data-mobile-style="butter"] .butter-mobile-bar-chrome {
+.butter-mobile-bar[data-mobile-style="attached"] .butter-mobile-bar-chrome {
   display: flex;
 }
-.butter-mobile-bar[data-mobile-style="butter"].butter-mobile-table-toolbar
+.butter-mobile-bar[data-mobile-style="attached"].butter-mobile-table-toolbar
   .butter-mobile-bar-chrome {
   display: flex;
 }
 body.butter-mobile-table-active.butter-mobile-prefer-main
-  .butter-mobile-bar[data-mobile-style="butter"].butter-mobile-toolbar
+  .butter-mobile-bar[data-mobile-style="attached"].butter-mobile-toolbar
   .butter-mobile-bar-chrome,
 body.butter-mobile-drawer-open
-  .butter-mobile-bar[data-mobile-style="butter"].butter-mobile-toolbar
+  .butter-mobile-bar[data-mobile-style="attached"].butter-mobile-toolbar
   .butter-mobile-bar-chrome {
   display: flex;
 }
 
 /* Prefer-main overrides the auto-swap. Hide table bar, show main
-   even though caret is in a cell — but only while the editor is
+   even though caret is in a cell - but only while the editor is
    focused. `body.butter-mobile-active` is the focus gate; without
    it, the rule doesn't match on keyboard-dismiss and the main bar
    follows its default focus-driven hide. (Without the focus gate
    the main bar would persist at the bottom of the screen after
    keyboard dismiss, since `prefer-main` only clears when the user
-   taps the swap-back-to-table toggle — which doesn't fire on a
+   taps the swap-back-to-table toggle - which doesn't fire on a
    simple keyboard close.) */
 body.butter-mobile-prefer-main .butter-mobile-table-toolbar.butter-mobile-bar {
   opacity: 0 !important;
@@ -2603,7 +2872,7 @@ body.butter-mobile-active.butter-mobile-prefer-main
    Activated by tapping the `+` button on the butter mobile bar.
    Replaces the soft keyboard with a 2-column grid of slash-menu
    items in the same screen area, so the toolbar stays anchored.
-   Mechanics owned by `src/insert-drawer.ts` — it captures the
+   Mechanics owned by `src/insert-drawer.ts` - it captures the
    keyboard's height into `--butter-mobile-drawer-height`, adds
    `body.butter-mobile-drawer-open` (which freezes the bar's
    position via the rule below), and mounts the drawer at
@@ -2612,7 +2881,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   /* Anchor the bar at the drawer's TOP (where the keyboard's top
      used to be) so it doesn't drop when the keyboard animates
      away. The height var is set inline on `body` by the drawer
-     opener — a fallback covers the brief gap before it lands. */
+     opener - a fallback covers the brief gap before it lands. */
   bottom: var(--butter-mobile-drawer-height, 320px) !important;
 }
 .butter-mobile-insert-drawer {
@@ -2646,7 +2915,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   transform: translateY(0);
 }
 .butter-mobile-insert-drawer-handle {
-  /* Subtle grab indicator at the very top edge — purely visual.
+  /* Subtle grab indicator at the very top edge - purely visual.
      Tap-to-close lives on the bar's chrome slot (right side). */
   width: 36px;
   height: 4px;
@@ -2702,7 +2971,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   height: 14px;
 }
 
-/* Block-actions tile states — mirror the desktop block-context
+/* Block-actions tile states - mirror the desktop block-context
    menu's red Delete + the checked indicator for current values
    (e.g. the active heading level inside Turn-into). */
 .butter-mobile-insert-drawer-tile[data-warning="true"] {
@@ -2712,9 +2981,9 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   .butter-mobile-insert-drawer-tile-icon {
   color: var(--text-error, var(--text-muted));
 }
-/* Active turn-into target — accent the whole tile (text + icon)
+/* Active turn-into target - accent the whole tile (text + icon)
    so the current state reads at a glance instead of relying on a
-   tiny dot. Drops the previous `::after` accent dot — the color
+   tiny dot. Drops the previous `::after` accent dot - the color
    alone is the cue, no need to double up. */
 .butter-mobile-insert-drawer-tile[data-current="true"] {
   color: var(--interactive-accent);
@@ -2723,7 +2992,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   .butter-mobile-insert-drawer-tile-icon {
   color: var(--interactive-accent);
   /* Override the default 0.75 dimmer used to differentiate icons
-     from labels — the active state wants both to read at full
+     from labels - the active state wants both to read at full
      accent strength. */
   opacity: 1;
 }
@@ -2736,13 +3005,13 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
 }
 .butter-mobile-insert-drawer-grid {
   /* 2-column grid of compact tiles. Reads as a large extension of
-     the toolbar — same flat surface, same icon-leading rhythm,
+     the toolbar - same flat surface, same icon-leading rhythm,
      no card chrome per tile. Side padding matches the editor's
      `--file-margins` so the drawer's content column visually
      aligns with the note's content column above the keyboard.
 
      `align-content: start` packs rows to the top instead of CSS
-     grid's default `stretch` — without it, a sparse drawer (e.g.
+     grid's default `stretch` - without it, a sparse drawer (e.g.
      Block actions on a paragraph: only Copy / Duplicate / Delete)
      distributes the empty drawer height across rows, blowing up
      each tile to ~70 px and leaving big gaps between them. */
@@ -2756,7 +3025,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
-/* Category divider — full-width header above each group of items
+/* Category divider - full-width header above each group of items
    (Headings / Lists / Structural / Code & data / Callouts). Spans
    both columns of the grid via `grid-column: 1 / -1`. Sits flush
    against the items below it; the small top margin (except on the
@@ -2779,9 +3048,9 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
 .butter-mobile-insert-drawer-tile {
   /* Slim, toolbar-style tap target. No solid background by
      default; subtle press state via `:active`. Compact min-height
-     keeps the drawer dense — 30+ slash items fit comfortably with
+     keeps the drawer dense - 30+ slash items fit comfortably with
      just light scrolling on most phones. Label color matches the
-     mobile toolbar's icon color (`--text-muted`) — drawer reads
+     mobile toolbar's icon color (`--text-muted`) - drawer reads
      as a continuation of the toolbar's chrome surface. */
   display: flex;
   align-items: center;
@@ -2827,7 +3096,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   text-overflow: ellipsis;
 }
 
-/* Fake caret — drawn at the saved selection coords while the
+/* Fake caret - drawn at the saved selection coords while the
    drawer is open and the editor is blurred, so the user sees
    WHERE the inserted block will land. Cleaned up by the drawer's
    close path. The blink animation matches the look of a native
@@ -2850,7 +3119,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
    `.butter-table-toolbar` element while in a mobile context, hide
    it. The mobile bar deliberately does NOT carry that class
    (`src/table-toolbar.ts` only stamps it on the desktop branch),
-   so this rule shouldn't normally match anything — it's a safety
+   so this rule shouldn't normally match anything - it's a safety
    net for future regressions. */
 .is-mobile .butter-table-toolbar {
   display: none !important;
@@ -2883,7 +3152,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
    ══════════════════════════════════════════ */
 
 /* All view-header chrome below is desktop-only. Scoped via
-   body:not(.is-mobile) ancestor — on mobile, Obsidian owns the
+   body:not(.is-mobile) ancestor - on mobile, Obsidian owns the
    view-header chrome (it's `position: fixed` in floating-nav,
    .mod-raised children get backdrop-filter blur for a frosted-
    glass look). Touching any of these rules on mobile overrides
@@ -2892,7 +3161,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
    shows raw), and visually pushing the note down. Leave it
    alone on mobile. */
 
-/* No special border on the Butter view-header — flush handoff to the
+/* No special border on the Butter view-header - flush handoff to the
    toolbar below it, no visual seam between tab title bar and our
    chrome row. The toolbar's own hairline separates from content. */
 body:not(.is-mobile) .butter-view-root .view-header {
@@ -2900,11 +3169,11 @@ body:not(.is-mobile) .butter-view-root .view-header {
   box-shadow: none;
 }
 
-/* Style the view-header file title as a centered pill — same
+/* Style the view-header file title as a centered pill - same
    size/shape footprint the previous Butter indicator chip had,
    but with the actual file title inside. Absolutely positioned so
    it sits in the center of the view-header without competing with
-   the flex layout of nav-buttons (left) and view-actions (right) —
+   the flex layout of nav-buttons (left) and view-actions (right)
    those keep their natural positions on the far edges. */
 body:not(.is-mobile) .butter-view-root .view-header {
   position: relative;
@@ -2946,17 +3215,16 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
   color: var(--text-normal);
 }
 
-/* Hide the native LP/Reading toggle in markdown views — our cycle
-   action button (added via addAction in onload) replaces it. Native
-   button's aria-label always starts with "Toggle to" across all
-   three states (Toggle to source, Toggle to live preview, Toggle to
-   reading view) — we match the prefix to catch all variants without
-   brittle case-sensitive locale-sensitive matching. */
-.workspace-leaf-content[data-type="markdown"]
-  .view-actions
-  .clickable-icon[aria-label^="Toggle to"] {
-  display: none !important;
-}
+/* Native LP/Reading toggle is hidden per-view by main.ts's
+   hideNativeToggleIn() once Butter's own cycle action has been
+   mounted on that leaf. A previous blanket CSS rule here hid the
+   native toggle on EVERY markdown leaf - including ones where the
+   plugin hadn't yet installed its cycle button (e.g. deferred views,
+   teardown windows, leaves opened before the workspace layout-ready
+   signal). That left brief or persistent gaps with no toggle at
+   all. The JS path runs in the right order (add cycle button, THEN
+   hide native) so dropping the CSS rule closes the audit finding
+   without losing the intended UX. */
 
 
 
@@ -3187,19 +3455,27 @@ body.butter-zen .butter-toolbar:hover {
    Visual style follows Better-Claude's pattern: small underline-on-
    active, muted/normal/accent color states, native font sizes. Two
    intentional differences:
-     1. NOT position: sticky — sticky fights the keyboard on mobile
+     1. NOT position: sticky - sticky fights the keyboard on mobile
         and rarely earns its keep at this scroll length.
      2. Horizontal scroll on overflow so the row of tabs never
         forces the settings page wider than the modal viewport.
         Scrollbar is hidden for the clean look; tabs still scroll
         via touch swipe / trackpad / shift-wheel.
    ══════════════════════════════════════════ */
+/* Wrap holds the scrollable tab bar plus its overflow indicators.
+ * Position:relative so the absolute-positioned indicators anchor
+ * to the wrap's bounds. The bottom border lives here (not on
+ * .butter-settings-tabs) so the indicators sit on top of it
+ * uninterrupted instead of leaving a visible gap at each edge. */
+.butter-settings-tabs-wrap {
+  position: relative;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
 .butter-settings-tabs {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid var(--background-modifier-border);
-  margin-bottom: 16px;
-  /* Horizontal scroll on overflow — page width never exceeds the modal. */
+  /* Horizontal scroll on overflow - page width never exceeds the modal. */
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -3209,43 +3485,137 @@ body.butter-zen .butter-toolbar:hover {
 }
 .butter-settings-tabs::-webkit-scrollbar { display: none; height: 0; }
 
-.butter-settings-tab {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  padding: 8px 16px;
+/* Overflow indicators - chevrons that appear at the bar's edges
+ * when content is scrolled off-screen. Clickable, scroll by one
+ * tab's width in their direction. Visible state is toggled by
+ * .is-visible from JS. A subtle background gradient hints that
+ * content continues underneath. */
+.butter-settings-tabs-indicator {
+  position: absolute;
+  top: 0;
+  bottom: 1px;            /* leave the bottom border visible underneath */
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.15s ease, color 0.15s ease;
+  z-index: 1;
+}
+.butter-settings-tabs-indicator.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.butter-settings-tabs-indicator:hover {
+  color: var(--text-normal);
+}
+.butter-settings-tabs-indicator:focus {
+  outline: none;
+}
+.butter-settings-tabs-indicator:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+.butter-settings-tabs-indicator.is-left {
+  left: 0;
+  background: linear-gradient(
+    to right,
+    var(--background-secondary) 0%,
+    var(--background-secondary) 50%,
+    transparent 100%
+  );
+}
+.butter-settings-tabs-indicator.is-right {
+  right: 0;
+  background: linear-gradient(
+    to left,
+    var(--background-secondary) 0%,
+    var(--background-secondary) 50%,
+    transparent 100%
+  );
+}
+.butter-settings-tabs-indicator .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* The tab is a <div role="tab">, not a <button>, specifically so
+ * Obsidian's and themes' button styling doesn't apply. The resets
+ * below are explicit so even if a theme reaches the class directly,
+ * the tab stays a plain text label with an underline-on-active.
+ * `box-shadow` and `background` reset matter most - those are what
+ * common themes use to give buttons their "chip" look. */
+.butter-settings-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  margin: 0;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
   color: var(--text-muted);
   font-size: var(--font-ui-small);
   font-weight: var(--font-medium);
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition: color 0.15s ease, border-color 0.15s ease;
-  user-select: none;
   font-family: inherit;
-  border-radius: 0;
+  line-height: 1.4;
+  text-shadow: none;
+  cursor: pointer;
+  user-select: none;
   flex: 0 0 auto;
   white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+/* `.butter-settings-tab-icon` rules retained for back-compat with
+   any in-flight DOM that hasn't picked up the icon-removal yet, but
+   the markup no longer creates the span. Safe to delete in a future
+   pass once we're sure no stale builds reference the class. */
+.butter-settings-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+.butter-settings-tab-icon .svg-icon {
+  width: 15px;
+  height: 15px;
 }
 .butter-settings-tab:hover {
   color: var(--text-normal);
   background: transparent;
+  background-color: transparent;
+  box-shadow: none;
 }
 .butter-settings-tab.is-active {
   color: var(--text-accent);
   border-bottom-color: var(--interactive-accent);
+  background: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+.butter-settings-tab:focus {
+  outline: none;
+  box-shadow: none;
 }
 .butter-settings-tab:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--interactive-accent);
-  border-radius: 4px;
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
 }
 
 .butter-settings-tab-body {
   padding-bottom: 24px;
 }
 
-/* ── License tab — minimal hooks for native Setting rows ─────── */
+/* ── License tab - minimal hooks for native Setting rows ─────── */
 
 /* Inline error message under license-key validation. */
 .butter-account-error {
@@ -3255,7 +3625,7 @@ body.butter-zen .butter-toolbar:hover {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   License tab — gemini layout
+   License tab - gemini layout
 
    The state-adaptive surface is a four-zone vertical stack inside
    a constrained-width column: a brand stamp at the top (constant
@@ -3278,7 +3648,7 @@ body.butter-zen .butter-toolbar:hover {
 }
 
 /* The polished header zone (brand stamp + hero) above the License
-   settings group. Full-width — the rows below render as native
+   settings group. Full-width - the rows below render as native
    Obsidian setting-items inside a native section group, so this
    is purely the emotional layer that introduces them. */
 .butter-license-frame {
@@ -3289,7 +3659,7 @@ body.butter-zen .butter-toolbar:hover {
   gap: 18px;
 }
 
-/* License section — pure native Obsidian setting-group rhythm.
+/* License section - pure native Obsidian setting-group rhythm.
    No card surface, no contrast background, no custom chrome. The
    per-state info renders as a stack of standard `.setting-item`
    rows: state name + desc on the left, primary action on the
@@ -3299,7 +3669,7 @@ body.butter-zen .butter-toolbar:hover {
   align-items: center;
 }
 
-/* Inline mono key display — sits in the License-key row's desc
+/* Inline mono key display - sits in the License-key row's desc
    slot. Selectable, word-breakable for long keys. */
 .butter-license-keyview {
   display: inline-block;
@@ -3315,7 +3685,7 @@ body.butter-zen .butter-toolbar:hover {
   margin-top: 4px;
 }
 
-/* Pulse skeleton placeholders — used only by the Devices section
+/* Pulse skeleton placeholders - used only by the Devices section
    while the /devices fetch is in flight. (The License-section
    hero's polling state is handled by the ticket itself, which
    renders a spinner in its stub instead of skeleton shapes.) */
@@ -3331,7 +3701,7 @@ body.butter-zen .butter-toolbar:hover {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.4; }
 }
-/* Soft hint paragraph in the Devices section — both the
+/* Soft hint paragraph in the Devices section - both the
    "sign in on another machine to add it here" line under the
    current-device row and the "no active license on this device"
    line for unlicensed states. */
@@ -3343,7 +3713,7 @@ body.butter-zen .butter-toolbar:hover {
   font-style: italic;
 }
 
-/* Polling skeleton rows — match the native .setting-item rhythm
+/* Polling skeleton rows - match the native .setting-item rhythm
    (padding + border) so transitioning skeleton → resolved-trial
    doesn't cause layout shift. */
 .butter-license-skeleton-row {
@@ -3360,18 +3730,27 @@ body.butter-zen .butter-toolbar:hover {
   min-width: 0;
 }
 
-/* ── License-required banner inside ButterEditorView ─────────── */
+/* ── License-required banner ──────────────────────────────────
+   The banner docks into the toolbar's stack as another row,
+   matching how the table toolbar attaches to the main toolbar.
+   Flush horizontal layout, no margin, hairline border on whichever
+   edge faces the editor content (top edge when toolbar-pos=top
+   since the toolbar is above the content; bottom edge when
+   toolbar-pos=bottom). The icon column carries the only colour
+   accent - a small yellow lock/warning - so the banner doesn't
+   dominate the chrome but is still scannable. */
 .butter-license-banner {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 14px;
-  margin: 8px 12px 12px;
+  padding: 6px 12px;
   background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-left: 3px solid var(--color-yellow);
-  border-radius: 6px;
-  font-size: 13px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-small);
+}
+.butter-toolbar-stack[data-toolbar-pos="bottom"] .butter-license-banner {
+  border-bottom: none;
+  border-top: 1px solid var(--background-modifier-border);
 }
 .butter-license-banner-icon {
   display: flex;
@@ -3379,26 +3758,35 @@ body.butter-zen .butter-toolbar:hover {
   color: var(--color-yellow);
   flex-shrink: 0;
 }
+.butter-license-banner-icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
 .butter-license-banner-text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .butter-license-banner-title {
-  font-weight: 600;
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
 }
 .butter-license-banner-subtitle {
   color: var(--text-muted);
-  font-size: 12px;
-  margin-top: 2px;
+  font-size: var(--font-ui-smaller);
 }
 .butter-license-banner-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 .butter-license-banner button {
-  font-size: 12px;
-  padding: 4px 10px;
+  font-size: var(--font-ui-smaller);
+  padding: 3px 10px;
+  height: 24px;
 }
 
 /* ── Status-bar hover-fade ─────────────────────────────────────
@@ -3451,9 +3839,7 @@ body.butter-status-bar-hide .status-bar {
 .butter-layout-rows {
   display: flex;
   flex-direction: column;
-  border: var(--border-width, 1px) solid var(--background-modifier-border);
-  border-radius: var(--radius-s, 4px);
-  background: var(--background-primary);
+  background: transparent;
   overflow: hidden;
   position: relative;
 }
@@ -3461,14 +3847,17 @@ body.butter-status-bar-hide .status-bar {
   display: flex;
   align-items: center;
   gap: var(--size-4-2, 8px);
-  padding: var(--size-2-2, 6px) var(--size-4-2, 8px);
+  /* Horizontal padding is 0 so the row contents sit flush with the
+     setting-group's own inner padding - the card's edge defines the
+     gutter, the row doesn't add a second one. */
+  padding: var(--size-2-2, 6px) 0;
   border-top: var(--border-width, 1px) solid var(--background-modifier-border);
   min-height: 40px;
-  background: var(--background-primary);
+  background: transparent;
   user-select: none;
   -webkit-user-select: none;
   touch-action: pan-y;
-  /* Live reflow during drag — sibling rows transform to make space
+  /* Live reflow during drag - sibling rows transform to make space
      for where the dragged item will land. The source row's own slot
      also animates here (max-height/padding/opacity collapse to 0 on
      drag start, reset to defaults on commit/cancel). Same feel as
@@ -3481,19 +3870,35 @@ body.butter-status-bar-hide .status-bar {
     opacity 120ms ease;
   will-change: transform;
 }
+/* Mobile: drag handle moves to the RIGHT via `order` so action
+   buttons sit on the left (thumb-reachable on phones). Inside the
+   actions cluster, the destructive remove (X) button is pushed to
+   the FAR left via `order: -1` so it's the first thing the thumb
+   reaches; the other action (move into/out of submenu) sits to
+   the X's right. */
+.is-mobile .butter-layout-row .butter-layout-handle {
+  order: 99;
+}
+.is-mobile .butter-layout-row .butter-layout-row-actions {
+  order: -1;
+}
+.is-mobile .butter-layout-row .butter-layout-row-actions .butter-layout-action.mod-danger {
+  order: -1;
+}
 .butter-layout-row:first-child {
   border-top: 0;
 }
 .butter-layout-row.is-nested {
-  padding-left: calc(var(--size-4-6, 28px) + var(--size-4-2, 8px));
-  background: var(--background-secondary);
+  /* Indent for submenu children. No separate background tint - the
+     row blends with the section, same as top-level rows. */
+  padding-left: var(--size-4-6, 28px);
+  background: transparent;
 }
 .butter-layout-row.is-empty {
-  background: var(--background-secondary);
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
 }
-/* Separator row — reads as an actual divider, not a button.
+/* Separator row - reads as an actual divider, not a button.
    Reduced height + horizontal rule that fills the content area
    between the drag handle and the remove button. Background is
    inherited from the base row (primary at top level, secondary
@@ -3505,14 +3910,17 @@ body.butter-status-bar-hide .status-bar {
   padding-top: 2px;
   padding-bottom: 2px;
 }
-.butter-layout-sep-rule {
-  flex: 1 1 auto;
-  height: 0;
-  border-top: var(--border-width, 1px) dashed var(--background-modifier-border-hover);
-  margin: 0 var(--size-4-2, 8px);
-  align-self: center;
+/* Doubled class for 0,2,0 specificity so the muted color wins over
+   `.butter-layout-label`'s `--text-normal` (the sep-label element
+   carries both classes, and the base label rule is defined later
+   in this file). */
+.butter-layout-label.butter-layout-sep-label {
+  font-style: italic;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  user-select: none;
 }
-/* Source row during drag — slot collapses to zero height so the
+/* Source row during drag - slot collapses to zero height so the
    list closes around it (like the block-drag source's reserved-
    slot animation, but here we don't keep the slot visible since
    the ghost has the visual). On pointerup the row's inline styles
@@ -3525,6 +3933,28 @@ body.butter-status-bar-hide .status-bar {
   border-top-width: 0 !important;
   opacity: 0 !important;
   overflow: hidden;
+  /* Instant collapse on drag start. The base `.butter-layout-row`
+     transition animates max-height / padding / opacity over 150ms,
+     which on a multi-row submenu leaves a visible "ghost slot" at
+     the source's original position for the first ~150ms of the drag.
+     That transient gap reads as a real drop target floating above
+     the ghost when dragging downward. Setting `transition: none`
+     here makes the collapse instantaneous. The smooth re-expand
+     on drop still works: removing `.is-dragging` reverts to the
+     base rule's transition. */
+  transition: none !important;
+}
+
+/* Toggled on .butter-layout-rows during drag start (pointerdown
+   setup) and drag end (pointerup cleanup) to kill every transition
+   on every descendant for that one frame. Without this the initial
+   reflow push animates from "rows shifted up by source collapse"
+   to "rows pushed back to original" - a visible shrink-grow.
+   Same on drop: clearShifts + class-removal would animate mid-flight
+   before rerender replaces the DOM, flashing the row layout. */
+.butter-layout-rows.butter-layout-drag-snap,
+.butter-layout-rows.butter-layout-drag-snap * {
+  transition: none !important;
 }
 .butter-layout-row-ghost {
   z-index: 1000;
@@ -3533,6 +3963,10 @@ body.butter-status-bar-hide .status-bar {
   background: var(--background-primary);
   border: var(--border-width, 1px) solid var(--background-modifier-border);
   opacity: 0.95;
+  /* The ghost is now a wrapper containing one row clone (regular
+     items) or a parent + children clones (submenu drag). Clipping
+     keeps each inner row's background inside the rounded corners. */
+  overflow: hidden;
 }
 .butter-layout-handle {
   flex: 0 0 auto;
@@ -3624,7 +4058,7 @@ body.butter-status-bar-hide .status-bar {
   gap: var(--size-2-3, 6px);
   padding: var(--size-2-3, 6px) 0;
 }
-/* Match Obsidian's standard button look — solid `--interactive-normal`
+/* Match Obsidian's standard button look - solid `--interactive-normal`
    bg, hover lifts to `--interactive-hover`, no dashed border. Icon +
    label sit side-by-side with a small gap. */
 .butter-layout-add-btn {
@@ -3666,7 +4100,7 @@ body.butter-status-bar-hide .status-bar {
   border-radius: 1px;
   z-index: 5;
 }
-/* "Drop INTO submenu" — accent-tinted background on the submenu
+/* "Drop INTO submenu" - accent-tinted background on the submenu
    row to signal that releasing here will append to its children. */
 .butter-layout-row.is-drop-into {
   background: color-mix(
@@ -3838,7 +4272,7 @@ body.butter-status-bar-hide .status-bar {
   padding: var(--size-2-2, 6px) var(--size-4-3, 12px);
 }
 
-/* ── Live toolbar preview (unused now — superseded by layout
+/* ── Live toolbar preview (unused now - superseded by layout
    editor; kept in case the v0 customizer is reintroduced). ─── */
 .butter-toolbar-preview {
   display: flex;
@@ -3906,7 +4340,7 @@ body.butter-status-bar-hide .status-bar {
   color: var(--text-muted);
 }
 
-/* Motion tokens — springy overshoot for drop indicator & handle,
+/* Motion tokens - springy overshoot for drop indicator & handle,
    softer ease for opacity changes. */
 :root {
   --butter-drag-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -3923,13 +4357,13 @@ body.butter-status-bar-hide .status-bar {
 /* ── Gutter handle ──────────────────────────────────────────────
    22×22 grip button pinned in the gutter. Fades in/out with the
    same opacity-only transition as the inter-block hover hint
-   (`.butter-spawn-hint`) — 100ms ease-out, no translateY lift —
+   (`.butter-spawn-hint`) - 100ms ease-out, no translateY lift
    so the two affordances share one visual language across the
    gutter column. Hover scales 1.08 with a separate springy curve;
    press snaps to 0.95. Pointer-events are gated by .is-visible so
    the invisible handle never intercepts clicks. */
 /* Mobile: no gutter handle. Drag is initiated by long-press on the
-   block body — see `dragHandlePlugin` in `src/drag-handles.ts`. */
+   block body - see `dragHandlePlugin` in `src/drag-handles.ts`. */
 .is-mobile .butter-drag-handle {
   display: none !important;
 }
@@ -3995,7 +4429,7 @@ body.butter-status-bar-hide .status-bar {
 
 
 /* Source block dims while being dragged, so the user can see what
-   they picked up (and where it was). Opacity only — keeps the
+   they picked up (and where it was). Opacity only - keeps the
    block's position stable so drop-target math stays accurate. */
 .butter-drag-source {
   opacity: 0.35;
@@ -4003,13 +4437,13 @@ body.butter-status-bar-hide .status-bar {
 }
 
 /* "Selected block" outlines live on the .ProseMirror-selectednode
-   rules at the top of the file (not duplicated here) — the drag-
+   rules at the top of the file (not duplicated here) - the drag-
    handle click dispatches a NodeSelection through PM, so everything
    goes through PM's native selection class. Unified visual with
    atomic-node selection (images, HR), unified behavior (keyboard
    shortcuts like Backspace / Cmd+C work on the selected block). */
 
-/* Heading margin indicator for headings inside the drag ghost — so
+/* Heading margin indicator for headings inside the drag ghost - so
    the dashed "forehead" is visible both when the block is selected
    (.ProseMirror-selectednode via the top-of-file rule) and when
    it's being actively dragged (here, on the ghost clone). */
@@ -4034,7 +4468,7 @@ body.butter-status-bar-hide .status-bar {
   pointer-events: none;
 }
 
-/* Reflow mode — the source block collapses to zero height so blocks
+/* Reflow mode - the source block collapses to zero height so blocks
    below can flow up. Pure CSS-class styling: no DOM structure
    changes for PM to sync. */
 .butter-drag-source-collapsed {
@@ -4057,7 +4491,7 @@ body.butter-status-bar-hide .status-bar {
    block will land. Transform is GPU-composited, doesn't affect
    layout measurements (browser still lays out blocks at original
    positions; only the paint is shifted), and PM doesn't track or
-   serialize it — so we stay outside PM's state-sync. `!important`
+   serialize it - so we stay outside PM's state-sync. `!important`
    guards against themes or PM plugins setting transforms on blocks. */
 .butter-drag-pushed {
   transform: translateY(var(--butter-reflow-shift, 0px)) !important;
@@ -4067,7 +4501,7 @@ body.butter-status-bar-hide .status-bar {
 
 /* Placeholder floats absolutely in `host` (outside the PM tree),
    positioned to overlap the gap opened on the target. Reads as a
-   deliberate "block-shaped drop slot" — soft accent fill plus a
+   deliberate "block-shaped drop slot" - soft accent fill plus a
    distinct outline so the user can see the destination clearly
    without it competing with the dragged ghost for attention. */
 .butter-drag-reflow-placeholder {
@@ -4095,7 +4529,7 @@ body.butter-status-bar-hide .status-bar {
    block + contiguous-subtree drags use the full block-sized
    placeholder above (with bidirectional push reflow on neighbors).
    Multi-block selections have scattered source slots so the
-   bidirectional model doesn't apply — show a line indicator and
+   bidirectional model doesn't apply - show a line indicator and
    snap into place on drop. */
 .butter-drop-cursor {
   position: absolute;
@@ -4124,7 +4558,7 @@ body.butter-status-bar-hide .status-bar {
 
    Uses inheritance instead of a universal descendant selector
    (`body.butter-is-dragging *`). That selector matches every
-   element in the document — on a large doc (5000+ blocks),
+   element in the document - on a large doc (5000+ blocks),
    toggling the class forced a style recalc across the entire
    tree and showed up as a ~170ms longtask at drag start and
    drag end. Both `cursor` and `user-select` inherit, so setting
@@ -4145,7 +4579,7 @@ body.butter-is-dragging .ProseMirror {
    visually stable. From the user's POV that adjustment looks like
    a sudden upward jolt of all OTHER blocks in the viewport (the
    anchor is fixed, so by relativity everything else shifts).
-   `overflow-anchor: none` opts out of the heuristic — content
+   `overflow-anchor: none` opts out of the heuristic - content
    shifts visually exactly as the layout dictates with no scroll
    compensation. Scoped to the editor's blocks; outside that scope
    anchoring still helps in regular Obsidian views. */
@@ -4160,7 +4594,7 @@ body.butter-is-dragging .ProseMirror > * {
    Obsidian themes + community plugins (editingToolbar v4 has been
    observed) install a blanket `transition: all <duration>` on every
    block. When we toggle the source's opacity / max-height via
-   decoration, that "all" transition KICKS IN — the source fades out
+   decoration, that "all" transition KICKS IN - the source fades out
    instead of snapping invisible, and during the fade the partially-
    visible block AND the partial CSS reflow on neighbors below add
    up to a visible jolt at drag start. WAAPI animations on transform
@@ -4179,7 +4613,7 @@ body.butter-is-dragging .ProseMirror > * * {
    geometry and suppress the end-cap dots for bar/zone/ghost-preview. */
 /* ── Drag ghost ─────────────────────────────────────────────────
    Cloned block that follows the cursor during a live-reflow drag.
-   No card wrapper — the clone renders as-is, with a subtle lift
+   No card wrapper - the clone renders as-is, with a subtle lift
    shadow for the off-the-page cue. Box-shadow composites cheaply;
    drop-shadow filter would force a paint on every cursor move and
    shows up as drag sluggishness on non-trivial docs. */
@@ -4203,7 +4637,7 @@ body.butter-is-dragging .ProseMirror > * * {
   position: relative;
   pointer-events: none;
   transform: translateZ(0);
-  /* Shadow fades in at drag start and out at drag stop — the
+  /* Shadow fades in at drag start and out at drag stop - the
      ghost's lift visually "happens" rather than popping. */
   transition: box-shadow 160ms ease-out;
   /* Solid page-matching background so the dragged content sits on
@@ -4224,7 +4658,7 @@ body.butter-is-dragging .ProseMirror > * * {
   /* No inner padding. Earlier iterations used 8x12 padding to give
      the ghost its own "card chrome," but that left non-self-framed
      ghosts with 11-15px of breathing room between content and
-     outline, versus the selected block's 3px — two visibly
+     outline, versus the selected block's 3px - two visibly
      different visuals for what should be the same state. Zero
      padding matches the selected block exactly. PICKUP_PAD_X/Y in
      drag-handles.ts also zeroed so the cursor-offset math tracks. */
@@ -4242,7 +4676,7 @@ body.butter-is-dragging .ProseMirror > * * {
     0 2px 6px rgba(0, 0, 0, 0.10);
 }
 
-/* Accent ring around the ghost — must match the resting selection
+/* Accent ring around the ghost - must match the resting selection
    ring (`.ProseMirror-selectednode`) pixel-for-pixel so dragging a
    block doesn't feel like a geometric jump. Use the SAME mechanism
    as the selection rule: `outline` + `outline-offset`. That gives
@@ -4250,7 +4684,7 @@ body.butter-is-dragging .ProseMirror > * * {
      • Identical 6px gap and 3px thickness drawn OUTWARD from the
        element edge (border on a -6px-inset ::after draws inward,
        which lit different pixels).
-     • Auto-growing corner curvature at the offset distance — a 4px
+     • Auto-growing corner curvature at the offset distance - a 4px
        element radius with 6px offset traces a ~10px curve. Setting
        `border-radius` on a -6px-inset ::after held the curve at
        the literal value, making corners look "tight" against the
@@ -4270,7 +4704,7 @@ body.butter-is-dragging .ProseMirror > * * {
 }
 
 /* Self-framed blocks (tables, images, code, callouts, math, embeds)
-   keep the same column-width padded card as non-self-framed — all
+   keep the same column-width padded card as non-self-framed - all
    ghosts visually match the block's in-editor footprint. For narrow
    intrinsic-width content (small image in a wide column), the image
    sits inside the column-wide padded card; accepted as a tradeoff
@@ -4281,10 +4715,10 @@ body.butter-is-dragging .ProseMirror > * * {
 }
 
 /* Fade-out pseudo so clamped content reads as "continues below"
-   rather than a hard cut. Stops at ~72px — enough to ease the
+   rather than a hard cut. Stops at ~72px - enough to ease the
    transition without hiding too much of the clone's preview. */
 /* Fade only applies when the ghost is actually being clamped by the
-   max-height cap — `.is-clamped` is added by buildGhost when the
+   max-height cap - `.is-clamped` is added by buildGhost when the
    source block's height exceeds the cap. Short blocks (paragraph,
    HR, image) render within the cap and don't need the fade; without
    this scope, the fade was painting over the visible bottom edge of
@@ -4301,7 +4735,7 @@ body.butter-is-dragging .ProseMirror > * * {
   pointer-events: none;
 }
 
-/* Multi-block drag ghost — same content-clipping treatment as a
+/* Multi-block drag ghost - same content-clipping treatment as a
    long-block ghost, plus a "N blocks" badge inside the bottom fade
    so the user knows the floating card represents the whole stack.
    The count is set as `data-butter-multi-count` in startDrag. */
@@ -4320,7 +4754,7 @@ body.butter-is-dragging .ProseMirror > * * {
   z-index: 2;
   pointer-events: none;
 }
-/* Short stack (no fade) — pin the badge top-right as a compact
+/* Short stack (no fade) - pin the badge top-right as a compact
    indicator instead. */
 .butter-drag-ghost.butter-drag-ghost-multi:not(.is-clamped)
   .butter-drag-ghost-inner::before {
@@ -4338,7 +4772,7 @@ body.butter-is-dragging .ProseMirror > * * {
   pointer-events: none;
 }
 
-/* .is-self-framed branch dropped — every block now renders its
+/* .is-self-framed branch dropped - every block now renders its
    ghost with the same base treatment. Self-framed blocks (callout,
    code, image, table, math, embed) already have their own
    background in the cloned DOM; the ghost's own page-primary
@@ -4430,7 +4864,7 @@ body.butter-is-dragging .butter-selection-overlay {
 
 /* Delegated blocks that actually rendered as a plugin widget (mermaid
    diagram, dataview table, chart, tasks, …) drop the code-block chrome
-   so they visually match native Obsidian — widget-only, no wrapper.
+   so they visually match native Obsidian - widget-only, no wrapper.
    Fallback renders (lang with no registered processor, e.g. a typo
    or ```chicken) KEEP the default shell chrome so the block still
    reads as a code block rather than floating inline text. The
@@ -4449,7 +4883,7 @@ body.butter-is-dragging .butter-selection-overlay {
    expect a framed container the way Live Preview renders them.
    The generic widget chrome-stripping rule above removed the
    shell's background + border-radius, which collapses the frame.
-   Restore the frame for base specifically — plus a 1px border so
+   Restore the frame for base specifically - plus a 1px border so
    it matches LP's standard widget outline. The NodeView adds a
    `butter-block-<lang>` class per language, so this scopes cleanly
    without affecting Mermaid/Dataview/Tasks/etc. */
@@ -4478,7 +4912,7 @@ body.butter-is-dragging .butter-selection-overlay {
 }
 
 /* Rendered-widget wrapper. MarkdownRenderer output lives here.
-   Minimal padding — the shell's own chrome-free surface is the look.
+   Minimal padding - the shell's own chrome-free surface is the look.
    overflow:hidden here (not on the shell) so wide Mermaid diagrams /
    Dataview tables still clip to the rounded-corner code canvas. */
 .butter-code-view-wrap {
@@ -4493,7 +4927,7 @@ body.butter-is-dragging .butter-selection-overlay {
   margin-bottom: 0;
 }
 /* A bare <pre><code> coming out of MarkdownRenderer (no plugin handler
-   for this language) shouldn't add a second background — the shell
+   for this language) shouldn't add a second background - the shell
    already supplies one. */
 .butter-code-view-wrap pre {
   margin: 0;
@@ -4502,7 +4936,7 @@ body.butter-is-dragging .butter-selection-overlay {
   border-radius: 0;
 }
 
-/* Editable shell wrapper — no extra chrome by default. Also clips its
+/* Editable shell wrapper - no extra chrome by default. Also clips its
    own contents to the rounded shell (so Prism-styled code respects
    corner radius even with overflow:visible on the shell). */
 .butter-code-edit-wrap {
@@ -4519,7 +4953,7 @@ body.butter-is-dragging .butter-selection-overlay {
 }
 
 /* Language tag in the top-right of editable code blocks with a
-   non-empty lang. Minimal dim text only — no background, no border,
+   non-empty lang. Minimal dim text only - no background, no border,
    no pill. Just the lang name in faint color, brightening on hover.
    Click → copy block source to the clipboard. The invisibility of
    chrome is the point: the block reads as clean code, and the lang
@@ -4548,8 +4982,8 @@ body.butter-is-dragging .butter-selection-overlay {
 /* ── Edit-mode floating toolbar ────────────────────────────────
    Shows above a delegated code block (mermaid / dataview / chart /
    tasks / etc.) when the user enters edit mode via the drag-handle
-   context menu. Provides Cancel (x — revert to pre-edit source) and
-   Save (check — keep edits). Matches the floating table toolbar's
+   context menu. Provides Cancel (x - revert to pre-edit source) and
+   Save (check - keep edits). Matches the floating table toolbar's
    treatment 1:1: same chrome, same icon-button sizing, same hover. */
 .butter-code-edit-toolbar {
   position: absolute;
@@ -4625,7 +5059,7 @@ body.butter-is-dragging .butter-selection-overlay {
    + error-flash state are panel-specific.
    ══════════════════════════════════════════ */
 
-/* Inline-atom edit panel — borrows Obsidian's `.menu` chrome (the
+/* Inline-atom edit panel - borrows Obsidian's `.menu` chrome (the
    class is included on the panel root) so the bg / border / radius /
    shadow / font come from the same vars Obsidian uses for its native
    right-click menu. Body padding + flex-column override the menu's
@@ -4690,7 +5124,7 @@ body.butter-is-dragging .butter-selection-overlay {
   box-shadow: 0 0 0 2px
     color-mix(in srgb, var(--interactive-accent) 25%, transparent);
 }
-/* Action items use Obsidian's `.menu-item` markup — no overrides
+/* Action items use Obsidian's `.menu-item` markup - no overrides
    needed beyond a tiny touch to align with the input row's
    horizontal padding. The icon, hover bg, font, gap, and click
    feel all come from the native menu CSS. */
@@ -4699,7 +5133,7 @@ body.butter-is-dragging .butter-selection-overlay {
 }
 
 /* Brief shake when the user's input didn't match the atom's source
-   pattern (save rejected silently — this tells them why). */
+   pattern (save rejected silently - this tells them why). */
 .butter-inline-atom-edit-input-error,
 .butter-inline-atom-edit-input.butter-inline-atom-edit-input-error:focus {
   border-color: var(--text-error, #ed4b55);
@@ -4725,7 +5159,7 @@ body.butter-is-dragging .butter-selection-overlay {
   z-index: 100;
   display: flex;
   flex-direction: column;
-  /* Outer .menu has padding 0 to match Obsidian's stock .menu rule —
+  /* Outer .menu has padding 0 to match Obsidian's stock .menu rule
      the header sits flush against the rounded edges. The body wrapper
      below carries the per-side breathing room (Obsidian's .menu-scroll
      equivalent). */
@@ -4733,7 +5167,7 @@ body.butter-is-dragging .butter-selection-overlay {
 }
 .menu.butter-rich-menu .butter-block-menu-header {
   /* Header already has its own padding (8px 10px 6px) and a bottom
-     border that goes edge-to-edge — leave it flush. */
+     border that goes edge-to-edge - leave it flush. */
   margin-bottom: 0;
 }
 .menu.butter-rich-menu .butter-rich-menu-body {
@@ -4805,7 +5239,7 @@ body.butter-is-dragging .butter-selection-overlay {
    of that for animation purposes). So a stock-styled suggester
    renders BEHIND our menu when its input is one of the menu's own
    fields. Bumping the popup's stacking only when it contains one of
-   our items keeps the override scoped — `:has()` selects only the
+   our items keeps the override scoped - `:has()` selects only the
    suggester instances that wrap a `.butter-vault-suggest-item`. */
 .suggestion-container:has(.butter-vault-suggest-item) {
   z-index: 200;
@@ -4887,7 +5321,7 @@ body.butter-is-dragging .butter-selection-overlay {
    Drag-handle context menu opens in the page margin or fallback
    to right-of-handle when the margin is too narrow. Lock the
    width so the position math (270px left of block / 22px right
-   of handle) is reliable across block types — heading menu has
+   of handle) is reliable across block types - heading menu has
    8 items, code-block menu has 6, callout menu has 5, etc., and
    without a fixed width the right-edge alignment shifted block
    to block. Long item titles ellipsize within the cap. */
@@ -4973,7 +5407,7 @@ body.butter-is-dragging .butter-selection-overlay {
    scan-and-click unreliable. We force plain wheel scrolling on
    the outer `.menu` instead.
 
-   IMPORTANT: do NOT add `display: none` to `.menu-scroll` —
+   IMPORTANT: do NOT add `display: none` to `.menu-scroll`
    that's the items wrapper Obsidian injects when content
    overflows; hiding it makes the submenu look empty. We're only
    targeting the arrow zones (`.menu-scroll-up` / `-down`).
@@ -4995,7 +5429,7 @@ body.butter-is-dragging .butter-selection-overlay {
 .menu.butter-callout-type-submenu .menu-scroll,
 .menu.butter-turn-into-submenu .menu-scroll,
 .menu.butter-list-type-submenu .menu-scroll {
-  /* Items wrapper — keep visible; let it scroll natively if
+  /* Items wrapper - keep visible; let it scroll natively if
      Obsidian decides to put items inside it instead of as direct
      children of .menu. */
   max-height: none !important;
@@ -5040,7 +5474,7 @@ body.butter-is-dragging .butter-selection-overlay {
    our fallback adds the same class manually on older API versions.
    At rest the row reads as warning-red text on the menu's normal
    background. On hover, switch to a stronger solid-red background
-   with white text — red-on-red-tint had bad contrast and made the
+   with white text - red-on-red-tint had bad contrast and made the
    "Delete" label nearly unreadable mid-hover. */
 .menu .menu-item.is-warning,
 .menu .menu-item.is-warning .menu-item-icon {
@@ -5122,7 +5556,7 @@ body.butter-is-dragging .butter-selection-overlay {
 }
 
 /* ══════════════════════════════════════════
-   CM6 bridge — widgets re-parented from hidden mirror
+   CM6 bridge - widgets re-parented from hidden mirror
    ══════════════════════════════════════════ */
 
 .butter-cm6-widget {
@@ -5153,7 +5587,7 @@ body.butter-is-dragging .butter-selection-overlay {
    ══════════════════════════════════════════
    Mounts as a sibling adjacent to the main `.butter-toolbar` (see
    tableToolbarPlugin in src/table-toolbar.ts). Visual treatment:
-   second-row chrome that flows in the document layout — same
+   second-row chrome that flows in the document layout - same
    background as the main toolbar so the two read as a unit, with
    a thin top border separating them. The dock plugin sets
    `data-toolbar-pos` to mirror the main toolbar's position so we
@@ -5164,7 +5598,7 @@ body.butter-is-dragging .butter-selection-overlay {
 /* Every rule in this block is body-scoped to `body:not(.is-mobile)`
    so desktop table-toolbar chrome physically can't style a mobile
    bar. The mobile bar deliberately doesn't carry `.butter-table-
-   toolbar` (see `src/table-toolbar.ts` — it only stamps that class
+   toolbar` (see `src/table-toolbar.ts` - it only stamps that class
    on the desktop branch), so the scope is defense-in-depth against
    future regressions. */
 body:not(.is-mobile) .butter-table-toolbar {
@@ -5177,11 +5611,11 @@ body:not(.is-mobile) .butter-table-toolbar {
   /* Background = document bg (`--background-primary`) tinted 10%
      darker. `color-mix` blends 90% of the base with 10% black so
      the table toolbar reads as a sibling tier of the main toolbar
-     without breaking theme cascade — themes that customize
+     without breaking theme cascade - themes that customize
      `--background-primary` get a proportionally tinted secondary
      toolbar for free. */
   background: color-mix(in srgb, var(--background-primary) 90%, black 10%);
-  /* No top border — main + table toolbar read as one continuous
+  /* No top border - main + table toolbar read as one continuous
      unit; the tint difference between them is enough visual
      separation. Bottom hairline still closes the table toolbar off
      from the document content below. */
@@ -5190,7 +5624,7 @@ body:not(.is-mobile) .butter-table-toolbar {
   /* Slide-and-fade in/out so the toolbar appears and disappears
      smoothly when the user enters/leaves a table. `max-height`
      handles the height collapse; opacity + translateY add the
-     polish. Don't use `display: none` — that kills transitions —
+     polish. Don't use `display: none` - that kills transitions
      the collapsed state is `max-height: 0` + zeroed padding +
      zeroed border which is visually equivalent (occupies no
      vertical space). The outer keeps `overflow: hidden` for the
@@ -5210,7 +5644,7 @@ body:not(.is-mobile) .butter-table-toolbar {
    when content fits and falls back to `flex-start` when content
    overflows the container, so the leftmost buttons stay reachable
    instead of being scrolled off-screen by a forced center. Buttons
-   carry `flex-shrink: 0` to keep their natural width — the row
+   carry `flex-shrink: 0` to keep their natural width - the row
    becomes horizontally scrollable when it exceeds the editor's
    width. Vertical overflow is hidden so a stray scrollbar doesn't
    show up; horizontal scrollbar is auto. */
@@ -5255,13 +5689,13 @@ body:not(.is-mobile) .butter-table-toolbar[data-toolbar-pos="bottom"].is-hidden 
   transform: translateY(6px);
 }
 /* When the main toolbar is at the BOTTOM, the table toolbar sits
-   ABOVE it — flip the separator to a bottom border so the visual
+   ABOVE it - flip the separator to a bottom border so the visual
    "main toolbar plus table-tools row" reads with the divider on
    the right edge against the main toolbar. */
 body:not(.is-mobile) .butter-table-toolbar[data-toolbar-pos="bottom"] {
   /* In bottom-pos the table toolbar sits ABOVE the main toolbar.
      The divider main↔table is removed (matches top-pos which also
-     has no separator between the two — they read as one unit). The
+     has no separator between the two - they read as one unit). The
      hairline moves to the TOP edge so document content above is
      still visually separated from the toolbar chrome. */
   border-top: var(--border-width, 1px) solid var(--background-modifier-border);
@@ -5269,7 +5703,7 @@ body:not(.is-mobile) .butter-table-toolbar[data-toolbar-pos="bottom"] {
 }
 /* Detached: the table toolbar should read as a second layer of
    the main toolbar's card, separated only by a thin horizontal
-   line — not as its own floating card. So:
+   line - not as its own floating card. So:
      • Match the main detached toolbar's max-width + auto-centering
        so the two cards align horizontally to the same column.
      • No top margin (gap), no top border-radius (corners shared
@@ -5318,7 +5752,7 @@ body:not(.is-mobile) .butter-table-toolbar[data-toolbar-style="attached"][data-t
 }
 
 /* 1px separator between main + table when adjacent. The base rules
-   above paint a 1px border on each toolbar at the shared edge —
+   above paint a 1px border on each toolbar at the shared edge
    stacked together that reads as 2px. Suppress the main toolbar's
    adjacent border (using transparent so layout stays put) so only
    the table toolbar's border paints the separator line. */
@@ -5366,7 +5800,7 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
 }
 
 /* Custom delete icons (`butter-delete-row` / `butter-delete-column`)
-   communicate the deletion intent via shape — the base toolbar
+   communicate the deletion intent via shape - the base toolbar
    styling stays neutral; no red treatment needed. */
 
 /* ══════════════════════════════════════════
@@ -5387,8 +5821,8 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
   z-index: 5;
 }
 
-/* Handle shape — three accent-tinted dots inline along the drag
-   axis, centered ON the table's outer edge line. JUST DOTS — no
+/* Handle shape - three accent-tinted dots inline along the drag
+   axis, centered ON the table's outer edge line. JUST DOTS - no
    background pill / focus ring / hover bubble. Element is a `<div>`
    (not `<button>`) so Obsidian's button style cascade can't bleed
    in; the `!important` resets below are belt-and-suspenders against
@@ -5397,7 +5831,7 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
    `is-active` whenever the row / column it represents contains the
    editor's caret or any cell of an active CellSelection. So the
    handle is already visible by the time the user's mouse reaches
-   it — direct `:hover` only bumps opacity to full.
+   it - direct `:hover` only bumps opacity to full.
    States:
      1. Default → hidden (opacity 0). The 18×18 hit area still
         captures pointer events.
@@ -5420,7 +5854,7 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
   margin: 0;
   pointer-events: auto;
   cursor: grab;
-  /* Default color is muted gray — used by the mouse-hover preview
+  /* Default color is muted gray - used by the mouse-hover preview
      state (`is-hover`). Selection-driven state (`is-active`) flips
      to accent below. */
   color: var(--text-faint);
@@ -5438,24 +5872,24 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
   background: transparent !important;
   box-shadow: none !important;
 }
-/* `is-hover` — mouse is on a cell of this row/column. Dim gray
+/* `is-hover` - mouse is on a cell of this row/column. Dim gray
    preview so the user knows the handle is there, without committing
    to the more emphatic accent treatment. */
 .butter-table-row-handle.is-hover,
 .butter-table-col-handle.is-hover {
   opacity: 0.5;
 }
-/* `is-active` — caret / selection is in this row/column. Accent-
+/* `is-active` - caret / selection is in this row/column. Accent-
    colored, slightly more visible than the gray preview. Declared
    AFTER `.is-hover` so it wins on handles that have both classes
    (mouse hovering an already-active row/column shows accent, not
-   gray — the active state takes priority). */
+   gray - the active state takes priority). */
 .butter-table-row-handle.is-active,
 .butter-table-col-handle.is-active {
   opacity: 0.65;
   color: hsl(var(--color-accent-hsl));
 }
-/* Direct hover on the handle's hit zone — full opacity, color
+/* Direct hover on the handle's hit zone - full opacity, color
    inherits from whatever class has set it (gray for hover-only,
    accent for active). */
 .butter-table-row-handle:hover,
@@ -5493,7 +5927,7 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
   opacity: 1;
 }
 
-/* Grip glyph — three 3px dots arranged along the handle's draggable
+/* Grip glyph - three 3px dots arranged along the handle's draggable
    axis with 4px gaps between them. Vertical for row handles (drag
    up/down), horizontal for column handles (drag left/right). The
    larger dots + wider spacing read as an intentional grip rather
@@ -5519,7 +5953,7 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
   flex-direction: row;
 }
 
-/* Drop indicator — accent strip at the target boundary. Snaps
+/* Drop indicator - accent strip at the target boundary. Snaps
    instantly between gaps; transitions made the indicator visually
    lag the cursor by ~80ms which broke the "indicator = where the
    row/column will land" mental model on fast drags. Soft accent
@@ -5536,7 +5970,7 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
     0 0 6px hsla(var(--interactive-accent-hsl), 0.45);
 }
 
-/* Drag ghost — a floating clone of the lifted row or column,
+/* Drag ghost - a floating clone of the lifted row or column,
    mounted on `<body>` so it follows the cursor across the entire
    viewport. Inline `transform: translate3d(...)` is updated on
    every pointermove for GPU-cheap tracking. The source row /
@@ -5554,7 +5988,7 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
   /* Soft lift shadow so the ghost reads as "off the page". */
   filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.18))
           drop-shadow(0 1px 3px rgba(0, 0, 0, 0.12));
-  /* No transition on transform itself — we want instant cursor
+  /* No transition on transform itself - we want instant cursor
      tracking; transitions would lag the ghost behind the pointer. */
   will-change: transform;
 }
@@ -5573,7 +6007,7 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
   line-height: var(--line-height-normal, 1.5);
 }
 /* Ghost is mounted on `<body>` so CSS scoped to `.butter-editor-view
-   td / th` doesn't reach the cloned cells — they'd render border-
+   td / th` doesn't reach the cloned cells - they'd render border-
    less and unpadded otherwise. Mirror the editor's cell styling
    here directly so the ghost looks identical to the row/column it
    lifted from. Values match the `:where(.butter-editor-view th/td)`
@@ -5594,7 +6028,7 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
   background: var(--table-header-background, var(--background-secondary));
 }
 
-/* Body class while a drag is active — globally show grabbing
+/* Body class while a drag is active - globally show grabbing
    cursor so the user doesn't lose the drag if their pointer
    drifts away from the handle. */
 body.butter-table-drag-active,
@@ -5604,7 +6038,7 @@ body.butter-table-drag-active * {
 }
 /* Mobile: while a table-row/col drag is live, stop the browser
    from claiming the touch for scroll/zoom. Pointer events keep
-   firing normally — this is the same lever the block-drag uses
+   firing normally - this is the same lever the block-drag uses
    (see `.butter-is-dragging` above). */
 body.is-mobile.butter-table-drag-active {
   touch-action: none !important;
@@ -5617,7 +6051,7 @@ body.is-mobile.butter-table-drag-active {
    so it composes on top of any cell background (header rows have their
    own theme background; alternating-row themes too). Pointer-events
    stay off the overlay so it doesn't trap clicks. The native cursor
-   caret is suppressed inside selected cells — multi-cell selection is
+   caret is suppressed inside selected cells - multi-cell selection is
    a region, not a text-edit position, and the blinking caret in one
    of the cells reads as "this is the active cell" which it isn't. */
 .butter-editor-view .selectedCell {
@@ -5628,7 +6062,7 @@ body.is-mobile.butter-table-drag-active {
   content: "";
   position: absolute;
   inset: 0;
-  /* Subtle interior tint — communicates "this cell is selected"
+  /* Subtle interior tint - communicates "this cell is selected"
      without competing with the selection frame's outer accent border
      (which is the prominent boundary indicator, drawn by
      `.butter-cell-selection-frame` from table-cell-drag.ts). Lighter
@@ -5639,7 +6073,7 @@ body.is-mobile.butter-table-drag-active {
   z-index: 1;
 }
 
-/* Source row / column during a live drag — stays in the table
+/* Source row / column during a live drag - stays in the table
    layout so the user's mental model of cell positions is preserved
    (the drop indicator can sit at any cell edge, including next to
    the source). Dimmed to communicate "this is what's being moved";
@@ -5657,7 +6091,7 @@ body.is-mobile.butter-table-drag-active {
    Cell-range selection frame + drag (table-cell-drag.ts)
    ══════════════════════════════════════════
    Sheets-style: a thick accent FRAME wraps the active CellSelection.
-   The frame's border is the drag-pickup affordance — hovering an
+   The frame's border is the drag-pickup affordance - hovering an
    edge swaps the cursor to `move`; mousedown on an edge starts the
    drag. The frame's interior is `pointer-events: none` so clicking
    INSIDE a selected cell still routes to PM's normal text-select
@@ -5684,7 +6118,7 @@ body.is-mobile.butter-table-drag-active {
 .butter-cell-frame-edge-left   { left: -4px;   top: 0; bottom: 0; width: 8px; }
 .butter-cell-frame-edge-right  { right: -4px;  top: 0; bottom: 0; width: 8px; }
 
-/* During a live drag the source frame becomes dashed — Excel's
+/* During a live drag the source frame becomes dashed - Excel's
    "marching ants" idiom for cut content. Source vs. destination
    read distinct (dashed source, solid destination outline). */
 .butter-cell-selection-frame--dragging {
@@ -5699,7 +6133,7 @@ body.is-mobile.butter-table-drag-active {
   pointer-events: none;
 }
 
-/* Destination outline — single solid-bordered rect snapped to the
+/* Destination outline - single solid-bordered rect snapped to the
    cell range that will be overwritten on drop. Anchored at the
    cursor's cell, expanded by source area's width × height, clipped
    to the destination table's bounds. Subtle interior tint so the
@@ -5713,7 +6147,7 @@ body.is-mobile.butter-table-drag-active {
   background: hsla(var(--color-accent-hsl), 0.10);
   border-radius: 1px;
   /* Slight transition so cell-to-cell snaps glide instead of
-     teleport — feels less twitchy on fast pointermoves. */
+     teleport - feels less twitchy on fast pointermoves. */
   transition: left 80ms ease-out, top 80ms ease-out,
     width 80ms ease-out, height 80ms ease-out;
 }
@@ -5721,14 +6155,14 @@ body.is-mobile.butter-table-drag-active {
 /* While a drag is in flight, suppress text-selection across the
    document so dragging across cell content doesn't accidentally
    highlight text. Cursor stays whatever the underlying element
-   says — we don't force `grabbing` here because the source frame's
+   says - we don't force `grabbing` here because the source frame's
    edges already carry `cursor: move` and the rest of the doc keeps
    its natural cursor for context. */
 body.butter-cell-drag-active,
 body.butter-cell-drag-active * {
   user-select: none !important;
 }
-/* Copy-mode cursor — when the user holds Ctrl/Cmd mid-drag the
+/* Copy-mode cursor - when the user holds Ctrl/Cmd mid-drag the
    semantics flip from MOVE to COPY. Browser's native `cursor: copy`
    shows the conventional "+" near the pointer. */
 body.butter-cell-drag-active.butter-cell-drag-copy,
@@ -5749,10 +6183,10 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
    ══════════════════════════════════════════ */
 
 .butter-task-checkbox-wrap {
-  /* Fixed-width decoration container — exactly --list-indent wide
+  /* Fixed-width decoration container - exactly --list-indent wide
      (border-box), pulled fully to the LEFT by margin-left of the
      same magnitude. Net horizontal contribution to inline flow is
-     zero, so post-widget text starts at the LI content edge — the
+     zero, so post-widget text starts at the LI content edge - the
      SAME X as bullet- and numbered-list text. `justify-content:
      center` centers the checkbox horizontally inside the column,
      matching the bullet glyph's position so all decorations share
@@ -5783,14 +6217,14 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 
 .butter-editor-view .butter-task-checkbox {
   cursor: pointer;
-  /* No vertical-align/transform on the checkbox itself — alignment
+  /* No vertical-align/transform on the checkbox itself - alignment
      is fully handled by the wrapper's inline-flex. !important on
      vertical-align suppresses Obsidian's core `.task-list-item-
      checkbox { vertical-align: middle }` rule which would otherwise
      fight the wrapper-side alignment we just set up. */
   vertical-align: baseline !important;
   /* Keep `position: relative` from Obsidian's base
-     `input[type=checkbox]` rule — its `:checked::after` pseudo-element
+     `input[type=checkbox]` rule - its `:checked::after` pseudo-element
      (the actual checkmark glyph) is `position: absolute` with
      `top: -1px; inset-inline-start: -1px` and expects the checkbox
      itself to be the containing block. Forcing `position: static`
@@ -5812,7 +6246,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 }
 
 /* Task list items: suppress the custom bullet/number ::before marker
-   entirely — the checkbox widget below lives in the decoration column
+   entirely - the checkbox widget below lives in the decoration column
    instead. `content: none` (vs `""`) means the pseudo-element is not
    generated at all, so it can't shift inline flow. Higher specificity
    than the `.butter-editor-view ul > li::before` rule above, so this
@@ -5972,7 +6406,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   max-width: 100%;
 }
 
-/* Top-level image (direct child of the PM editor) — render as a
+/* Top-level image (direct child of the PM editor) - render as a
    block so there's no implicit line-box / baseline descender gap
    below it. Inline-block creates a ghost gap below the image equal
    to the parent's line-height font-metrics descender even with
@@ -5986,7 +6420,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   display: block;
   max-width: 100%;
   height: auto;
-  /* Subtle rounding on images — themes that want larger/smaller
+  /* Subtle rounding on images - themes that want larger/smaller
      rounding for attached images should override this rule. */
   border-radius: var(--radius-s, 4px);
 }
@@ -6013,7 +6447,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
    the image visually claims the row. The schema still treats
    image as inline, but the size-menu's "Full width" option splits
    the parent paragraph so the image is the sole child of its own
-   paragraph — preventing inline text from awkwardly hugging a
+   paragraph - preventing inline text from awkwardly hugging a
    visually-block-level image. */
 .butter-image.butter-image-full-width {
   display: block;
@@ -6041,7 +6475,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* Same gray Obsidian uses for input fields / inert surfaces —
+  /* Same gray Obsidian uses for input fields / inert surfaces
      resolves to #242424 in the default dark theme; light themes
      get their corresponding form-field background. */
   background: var(--background-modifier-form-field, var(--background-secondary));
@@ -6093,7 +6527,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 .butter-outline-list {
   display: flex;
   flex-direction: column;
-  /* No gap — vertical guide lines must run continuously between
+  /* No gap - vertical guide lines must run continuously between
      adjacent rows. The hover/active background-color differentiates
      rows instead. */
 }
@@ -6113,7 +6547,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 /* One of these per ancestor indent on each row. Base state: faint
    border-colored. Lit state (inside active heading's ancestor chain):
    accent-tinted. Transitioning background-color preserves the line's
-   position exactly — no reflow, and stable rows with unchanged
+   position exactly - no reflow, and stable rows with unchanged
    `.lit` state don't animate. Stagger delays are applied inline. */
 .butter-outline-guide {
   position: absolute;
@@ -6281,7 +6715,8 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   margin-top: 4px;
 }
 
-/* Page 2 — the modal-button-container handles spacing + button
+
+/* Page 2 - the modal-button-container handles spacing + button
    chrome. We just nudge the row down a bit and align the back-link
    to the left so it reads as secondary navigation. */
 .butter-welcome-button-row {
@@ -6308,7 +6743,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   background: var(--background-modifier-hover) !important;
 }
 
-/* Settings → Getting Started tab — secondary blurb under the main
+/* Settings → Getting Started tab - secondary blurb under the main
    group description. */
 .butter-welcome-tab-blurb {
   margin: 8px 0 0;
@@ -6407,4 +6842,82 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 .modal-container .modal:has(.butter-save-diff-wrap) {
   max-width: min(1100px, 95vw);
   width: 1100px;
+}
+
+/* Hide the tab-header icon when the leaf is a Butter view. Obsidian
+ * falls back to a default icon when our getIcon() returns "", so we
+ * suppress the slot at the CSS level instead. Title sits flush with
+ * the tab edge with no icon gap. Scoped via [data-type] so other
+ * view types are untouched. */
+.workspace-tab-header[data-type="butter-editor"] .workspace-tab-header-inner-icon {
+  display: none;
+}
+
+/* Lead sentence on each Settings Presets row. Painted in the theme
+ * accent so the "best for ..." copy stands out from the secondary
+ * detail that follows it. Inherits the surrounding description font
+ * size so it reads as the same row, just emphasized. */
+.butter-preset-best-for {
+  color: var(--text-accent);
+}
+
+/* Icon prefix on a settings-preset row. Same chrome as the
+   "Customize buttons" icon: inline-flex, muted color, sized to
+   match the row's text height. Sits inline at the start of the
+   `.setting-item-name` div, before the title text. */
+.butter-preset-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 8px;
+  vertical-align: -3px;
+  color: var(--text-muted);
+}
+.butter-preset-icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Annotation tag next to a preset name (Default, Experimental, etc.).
+ * Dimmed italic so it reads as a label note rather than part of the
+ * title proper. */
+.butter-preset-tag {
+  color: var(--text-muted);
+  font-style: italic;
+  font-weight: normal;
+  margin-left: 0.5em;
+}
+/* Experimental variant - dim red so the tag visually flags "may
+ * misbehave" without shouting. */
+.butter-preset-tag.is-experimental {
+  color: var(--color-red);
+  opacity: 0.75;
+}
+
+/* Custom-state indicator on Settings Presets. Renders only when no
+ * preset's bundle matches the user's current settings. Dimmed italic
+ * so it reads as a status note rather than its own UI element. */
+.butter-preset-custom-indicator {
+  font-style: italic;
+  color: var(--text-muted);
+  margin: 4px 0 8px;
+}
+
+
+/* Master animation kill-switch. The "Disable animations" setting in
+ * Butter toggles `body.butter-no-anim`; the rule below nukes CSS
+ * animations and transitions on every Butter-prefixed element plus
+ * the editor's ProseMirror tree. Scoped to butter- and .ProseMirror
+ * so it doesn't reach into Obsidian core animations or other
+ * plugins' UI. JS-driven animations (entrance fade, etc.) check
+ * the setting separately and short-circuit. */
+body.butter-no-anim [class*="butter-"],
+body.butter-no-anim [class*="butter-"]::before,
+body.butter-no-anim [class*="butter-"]::after,
+body.butter-no-anim .ProseMirror,
+body.butter-no-anim .ProseMirror *,
+body.butter-no-anim .ProseMirror *::before,
+body.butter-no-anim .ProseMirror *::after {
+  animation: none !important;
+  transition: none !important;
 }
