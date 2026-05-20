@@ -1,8 +1,8 @@
 {
   "id": "butter-editor",
   "name": "Butter Editor",
-  "version": "0.9.5",
-  "minAppVersion": "1.4.5",
+  "version": "0.9.6",
+  "minAppVersion": "1.7.2",
   "description": "WYSIWYG editing mode. Renders Markdown in place; files stay canonical.",
   "author": "Butter Editor",
   "authorUrl": "https://github.com/spreadwell/butter-editor",

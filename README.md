@@ -4,6 +4,8 @@ A WYSIWYG editing mode for [Obsidian](https://obsidian.md). Headings render as h
 
 **Website:** [buttereditor.com](https://buttereditor.com) · **Pricing:** [buttereditor.com/pricing](https://buttereditor.com/pricing) · **Manage your licenses:** [licenses.buttereditor.com](https://licenses.buttereditor.com)
 
+Butter is a paid plugin. Free 15-day trial, then $16 one-time for a lifetime license covering all v1 updates. No card, no email collected to start the trial.
+
 ## What it does
 
 Butter adds a fourth view mode alongside Obsidian's Source, Live Preview, and Reading. You toggle it per note. The file on disk never changes shape.
