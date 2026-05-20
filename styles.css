@@ -5859,7 +5859,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
    applies to all inline content including marks. */
 .butter-editor-view li[data-task-state="checked"] {
   color: var(--text-muted);
-  text-decoration: line-through var(--text-faint);
+  text-decoration: line-through;
 }
 
 .butter-editor-view li[data-task-state="checked"] a {
