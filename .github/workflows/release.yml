@@ -7,12 +7,26 @@ on:
 
 permissions:
   contents: write
+  # Required by actions/attest-build-provenance to mint a Sigstore
+  # cert tied to this workflow run.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Provenance attestations for the binary assets BRAT and the
+      # Obsidian community store fetch. Lets anyone verify the
+      # main.js / styles.css they downloaded came from this repo at
+      # this commit, without trusting the release page metadata.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            styles.css
 
       - uses: softprops/action-gh-release@v2
         with:
