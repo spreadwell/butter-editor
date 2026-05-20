@@ -3340,35 +3340,6 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
 }
 
 /* ══════════════════════════════════════════
-   Zen mode
-   ══════════════════════════════════════════ */
-
-body.butter-zen .workspace-ribbon,
-body.butter-zen .status-bar,
-body.butter-zen .workspace-split.mod-left-split,
-body.butter-zen .workspace-split.mod-right-split,
-body.butter-zen .view-header {
-  display: none !important;
-}
-
-body.butter-zen .workspace-split.mod-root {
-  background: var(--background-primary);
-}
-
-body.butter-zen .butter-editor-root {
-  max-width: min(720px, 92vw);
-  margin: 0 auto;
-}
-
-body.butter-zen .butter-toolbar {
-  opacity: 0.35;
-  transition: opacity 140ms ease;
-}
-body.butter-zen .butter-toolbar:hover {
-  opacity: 1;
-}
-
-/* ══════════════════════════════════════════
    Shortcut help modal
    ══════════════════════════════════════════ */
 
@@ -5260,61 +5231,6 @@ body.butter-is-dragging .butter-selection-overlay {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* ══════════════════════════════════════════
-   Live-source companion view
-
-   A right-sidebar pane that mirrors the active Butter note's
-   markdown source in real time. Read-only <pre> styled to look
-   like a neutral code pane.
-   ══════════════════════════════════════════ */
-
-.butter-live-source-root {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  padding: 0;
-}
-
-.butter-live-source-header {
-  flex-shrink: 0;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  font-family: var(--font-interface);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  user-select: none;
-}
-
-.butter-live-source-pre {
-  flex: 1;
-  margin: 0;
-  padding: 10px 12px;
-  overflow: auto;
-  font-family: var(--font-monospace);
-  font-size: var(--code-size, 13px);
-  line-height: 1.5;
-  color: var(--text-normal);
-  background: var(--background-primary);
-  white-space: pre-wrap;
-  word-break: break-word;
-  user-select: text;
-}
-
-.butter-live-source-empty {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  font-family: var(--font-interface);
-  font-size: 13px;
-  color: var(--text-muted);
-  text-align: center;
-  line-height: 1.6;
 }
 
 /* ── Block context menu (Notion-style fixed width) ────────────
