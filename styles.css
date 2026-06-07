@@ -119,6 +119,48 @@
   --list-indent: 4ch;
 }
 
+/* ── Block flow ───────────────────────────────────────────────
+   .ProseMirror is a flex column so child margins don't collapse
+   between top-level children. Each block's gap-above is exactly
+   its own `margin-top`. Combined with `margin-bottom: 0` on every
+   top-level child below, this kills the pair-dependent margin
+   model that made layout shift under structural changes (drag,
+   paste, programmatic moves).
+
+   The `margin-top` values are owned by `block-spacing.ts` —
+   inline-style decorations using `var(--p-spacing)`,
+   `var(--heading-spacing)`, etc. so theme + Style Settings retunes
+   continue to flow through. */
+.butter-editor-view .ProseMirror {
+  display: flex;
+  flex-direction: column;
+}
+.butter-editor-view .ProseMirror > * {
+  margin-bottom: 0 !important;
+}
+
+/* ── Viewport-clipped rendering ───────────────────────────────
+   Chromium skips rendering AND layout for off-screen top-level
+   blocks. On big docs this drops the layout recalc cost from
+   O(doc) to O(viewport). `auto` on contain-intrinsic-size lets
+   the browser remember each block's last-known height once it
+   has been laid out, so the scrollbar stays stable. The 24px
+   fallback matches the default paragraph line-height for the
+   never-seen case.
+
+   This is a Chromium-only feature. Butter ships in Obsidian
+   (Electron / Chromium), so cross-browser concern doesn't apply.
+
+   Desktop only. Chromium-on-Android defers hit-testing on
+   content-visibility:auto blocks aggressively enough that taps
+   land on "not-yet-painted" content and get ignored. Mobile docs
+   aren't typically large enough for the perf savings to matter,
+   so the trade-off favors reliable tap-to-edit. */
+body:not(.is-mobile) .butter-editor-view .ProseMirror > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 24px;
+}
+
 /* Inline title: respect Obsidian's "Show inline title" setting.
    When ON (`body.show-inline-title`), force-show it in our view
    without `!important`, Obsidian's default-hide rule for unknown
@@ -291,6 +333,7 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"].butter-has-tab
    `overflow: hidden` collapses the scrollable area on mobile. */
 .workspace-leaf-content[data-type="butter-editor"] .view-content {
   padding: 0;
+  position: relative;
 }
 
 /* Mobile native-parity layout for our custom view type. Three rules:
@@ -388,6 +431,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 
 .butter-editor-view .inline-title,
 .butter-editor-view .butter-properties-wrapper,
+.butter-editor-view .butter-license-banner-wrapper,
 .butter-editor-view .butter-editor-root {
   max-width: var(--file-line-width);
   margin-left: auto;
@@ -723,7 +767,10 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 .butter-editor-view .butter-list-item[data-kind="ordered"]::before {
   position: absolute;
   left: calc(var(--list-indent, 1em) * var(--depth));
-  top: 0;
+  /* Shift down by the item's padding-top (set by block-spacing.ts as
+     --li-pad-top) so the marker aligns with the first line of content
+     rather than floating at the box top above the padding gap. */
+  top: var(--li-pad-top, 0);
   width: var(--list-indent, 1em);
   line-height: inherit;
   font-family: inherit;
@@ -3095,18 +3142,14 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
 }
 
 /* ══════════════════════════════════════════
-   Word / character count status bar item
+   Dev-only build version indicator
    ══════════════════════════════════════════ */
 
-.butter-status-wordcount {
-  cursor: pointer;
+.butter-status-devversion {
   font-family: var(--font-monospace);
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-faint);
   padding: 0 8px;
-}
-.butter-status-wordcount:hover {
-  color: var(--text-normal);
 }
 
 /* ══════════════════════════════════════════
@@ -3372,17 +3415,6 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
   --butter-headline-font:
     Georgia, "Source Serif 4", "Source Serif Pro",
     "Charter", "Iowan Old Style", serif;
-  /* Motion tokens - springy overshoot for drop indicator & handle,
-     softer ease for opacity changes. */
-  --butter-drag-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --butter-drag-spring-soft: cubic-bezier(0.2, 1.2, 0.4, 1);
-  --butter-drag-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --butter-drag-accent-soft: color-mix(in srgb,
-                                       var(--interactive-accent) 14%,
-                                       transparent);
-  --butter-drag-accent-line: color-mix(in srgb,
-                                       var(--interactive-accent) 38%,
-                                       transparent);
 }
 
 /* The polished header zone (brand stamp + hero) above the License
@@ -3477,54 +3509,181 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
    toolbar-pos=bottom). The icon column carries the only colour
    accent - a small yellow lock/warning - so the banner doesn't
    dominate the chrome but is still scannable. */
-.butter-license-banner {
+.butter-license-banner-wrapper {
+  max-width: var(--file-line-width);
+  margin-left: auto;
+  margin-right: auto;
+}
+/* Mobile: pill flows inline, two rows */
+body.is-mobile .butter-license-banner-wrapper.is-pill {
+  position: sticky;
+  top: 6px;
   display: flex;
+  justify-content: center;
+  padding: 8px 12px;
+  left: auto;
+  transform: none;
+}
+body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  white-space: normal;
+}
+body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner-actions {
+  margin-left: 0;
+  width: 100%;
+  justify-content: center;
+}
+
+/* Desktop (leaf-level floating pill) */
+.butter-license-banner-wrapper.is-pill {
+  position: sticky;
+  top: 6px;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.butter-license-banner-wrapper.is-pill .butter-license-banner {
+  display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 12px;
-  padding: 6px 12px;
-  background: var(--background-secondary);
-  border-bottom: 1px solid var(--background-modifier-border);
-  font-size: var(--font-ui-small);
+  gap: 6px;
+  padding: 5px 6px 5px 12px;
+  background: rgba(var(--callout-error), 0.06);
+  border: 1px solid rgba(var(--callout-error), 0.2);
+  border-radius: 20px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  pointer-events: auto;
+  white-space: nowrap;
 }
-.butter-toolbar-stack[data-toolbar-pos="bottom"] .butter-license-banner {
-  border-bottom: none;
-  border-top: 1px solid var(--background-modifier-border);
-}
+
+
 .butter-license-banner-icon {
   display: flex;
   align-items: center;
-  color: var(--color-yellow);
+  color: rgba(var(--callout-error), 0.7);
   flex-shrink: 0;
+  margin-right: 2px;
 }
 .butter-license-banner-icon .svg-icon {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
-.butter-license-banner-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
+.butter-license-banner-state {
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: rgba(var(--callout-error), 0.85);
 }
-.butter-license-banner-title {
-  font-weight: var(--font-semibold);
-  color: var(--text-normal);
+.butter-license-banner-separator {
+  color: rgba(var(--callout-error), 0.4);
+  font-size: var(--font-ui-small);
 }
-.butter-license-banner-subtitle {
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
+.butter-license-banner-readonly {
+  font-size: var(--font-ui-small);
+  color: rgba(var(--callout-error), 0.55);
+  font-style: italic;
+  margin-right: 2px;
 }
 .butter-license-banner-actions {
   display: flex;
-  gap: 6px;
-  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
 }
 .butter-license-banner button {
-  font-size: var(--font-ui-smaller);
+  font-size: var(--font-ui-smaller, 11px);
+  font-weight: 500;
   padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(var(--callout-error), 0.25);
+  background: transparent;
+  color: rgba(var(--callout-error), 0.85);
+  cursor: pointer;
+  transition: background 120ms ease;
+  box-shadow: none !important;
+}
+.butter-license-banner button:hover {
+  background: rgba(var(--callout-error), 0.1);
+}
+.butter-license-banner button:active {
+  background: rgba(var(--callout-error), 0.18);
+}
+.butter-license-banner button.mod-cta {
+  background: rgba(var(--callout-error), 0.12);
+  color: rgba(var(--callout-error), 0.9);
+  border-color: rgba(var(--callout-error), 0.3);
+  font-weight: 600;
+}
+.butter-license-banner button.mod-cta:hover {
+  background: rgba(var(--callout-error), 0.2);
+}
+.butter-license-banner button.mod-cta:active {
+  background: rgba(var(--callout-error), 0.28);
+}
+
+/* --- ACTION SHEET MODAL --- */
+.butter-license-action-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px 10px;
+}
+.butter-license-action-sheet-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+}
+.butter-license-action-sheet-icon {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--background-secondary-alt);
+  color: var(--text-muted);
+}
+.butter-license-action-sheet-icon.is-expired {
+  color: var(--color-orange);
+  background: hsla(var(--color-orange-hsl), 0.15);
+}
+.butter-license-action-sheet-icon .svg-icon {
+  width: 24px;
   height: 24px;
+}
+.butter-license-action-sheet-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.butter-license-action-sheet-text .title {
+  font-size: var(--font-ui-large);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.butter-license-action-sheet-text .subtitle {
+  font-size: var(--font-ui-medium);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.butter-license-action-sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+.butter-license-action-sheet-actions button {
+  width: 100%;
+  padding: 10px;
+  font-size: var(--font-ui-medium);
+  height: auto;
 }
 
 /* ── Status-bar hover-fade ─────────────────────────────────────
@@ -3658,41 +3817,21 @@ body.butter-status-bar-hide .status-bar {
   letter-spacing: 0.04em;
   user-select: none;
 }
-/* Source row during drag - slot collapses to zero height so the
-   list closes around it (like the block-drag source's reserved-
-   slot animation, but here we don't keep the slot visible since
-   the ghost has the visual). On pointerup the row's inline styles
-   are cleared and rerender immediately replaces the dom anyway. */
-.butter-layout-row.is-dragging {
-  max-height: 0;
-  min-height: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  border-top-width: 0;
-  opacity: 0;
-  overflow: hidden;
-  /* Instant collapse on drag start. The base `.butter-layout-row`
-     transition animates max-height / padding / opacity over 150ms,
-     which on a multi-row submenu leaves a visible "ghost slot" at
-     the source's original position for the first ~150ms of the drag.
-     That transient gap reads as a real drop target floating above
-     the ghost when dragging downward. Setting `transition: none`
-     here makes the collapse instantaneous. The smooth re-expand
-     on drop still works: removing `.is-dragging` reverts to the
-     base rule's transition. */
-  transition: none !important;
+.butter-layout-row-placeholder {
+  opacity: 0.85;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--interactive-accent) 50%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--interactive-accent) 8%, transparent);
+  border: none;
+  margin-top: 4px;
+  pointer-events: none;
+  box-sizing: border-box;
 }
-
-/* Toggled on .butter-layout-rows during drag start (pointerdown
-   setup) and drag end (pointerup cleanup) to kill every transition
-   on every descendant for that one frame. Without this the initial
-   reflow push animates from "rows shifted up by source collapse"
-   to "rows pushed back to original" - a visible shrink-grow.
-   Same on drop: clearShifts + class-removal would animate mid-flight
-   before rerender replaces the DOM, flashing the row layout. */
-.butter-layout-rows.butter-layout-drag-snap,
-.butter-layout-rows.butter-layout-drag-snap * {
-  transition: none !important;
+.butter-layout-row-placeholder.is-nested {
+  margin-left: 36px;
+  width: calc(100% - 36px);
 }
 .butter-layout-handle {
   flex: 0 0 auto;
@@ -3999,495 +4138,6 @@ body.butter-status-bar-hide .status-bar {
 }
 
 
-/* ── Gutter handle ──────────────────────────────────────────────
-   22×22 grip button pinned in the gutter. Fades in/out with the
-   same opacity-only transition as the inter-block hover hint
-   (`.butter-spawn-hint`) - 100ms ease-out, no translateY lift
-   so the two affordances share one visual language across the
-   gutter column. Hover scales 1.08 with a separate springy curve;
-   press snaps to 0.95. Pointer-events are gated by .is-visible so
-   the invisible handle never intercepts clicks. */
-/* Mobile: no gutter handle. Drag is initiated by long-press on the
-   block body - see `dragHandlePlugin` in `src/drag-handles.ts`. */
-.is-mobile .butter-drag-handle {
-  display: none !important;
-}
-
-
-
-.butter-drag-handle {
-  position: absolute;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  color: var(--text-faint);
-  background: transparent;
-  cursor: grab;
-  opacity: 0;
-  pointer-events: none;
-  z-index: 10;
-  user-select: none;
-  /* Opacity matches the hint's fade. Transform / background /
-     color keep their springy curves for the hover + press
-     micro-interactions, which run inside the already-visible
-     handle and shouldn't share the entry timing. */
-  transition:
-    opacity 100ms ease-out,
-    transform 160ms var(--butter-drag-ease),
-    background-color 140ms var(--butter-drag-ease),
-    color 140ms var(--butter-drag-ease);
-}
-.butter-drag-handle.is-visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-.butter-drag-handle:hover {
-  background-color: var(--background-modifier-hover);
-  color: var(--text-normal);
-  transform: scale(1.08);
-  transition-timing-function: var(--butter-drag-spring);
-}
-.butter-drag-handle.is-pressed {
-  transform: scale(0.95);
-  background-color: var(--background-modifier-active-hover,
-                    var(--background-modifier-hover));
-  color: var(--text-normal);
-  cursor: grabbing;
-}
-
-/* Six-dot grip, 3×3px dots in a 2×3 grid. */
-.butter-drag-grip-dots {
-  display: grid;
-  grid-template-columns: repeat(2, 3px);
-  grid-template-rows: repeat(3, 3px);
-  gap: 2px;
-  pointer-events: none;
-}
-.butter-drag-grip-dots span {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-
-/* Source block dims while being dragged, so the user can see what
-   they picked up (and where it was). Opacity only - keeps the
-   block's position stable so drop-target math stays accurate. */
-.butter-drag-source {
-  opacity: 0.35;
-  transition: opacity 180ms var(--butter-drag-ease);
-}
-
-/* "Selected block" outlines live on the .ProseMirror-selectednode
-   rules at the top of the file (not duplicated here) - the drag-
-   handle click dispatches a NodeSelection through PM, so everything
-   goes through PM's native selection class. Unified visual with
-   atomic-node selection (images, HR), unified behavior (keyboard
-   shortcuts like Backspace / Cmd+C work on the selected block). */
-
-/* Heading margin indicator for headings inside the drag ghost - so
-   the dashed "forehead" is visible both when the block is selected
-   (.ProseMirror-selectednode via the top-of-file rule) and when
-   it's being actively dragged (here, on the ghost clone). */
-.butter-drag-ghost-inner :is(h1, h2, h3, h4, h5, h6) {
-  position: relative;
-}
-.butter-drag-ghost-inner :is(h1, h2, h3, h4, h5, h6)::before {
-  content: "";
-  position: absolute;
-  left: -6px;
-  right: -6px;
-  bottom: 100%;
-  height: var(--heading-spacing, 2.5rem);
-  border: 3px dashed hsla(var(--color-accent-hsl), 0.3);
-  border-bottom: none;
-  /* Top corners match the ghost's own radius (source block's
-     computed radius) so the dashed forehead sits flush with the
-     ring's rounded top. */
-  border-radius: var(--butter-ghost-radius, var(--butter-block-radius))
-                 var(--butter-ghost-radius, var(--butter-block-radius))
-                 0 0;
-  pointer-events: none;
-}
-
-/* Reflow mode - the source block collapses to zero height so blocks
-   below can flow up. Pure CSS-class styling: no DOM structure
-   changes for PM to sync. */
-.butter-drag-source-collapsed {
-  max-height: 0 !important;
-  margin-top: 0 !important;
-  margin-bottom: 0 !important;
-  padding-top: 0 !important;
-  padding-bottom: 0 !important;
-  overflow: hidden !important;
-  opacity: 0 !important;
-  transition:
-    max-height 220ms var(--butter-drag-spring-soft),
-    margin 220ms var(--butter-drag-spring-soft),
-    padding 220ms var(--butter-drag-spring-soft),
-    opacity 160ms var(--butter-drag-ease) !important;
-}
-
-/* Live-reflow push: target and everything below it translate down
-   by `--butter-reflow-shift`, opening the gap where the dragged
-   block will land. Transform is GPU-composited, doesn't affect
-   layout measurements (browser still lays out blocks at original
-   positions; only the paint is shifted), and PM doesn't track or
-   serialize it - so we stay outside PM's state-sync. `!important`
-   guards against themes or PM plugins setting transforms on blocks. */
-.butter-drag-pushed {
-  transform: translateY(var(--butter-reflow-shift, 0px)) !important;
-  transition: transform 240ms var(--butter-drag-spring-soft) !important;
-  will-change: transform;
-}
-
-/* Placeholder floats absolutely in `host` (outside the PM tree),
-   positioned to overlap the gap opened on the target. Reads as a
-   deliberate "block-shaped drop slot" - soft accent fill plus a
-   distinct outline so the user can see the destination clearly
-   without it competing with the dragged ghost for attention. */
-.butter-drag-reflow-placeholder {
-  position: absolute;
-  pointer-events: none;
-  z-index: 15;
-  opacity: 0.85;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
-  box-shadow:
-    inset 0 0 0 1.5px color-mix(in srgb, var(--interactive-accent) 50%, transparent),
-    0 0 0 2px color-mix(in srgb, var(--interactive-accent) 8%, transparent);
-  transition:
-    top 200ms var(--butter-drag-spring-soft),
-    left 120ms var(--butter-drag-ease),
-    width 120ms var(--butter-drag-ease);
-  animation: butter-drag-reflow-in 220ms var(--butter-drag-spring-soft) both;
-}
-@keyframes butter-drag-reflow-in {
-  from { opacity: 0; transform: scale(0.97); }
-  to   { opacity: 0.85; transform: scale(1); }
-}
-
-/* Thin drop-cursor for non-contiguous multi-block drags. Single-
-   block + contiguous-subtree drags use the full block-sized
-   placeholder above (with bidirectional push reflow on neighbors).
-   Multi-block selections have scattered source slots so the
-   bidirectional model doesn't apply - show a line indicator and
-   snap into place on drop. */
-.butter-drop-cursor {
-  position: absolute;
-  pointer-events: none;
-  z-index: 15;
-  height: 3px;
-  margin-top: -1.5px;
-  border-radius: 2px;
-  background: var(--interactive-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 40%, transparent),
-              0 0 8px color-mix(in srgb, var(--interactive-accent) 30%, transparent);
-  transition:
-    top 120ms var(--butter-drag-ease),
-    left 120ms var(--butter-drag-ease),
-    width 120ms var(--butter-drag-ease);
-  animation: butter-drop-cursor-in 140ms ease-out both;
-}
-@keyframes butter-drop-cursor-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-/* ── Body state during active drag ──────────────────────────────
-   Global grabbing cursor + disabled selection so there's no hint
-   of text-selection dragging instead of block reordering.
-
-   Uses inheritance instead of a universal descendant selector
-   (`body.butter-is-dragging *`). That selector matches every
-   element in the document - on a large doc (5000+ blocks),
-   toggling the class forced a style recalc across the entire
-   tree and showed up as a ~170ms longtask at drag start and
-   drag end. Both `cursor` and `user-select` inherit, so setting
-   them on body + the ProseMirror root is enough to reach every
-   descendant via the cascade, while keeping the blast radius
-   of the class toggle to a handful of elements. */
-body.butter-is-dragging,
-body.butter-is-dragging .ProseMirror {
-  cursor: grabbing !important;
-  user-select: none !important;
-}
-
-/* Disable scroll anchoring on every block while a drag is in flight.
-   When the source's slot collapses (compact mode max-height clamp,
-   even just opacity-only mode if a parent transitions), the doc's
-   total height changes and Chrome's scroll-anchoring kicks in,
-   adjusting the scroll position so the "anchored" block stays
-   visually stable. From the user's POV that adjustment looks like
-   a sudden upward jolt of all OTHER blocks in the viewport (the
-   anchor is fixed, so by relativity everything else shifts).
-   `overflow-anchor: none` opts out of the heuristic - content
-   shifts visually exactly as the layout dictates with no scroll
-   compensation. Scoped to the editor's blocks; outside that scope
-   anchoring still helps in regular Obsidian views. */
-body.butter-is-dragging,
-body.butter-is-dragging *,
-body.butter-is-dragging .ProseMirror,
-body.butter-is-dragging .ProseMirror > * {
-  overflow-anchor: none !important;
-}
-
-/* Suppress generic `transition: all` rules during drag. Some
-   Obsidian themes + community plugins (editingToolbar v4 has been
-   observed) install a blanket `transition: all <duration>` on every
-   block. When we toggle the source's opacity / max-height via
-   decoration, that "all" transition KICKS IN - the source fades out
-   instead of snapping invisible, and during the fade the partially-
-   visible block AND the partial CSS reflow on neighbors below add
-   up to a visible jolt at drag start. WAAPI animations on transform
-   are unaffected (they composite above CSS transitions in the
-   cascade), so push reflow keeps animating; only the transitions
-   originating from cascaded `transition: all` are killed.
-   Scoped tightly to `.ProseMirror > *` so we don't disable
-   transitions that other Obsidian UI legitimately wants. */
-body.butter-is-dragging .ProseMirror > *,
-body.butter-is-dragging .ProseMirror > * * {
-  transition-property: transform !important;
-}
-
-/* ── Drop indicator ─────────────────────────────────────────────
-   Base state is the thin-line variant. Variant classes adjust the
-   geometry and suppress the end-cap dots for bar/zone/ghost-preview. */
-/* ── Drag ghost ─────────────────────────────────────────────────
-   Cloned block that follows the cursor during a live-reflow drag.
-   No card wrapper - the clone renders as-is, with a subtle lift
-   shadow for the off-the-page cue. Box-shadow composites cheaply;
-   drop-shadow filter would force a paint on every cursor move and
-   shows up as drag sluggishness on non-trivial docs. */
-.butter-drag-ghost {
-  position: fixed;
-  top: 0;
-  left: 0;
-  pointer-events: none;
-  z-index: 1000;
-  /* Compositor layer + no transform transition: the ghost must
-     track cursor instantly on each rAF, not interpolate. An
-     interpolation here (80ms) adds perceptible lag on large drags.
-     `contain: layout` isolates the ghost from the rest of the page
-     (no `paint`, because paint-containment clips descendant
-     box-shadows to the container and hides the lift shadow). */
-  will-change: transform;
-  transform: translate3d(0, 0, 0);
-  contain: layout;
-}
-.butter-drag-ghost-inner {
-  position: relative;
-  pointer-events: none;
-  transform: translateZ(0);
-  /* Shadow fades in at drag start and out at drag stop - the
-     ghost's lift visually "happens" rather than popping. */
-  transition: box-shadow 160ms ease-out;
-  /* Solid page-matching background so the dragged content sits on
-     its own canvas rather than compositing on top of whatever
-     page content is under the cursor. */
-  background: var(--background-primary);
-  color: var(--text-normal);
-  opacity: 0.96;
-  max-height: 360px;
-  overflow: hidden;
-  /* Inner card radius mirrors the source block's own computed
-     radius (set by buildGhost() as `--butter-ghost-radius`). Falls
-     back to the plain-block default. So dragging a themed callout
-     / code block / image visually matches its resting state
-     radius; the ghost never looks like a differently-shaped card
-     than the block it came from. */
-  border-radius: var(--butter-ghost-radius, var(--butter-block-radius));
-  /* No inner padding. Earlier iterations used 8x12 padding to give
-     the ghost its own "card chrome," but that left non-self-framed
-     ghosts with 11-15px of breathing room between content and
-     outline, versus the selected block's 3px - two visibly
-     different visuals for what should be the same state. Zero
-     padding matches the selected block exactly. PICKUP_PAD_X/Y in
-     drag-handles.ts also zeroed so the cursor-offset math tracks. */
-  padding: 0;
-  /* Accent ring lives on the OUTER .butter-drag-ghost (see rule
-     below) instead of here. The inner has `overflow: hidden` for
-     the clamp-fade pseudo and max-height cap, which would clip a
-     pseudo-element ring sitting at -6/-8 insets. Outline worked
-     because it paints outside the element, but outline can't be
-     asymmetric. Pseudo on the outer gives us 6px vertical / 8px
-     horizontal gap cleanly. The two-layer lift shadow still lives
-     here so the inner carries the "picked up off page" shadow. */
-  box-shadow:
-    0 10px 28px rgba(0, 0, 0, 0.14),
-    0 2px 6px rgba(0, 0, 0, 0.10);
-}
-
-/* Accent ring around the ghost - must match the resting selection
-   ring (`.ProseMirror-selectednode`) pixel-for-pixel so dragging a
-   block doesn't feel like a geometric jump. Use the SAME mechanism
-   as the selection rule: `outline` + `outline-offset`. That gives
-   us:
-     • Identical 6px gap and 3px thickness drawn OUTWARD from the
-       element edge (border on a -6px-inset ::after draws inward,
-       which lit different pixels).
-     • Auto-growing corner curvature at the offset distance - a 4px
-       element radius with 6px offset traces a ~10px curve. Setting
-       `border-radius` on a -6px-inset ::after held the curve at
-       the literal value, making corners look "tight" against the
-       larger box.
-   The ::after still exists (rather than putting outline on the
-   ghost itself) because outlines paint outside the border box, and
-   placing a sized ::after lets us scope the ring's radius to the
-   source block's per-corner shape via --butter-ghost-radius. */
-.butter-drag-ghost::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: var(--butter-ghost-radius, var(--butter-block-radius));
-  outline: 3px solid hsla(var(--color-accent-hsl), 0.3);
-  outline-offset: 6px;
-  pointer-events: none;
-}
-
-/* Self-framed blocks (tables, images, code, callouts, math, embeds)
-   keep the same column-width padded card as non-self-framed - all
-   ghosts visually match the block's in-editor footprint. For narrow
-   intrinsic-width content (small image in a wide column), the image
-   sits inside the column-wide padded card; accepted as a tradeoff
-   for consistent-width ghosts (shrinking made drag visuals "jumpy"). */
-.butter-drag-ghost.is-entering .butter-drag-ghost-inner,
-.butter-drag-ghost.is-leaving .butter-drag-ghost-inner {
-  box-shadow: 0 0 0 0 transparent;
-}
-
-/* Fade-out pseudo so clamped content reads as "continues below"
-   rather than a hard cut. Stops at ~72px - enough to ease the
-   transition without hiding too much of the clone's preview. */
-/* Fade only applies when the ghost is actually being clamped by the
-   max-height cap - `.is-clamped` is added by buildGhost when the
-   source block's height exceeds the cap. Short blocks (paragraph,
-   HR, image) render within the cap and don't need the fade; without
-   this scope, the fade was painting over the visible bottom edge of
-   small ghosts. */
-.butter-drag-ghost.is-clamped .butter-drag-ghost-inner::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 72px;
-  background: linear-gradient(to bottom, transparent,
-                              var(--background-primary));
-  pointer-events: none;
-}
-
-/* Multi-block drag ghost - same content-clipping treatment as a
-   long-block ghost, plus a "N blocks" badge inside the bottom fade
-   so the user knows the floating card represents the whole stack.
-   The count is set as `data-butter-multi-count` in startDrag. */
-.butter-drag-ghost.butter-drag-ghost-multi.is-clamped
-  .butter-drag-ghost-inner::before {
-  content: attr(data-butter-multi-count) " blocks";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 8px;
-  text-align: center;
-  font-size: 0.85em;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.04em;
-  z-index: 2;
-  pointer-events: none;
-}
-/* Short stack (no fade) - pin the badge top-right as a compact
-   indicator instead. */
-.butter-drag-ghost.butter-drag-ghost-multi:not(.is-clamped)
-  .butter-drag-ghost-inner::before {
-  content: attr(data-butter-multi-count) " blocks";
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  font-size: 0.8em;
-  font-weight: 600;
-  color: var(--text-muted);
-  background: var(--background-secondary);
-  padding: 2px 6px;
-  border-radius: var(--radius-s, 4px);
-  z-index: 2;
-  pointer-events: none;
-}
-
-/* .is-self-framed branch dropped - every block now renders its
-   ghost with the same base treatment. Self-framed blocks (callout,
-   code, image, table, math, embed) already have their own
-   background in the cloned DOM; the ghost's own page-primary
-   background sits behind that and is obscured by the clone's
-   chrome naturally. No need for a special case. */
-
-/* Hide the multi-select overlay rings during a drag. The decoration
-   handles "what's being moved"; the rings would just clutter the
-   ghost converge. */
-body.butter-is-dragging .butter-selection-overlay {
-  display: none !important;
-}
-
-
-/* Generic "X blocks" ghost card for explicit multi-block drags.
-   Replaces the per-member clone ghost so the visual is predictable
-   regardless of the selection's content. Sized to the editor column
-   width × the fixed placeholder height set in startDrag. */
-.butter-drag-ghost-generic .butter-drag-ghost-inner {
-  display: flex !important;
-  align-items: center;
-  justify-content: center;
-}
-.butter-drag-ghost-generic-card {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m, 8px);
-  font-size: 0.95em;
-  font-weight: 500;
-  color: var(--text-muted);
-  letter-spacing: 0.02em;
-  user-select: none;
-}
-
-/* ── Drop reveal ────────────────────────────────────────────────
-   The just-landed block is held at opacity:0 by the source
-   decoration (re-anchored to its landed position in onDragUp) for
-   the duration of the ghost converge. Once the ghost arrives, the
-   decoration is cleared and this class drives a brief fade-in so
-   the reveal isn't a hard snap. */
-.butter-drop-fading-in {
-  animation: butter-drop-fade-in 80ms ease-out both;
-}
-@keyframes butter-drop-fade-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-/* ── Post-drop flash ────────────────────────────────────────────
-   Quick accent glow on the block at its new position so the eye
-   can track where it landed after the drop completes. */
-.butter-drag-just-dropped {
-  animation: butter-drag-drop-flash 700ms var(--butter-drag-spring-soft);
-}
-@keyframes butter-drag-drop-flash {
-  0% {
-    background-color: var(--butter-drag-accent-soft);
-    box-shadow: 0 0 0 3px var(--butter-drag-accent-soft);
-  }
-  100% {
-    background-color: transparent;
-    box-shadow: 0 0 0 0 transparent;
-  }
-}
-
 /* ══════════════════════════════════════════
    Code block shell + language picker
    ══════════════════════════════════════════ */
@@ -4788,6 +4438,106 @@ body.butter-is-dragging .butter-selection-overlay {
   0%, 100% { transform: translateX(0); }
   20%, 60% { transform: translateX(-3px); }
   40%, 80% { transform: translateX(3px); }
+}
+
+/* ── Mobile atom edit modal ──────────────────────────────────────
+   Form inputs rendered inside an Obsidian `Modal` after the user
+   taps an atom and picks "Edit…" from the bottom drawer. Layout
+   stacks fields vertically with full-width touch targets so the
+   modal reads natively as an Obsidian mobile sheet. */
+.butter-mobile-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3, 12px);
+  margin-bottom: var(--size-4-3, 12px);
+}
+.butter-mobile-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-2, 4px);
+}
+.butter-mobile-edit-field-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-weight: var(--font-medium);
+}
+.butter-mobile-edit-input {
+  width: 100%;
+  /* Larger height on mobile so the input is a comfortable touch
+     target (matches Obsidian's own mobile input sizing). */
+  min-height: 40px;
+  padding: 0 var(--size-4-3, 12px);
+  font-size: var(--font-ui-medium);
+  font-family: var(--font-interface);
+  background: var(--background-modifier-form-field);
+  color: var(--text-normal);
+  border: var(--input-border-width, 1px) solid var(--background-modifier-border);
+  border-radius: var(--input-radius, 4px);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.butter-mobile-edit-input:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--interactive-accent) 25%, transparent);
+}
+.butter-mobile-edit-input-error,
+.butter-mobile-edit-input.butter-mobile-edit-input-error:focus {
+  border-color: var(--text-error, #ed4b55);
+  animation: butter-inline-atom-edit-shake 0.4s ease;
+}
+
+/* ── Mobile drawer header ────────────────────────────────────────
+   Injected inside .menu-scroll above the first menu-item so the
+   native .menu-grabber stays on top and the slide-up affordance
+   keeps working. Scoped entirely to its own class names to avoid
+   leaking into Obsidian's native menu chrome. */
+.butter-mobile-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-3, 12px);
+  padding: var(--size-4-3, 12px) var(--size-4-4, 16px) var(--size-4-6, 24px);
+  background: transparent;
+}
+.butter-mobile-drawer-header-icon {
+  flex-shrink: 0;
+  /* Desktop chrome uses a 28x28 tile next to ~13px text. Mobile
+     menu typography is closer to 16px, so the square scales up to
+     keep the same visual weight ratio (~2.2x the title height). */
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsla(var(--interactive-accent-hsl, 240 80% 60%), 0.15);
+  color: var(--text-accent, var(--interactive-accent));
+  border-radius: 8px;
+}
+.butter-mobile-drawer-header-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.butter-mobile-drawer-header-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.butter-mobile-drawer-header-title {
+  font-weight: var(--font-medium);
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+  line-height: 1.2;
+}
+.butter-mobile-drawer-header-sub {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
 }
 
 /* ══════════════════════════════════════════
@@ -5805,7 +5555,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   user-select: none;
   vertical-align: middle;
   position: relative;
-  top: -0.1em;
+  top: -0.2em;
   /* Match the surrounding text's line-height = 0 inside the wrapper
      so the checkbox doesn't inherit a tall line-box that would
      stretch the wrapper vertically and re-introduce the alignment
@@ -6224,6 +5974,28 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   padding-top: 8px;
 }
 
+/* Native Obsidian full-screen modals on mobile (like Settings and Login) use
+   the `mod-sidebar-layout` class. However, that class sets all direct children
+   of .modal-content to `position: absolute`, which collapses flowing content.
+   We defeat that here so the Welcome Modal flows normally while keeping the
+   native full-screen shell. */
+.is-phone .butter-welcome-modal.mod-sidebar-layout .modal-content > * {
+  position: relative !important;
+}
+
+/* --- Welcome Modal --- */
+
+.butter-welcome-title-icon {
+  display: inline-flex;
+  vertical-align: text-bottom;
+  margin-right: 8px;
+  color: var(--interactive-accent);
+}
+.butter-welcome-title-icon svg {
+  width: 1.15em;
+  height: 1.15em;
+}
+
 .butter-welcome-intro {
   margin-bottom: 18px;
 }
@@ -6244,67 +6016,131 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   margin: 8px 0 12px;
 }
 
-.butter-welcome-choices {
+.butter-visual-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.butter-visual-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-/* Cards are <div role="button">. Padding and gap give the desc
-   room to wrap to 2-3 lines without crowding the title row. Hover
-   ring uses Obsidian's accent so it reads as "active surface". */
-.butter-welcome-card {
-  padding: 14px 16px;
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   cursor: pointer;
-  user-select: none;
-  transition:
-    background 90ms ease,
-    border-color 90ms ease,
-    transform 90ms ease;
+  overflow: hidden;
+  transition: box-shadow 150ms ease, border-color 150ms ease, transform 150ms ease;
 }
-.butter-welcome-card:hover {
-  background: var(--background-modifier-hover);
+.butter-visual-card:hover {
   border-color: var(--interactive-accent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
 }
-.butter-welcome-card:active {
-  transform: translateY(1px);
-}
-.butter-welcome-card:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 2px;
-}
-
-.butter-welcome-card-title-row {
+.butter-visual-graphic {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  min-height: 120px;
 }
-.butter-welcome-card-title {
+.butter-visual-col {
+  flex: 1;
+  padding: 12px;
+  line-height: 1.6;
+}
+.butter-visual-col.is-rendered {
+  background: var(--background-primary);
+  font-family: var(--font-text);
+  color: var(--text-normal);
+  font-size: 13px;
+}
+.butter-visual-col.is-source {
+  background: var(--background-secondary-alt);
+  border-left: 1px solid var(--background-modifier-border);
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.butter-visual-col-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+  user-select: none;
+}
+.butter-mock-line-source {
+  margin-bottom: 2px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.butter-mock-line {
+  margin-bottom: 2px;
+}
+.butter-mock-line.is-h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text-normal);
+}
+.butter-mock-bold {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.butter-mock-highlight {
+  background: var(--text-highlight-bg, hsla(var(--interactive-accent-hsl), 0.3));
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.butter-mock-color {
+  color: var(--color-red);
+  font-weight: 600;
+}
+.butter-mock-list {
+  margin: 4px 0 0 0;
+  padding-left: 16px;
+  list-style-type: none;
+}
+.is-mode-rich .butter-mock-list {
+  list-style-type: disc;
+}
+.is-mode-strict .butter-mock-list {
+  padding-left: 0;
+}
+.butter-visual-info {
+  padding: 14px 16px;
+}
+.butter-visual-title {
+  display: flex;
+  align-items: center;
   font-size: var(--font-ui-medium);
   font-weight: var(--font-semibold);
   color: var(--text-normal);
+  margin-bottom: 4px;
 }
-.butter-welcome-card-tagline {
-  font-size: var(--font-ui-smaller);
-  font-weight: var(--font-medium);
-  color: var(--text-on-accent);
-  background: var(--interactive-accent);
-  padding: 1px 8px;
-  border-radius: 999px;
-  letter-spacing: 0.02em;
-}
-.butter-welcome-card-desc {
-  font-size: var(--font-ui-small);
-  line-height: 1.5;
+.butter-visual-icon {
+  display: inline-flex;
+  margin-right: 6px;
   color: var(--text-muted);
 }
-
+.butter-visual-icon svg {
+  width: 1em;
+  height: 1em;
+}
+.butter-visual-tag {
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  padding: 2px 6px;
+  border-radius: 12px;
+}
+.butter-visual-desc {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
 .butter-welcome-footnote {
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
@@ -6334,6 +6170,11 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   padding: 4px 8px !important;
   height: auto !important;
   cursor: pointer;
+}
+/* Decorative back arrow. Kept in CSS rather than the button label so the
+   label text stays sentence-case ("Back"). */
+.butter-welcome-back::before {
+  content: "← ";
 }
 .butter-welcome-back:hover {
   color: var(--text-normal) !important;
@@ -6559,10 +6400,6 @@ body.butter-no-anim .ProseMirror *::after {
   position: absolute;
 }
 
-.butter-pos-relative-host {
-  position: relative;
-}
-
 /* Prism grammar pre-loader hidden offscreen DIV. */
 .butter-prism-loader {
   position: absolute;
@@ -6571,33 +6408,6 @@ body.butter-no-anim .ProseMirror *::after {
   width: 1px;
   height: 1px;
   overflow: hidden;
-}
-
-/* List-indent probe used by drag-handles to measure --list-indent. */
-.butter-list-indent-probe {
-  position: absolute;
-  visibility: hidden;
-  width: var(--list-indent, 1em);
-}
-
-/* Drag-ghost clones inside drag-handles. The first/last clone needs
- * its top/bottom margin zeroed so the ghost wrapper border-box hugs
- * tight. We toggle .butter-drag-clone-first / -last on those clones
- * and let CSS strip the margin. */
-.butter-drag-clone-first {
-  margin-top: 0 !important;
-}
-.butter-drag-clone-last {
-  margin-bottom: 0 !important;
-}
-.butter-drag-clone-no-pointer {
-  pointer-events: none;
-}
-
-/* Drag-handle transform-clear helper - removes any inline transform
- * applied via the dynamic-transform pattern. */
-.butter-drag-transform-clear {
-  transform: none !important;
 }
 
 /* CM6-bridge headless-mirror container - hidden offscreen iframe-like
@@ -6758,4 +6568,246 @@ body.butter-no-anim .ProseMirror *::after {
 /* Outline empty placeholder hidden by default. */
 .butter-outline-empty.butter-hidden {
   display: none;
+}
+
+/* ── Block drag handles ───────────────────────────────────── */
+
+/* Shared handle element — fixed on body, positioned by JS.
+   Hover mode uses one; always mode uses a pool in the layer. */
+.butter-drag-handle {
+  position: fixed;
+  width: 22px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-s, 4px);
+  padding: 0;
+  margin: 0;
+  pointer-events: auto;
+  cursor: grab;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  z-index: 10;
+  user-select: none;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.butter-drag-handle.is-visible {
+  /* Revealed whenever the pointer is anywhere over the block's row
+     (full width, not just the gutter). Kept clearly visible so it's
+     noticeable from the content, not a ghost in the margin — the
+     :hover state below is the stronger "you're on it, grab me" cue. */
+  opacity: 0.85;
+  color: var(--text-muted);
+}
+.butter-drag-handle:hover,
+.butter-drag-handle:focus-visible {
+  opacity: 1;
+  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+  transition: opacity 120ms ease, background 120ms ease;
+}
+
+/* Mobile: hide the visual handles entirely (no hover affordance, and
+   they would get in the way of touch editing). The drag-handles
+   plugin's view() still runs to keep the mobile tap-to-unlock-editable
+   handler wired — main.ts starts the editor non-editable on mobile
+   and relies on that handler to flip it back on tap. */
+body.is-mobile .butter-drag-handle,
+body.is-mobile .butter-drag-handles-layer {
+  display: none !important;
+}
+
+/* Mobile: suppress native text-selection long-press on the callout
+   header so our 400ms touch-press timer can arm a drag instead.
+   The title is still contenteditable — tap-to-focus + typing work
+   as before, you just can't drag-select the title text on mobile.
+   Acceptable tradeoff for making callouts draggable on touch. */
+body.is-mobile .butter-callout-header,
+body.is-mobile .butter-callout-title {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* 2×3 dot grid rendered as inline SVG (pixel-perfect spacing
+   independent of zoom). Fill inherits handle color. */
+.butter-drag-handle-svg {
+  width: 9px;
+  height: 15px;
+  fill: currentColor;
+  pointer-events: none;
+}
+
+/* Always-mode handle layer */
+.butter-drag-handles-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+.butter-drag-handles-layer .butter-drag-handle {
+  pointer-events: auto;
+}
+
+/* ── Live reflow transitions (DISABLED) ──────────────────────
+   All drag-related CSS transitions are off so the system is a
+   clean slate to layer animations back on. The will-change hint
+   stays so blocks are already on their own GPU layer if/when we
+   re-enable transitions. */
+body.butter-is-dragging .butter-editor-view .ProseMirror > *,
+body.butter-is-dragging .butter-editor-view .ProseMirror blockquote > *,
+body.butter-is-dragging .butter-editor-view .butter-callout-content > * {
+  will-change: transform;
+  /* Sibling slide-into-place — 0.9.9's PUSH_DURATION (240ms) with
+     PUSH_EASING (the SOFT spring, not the bouncier `spring`). */
+  transition: transform 240ms
+              var(--butter-drag-spring-soft, cubic-bezier(0.2, 1.2, 0.4, 1));
+}
+
+/* Cross-container target containers grow their content area by
+   `draggedHeight` to make visual room for the incoming block. The
+   transition is armed here (the moment dragging starts) so when the
+   engine sets `padding-bottom` inline, the browser already has the
+   transition rule live and animates the change — no inline-transition
+   race condition. SAME easing/duration as the sibling transform so
+   the two halves of the symmetry (target-container grows, source-
+   container siblings close gap) move in lockstep — net visible
+   movement of blocks below the target container = 0. */
+body.butter-is-dragging .butter-editor-view .butter-callout-content,
+body.butter-is-dragging .butter-editor-view .ProseMirror blockquote {
+  transition: padding-bottom 240ms
+              var(--butter-drag-spring-soft, cubic-bezier(0.2, 1.2, 0.4, 1));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.butter-is-dragging .butter-editor-view .ProseMirror > *,
+  body.butter-is-dragging .butter-editor-view .ProseMirror blockquote > *,
+  body.butter-is-dragging .butter-editor-view .butter-callout-content > *,
+  body.butter-is-dragging .butter-editor-view .butter-callout-content,
+  body.butter-is-dragging .butter-editor-view .ProseMirror blockquote {
+    transition: none;
+  }
+}
+
+/* Source block hiding during drag. Static rule (not in the
+   injected reflow stylesheet) so when the engine tears down the
+   reflow CSS post-dispatch the source stays hidden until the
+   ghost converge finishes and the class itself is removed. */
+.butter-editor-view .ProseMirror .butter-drag-source {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* When the drop target is in a DIFFERENT container than the source
+   (cross-container drag), the source's flow contribution is collapsed
+   so its container visually shrinks — matching the user's expectation
+   that the "origin gap closes." With this collapse in place, the
+   close-source-gap transforms are not needed in cross-container mode:
+   the natural layout already removes the source's space, so source-
+   container siblings settle to the right positions without any
+   transform applied. (Same-container drags keep the source's natural
+   height so the user can still drop back at the original position.) */
+.butter-editor-view .ProseMirror .butter-drag-source.butter-drag-source-collapsed {
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+/* Ghost clone — follows the pointer, fixed on body. The inner
+   wrapper replicates .butter-editor-view > .ProseMirror so cloned
+   blocks get the same CSS cascade as the live editor. */
+.butter-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 1000;
+  opacity: 0.88;
+  will-change: transform;
+}
+.butter-drag-ghost-inner {
+  background: transparent;
+  overflow: hidden;
+}
+
+/* Compact-mode ghost: height/maxHeight are set inline (dynamic); this
+   clamps content overflow so the scaled card crops cleanly. */
+.butter-drag-ghost-clamped {
+  overflow: hidden;
+}
+
+/* Off-screen probe used to measure a block's resolved margin in px. */
+.butter-gap-probe {
+  position: absolute;
+  visibility: hidden;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Hide selection overlays during drag — the ghost replaces the
+   visual feedback; overlays track the hidden source blocks at
+   their original positions which looks broken. */
+body.butter-is-dragging .butter-selection-overlay {
+  opacity: 0 !important;
+}
+
+/* Drop filler — sits in the open gap so the user can see where
+   the block will land. position:fixed on document.body, sized by JS
+   to match the gap's width × dragged-block height. */
+.butter-drop-filler {
+  position: fixed;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0.85;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--interactive-accent) 50%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--interactive-accent) 8%, transparent);
+  border: none;
+  box-sizing: border-box;
+  /* 0.9.9 recipe: top gets the soft spring at 200ms; left/width/
+     height get the non-bouncy ease at 120ms. positionDropFiller
+     reads blockAfter's offsetTop (transform-free) so the
+     destination is stable even while siblings are mid-transition. */
+  transition:
+    top 200ms var(--butter-drag-spring-soft, cubic-bezier(0.2, 1.2, 0.4, 1)),
+    left 120ms var(--butter-drag-ease, cubic-bezier(0.2, 0.7, 0.2, 1)),
+    width 120ms var(--butter-drag-ease, cubic-bezier(0.2, 0.7, 0.2, 1)),
+    height 120ms var(--butter-drag-ease, cubic-bezier(0.2, 0.7, 0.2, 1));
+  animation: butter-drag-reflow-in 220ms var(--butter-drag-spring-soft, cubic-bezier(0.2, 1.2, 0.4, 1)) both;
+}
+/* While autoscroll is active, the filler must snap each tick to stay
+   anchored to its doc-slot — the CSS transition would otherwise turn
+   the per-tick position updates into a 200ms lag behind the scroll. */
+body.butter-drag-autoscrolling .butter-drop-filler {
+  transition: none;
+}
+
+@keyframes butter-drag-reflow-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 0.85; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .butter-drop-filler { animation: none; transition: none; }
+}
+
+/* Body-wide grabbing cursor during drag */
+body.butter-is-dragging,
+body.butter-is-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+/* Mobile: prevent browser scroll during block drag */
+body.is-mobile.butter-is-dragging {
+  touch-action: none !important;
 }
