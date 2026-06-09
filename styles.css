@@ -246,8 +246,8 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="top"] .view-header::aft
    between the two toolbars where the main toolbar's chrome edge
    meets the table toolbar's slightly-darker fill. The ancestor
    `.butter-has-table-toolbar` class is toggled in JS when the table
-   toolbar's `.is-hidden` flips (see table-toolbar.ts) - equivalent
-   to `:has(.butter-table-toolbar:not(.is-hidden))` but lint-clean. */
+   toolbar's `.is-hidden` flips (see table-toolbar.ts), avoiding a
+   parent selector here. */
 body:not(.is-mobile) .butter-view-root[data-toolbar-pos="top"].butter-has-table-toolbar .view-header::after {
   height: 116px;
 }
@@ -334,6 +334,7 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"].butter-has-tab
 .workspace-leaf-content[data-type="butter-editor"] .view-content {
   padding: 0;
   position: relative;
+  z-index: 0;
 }
 
 /* Mobile native-parity layout for our custom view type. Three rules:
@@ -353,10 +354,10 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"].butter-has-tab
   .workspace-leaf-content[data-type="butter-editor"] {
   background-color: var(--background-primary);
 }
-.is-mobile
+body.is-mobile
   .workspace-leaf-content[data-type="butter-editor"]
   .view-content {
-  margin-top: 0 !important;
+  margin-top: 0;
 }
 
 /* 3. View-header: TRANSPARENT bg + no border. Now that view-content
@@ -365,11 +366,11 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"].butter-has-tab
    ovoid shapes remain visible, floating over content. Plus the
    scroll-hide transition the JS listener (in main.ts) drives via
    the `.butter-scroll-hide` body class. */
-.is-mobile
+body.is-mobile
   .workspace-leaf-content[data-type="butter-editor"]
   .view-header {
-  background-color: transparent !important;
-  border-bottom: none !important;
+  background-color: transparent;
+  border-bottom: none;
   transition: opacity 200ms ease, transform 200ms ease;
 }
 
@@ -377,7 +378,7 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"].butter-has-tab
    rendered DIRECTLY under the floating chrome. Once user scrolls,
    content slides up under it. Mirror native's reserved chrome area
    = safe-area-inset-top + chrome height. */
-.is-mobile
+body.is-mobile
   .workspace-leaf-content[data-type="butter-editor"]
   .butter-editor-view {
   padding-top: calc(var(--safe-area-inset-top, 0px) + var(--view-header-height, 50px)) !important;
@@ -467,8 +468,8 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    same width. Top/bottom padding from the cascade is fine. */
 .butter-editor-view .ProseMirror.markdown-rendered,
 .butter-editor-view .ProseMirror.markdown-preview-view {
-  padding-left: 0 !important;
-  padding-right: 0 !important;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .butter-editor-view .ProseMirror pre {
@@ -809,7 +810,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    ancestor's marker column, none in the item's own column or under
    its content. Cleaner than per-depth ::after rules and arbitrarily
    deep without code changes. */
-.butter-editor-view .butter-list-item:not([data-depth="0"]) {
+.butter-editor-view:not(.butter-no-indent-guides) .butter-list-item:not([data-depth="0"]) {
   background-image: repeating-linear-gradient(
     to right,
     transparent 0,
@@ -838,6 +839,8 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   color: var(--blockquote-color, var(--text-normal));
   font-style: var(--blockquote-font-style, normal);
 }
+:where(.butter-editor-view blockquote > :first-child) { margin-top: 0; }
+:where(.butter-editor-view blockquote > :last-child) { margin-bottom: 0; }
 
 /* The accent left-bar is the blockquote's defining visual - it
    should read as a clean rectangular strip. The default
@@ -940,12 +943,14 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 /* ── Tags ── */
 :where(.butter-editor-view a.tag),
 :where(.butter-editor-view .butter-tag) {
+  display: inline-block;
   background: var(--tag-background, var(--background-secondary));
   color: var(--tag-color, var(--text-accent));
   border-radius: var(--tag-radius, var(--radius-s, 4px));
   padding: var(--tag-padding-y, 1px) var(--tag-padding-x, 6px);
   font-size: var(--tag-size, var(--font-smaller));
   text-decoration: none;
+  vertical-align: baseline;
 }
 
 /* ── Wikilinks ── */
@@ -1051,6 +1056,8 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   padding: var(--callout-content-padding,
     0 var(--size-4-3, 12px) var(--size-4-2, 10px));
 }
+:where(.butter-editor-view .callout-content > :first-child) { margin-top: 0; }
+:where(.butter-editor-view .callout-content > :last-child) { margin-bottom: 0; }
 
 /* Empty-body callout - keep the body in the layout but slim it down
    so it visually approximates LP's title-only look without the
@@ -2955,8 +2962,8 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
    (`src/table-toolbar.ts` only stamps it on the desktop branch),
    so this rule shouldn't normally match anything - it's a safety
    net for future regressions. */
-.is-mobile .butter-table-toolbar {
-  display: none !important;
+body.is-mobile .butter-editor-view .butter-table-toolbar {
+  display: none;
 }
 
 /* ── Properties panel ── */
@@ -2973,12 +2980,26 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   color: var(--text-faint);
 }
 
-/* Fix: key focus highlight covers full row via .metadata-property:focus-within */
-.butter-properties-wrapper .metadata-property-key {
-  background-color: transparent !important;
+/* Collapse indicator + content fold. Obsidian's native rules scope
+   to .markdown-source-view / .markdown-rendered which Butter's view
+   doesn't carry, so the rotation never fires without these. */
+.butter-properties-wrapper .collapse-indicator {
+  transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
 }
-.butter-properties-wrapper .metadata-property-key:focus-within {
-  background-color: transparent !important;
+.butter-properties-wrapper .is-collapsed .collapse-indicator {
+  transform: rotate(-90deg);
+}
+.butter-properties-wrapper .is-collapsed .metadata-content,
+.butter-properties-wrapper .is-collapsed .metadata-add-button {
+  display: none;
+}
+
+/* Fix: key focus highlight covers full row via .metadata-property:focus-within */
+.butter-editor-view .butter-properties-wrapper .metadata-property-key {
+  background-color: transparent;
+}
+.butter-editor-view .butter-properties-wrapper .metadata-property-key:focus-within {
+  background-color: transparent;
 }
 
 /* ══════════════════════════════════════════
@@ -3308,8 +3329,8 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
   left: 0;
   background: linear-gradient(
     to right,
-    var(--background-secondary) 0%,
-    var(--background-secondary) 50%,
+    var(--background-primary) 0%,
+    var(--background-primary) 50%,
     transparent 100%
   );
 }
@@ -3317,8 +3338,8 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
   right: 0;
   background: linear-gradient(
     to left,
-    var(--background-secondary) 0%,
-    var(--background-secondary) 50%,
+    var(--background-primary) 0%,
+    var(--background-primary) 50%,
     transparent 100%
   );
 }
@@ -3388,11 +3409,47 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
 /* ── License tab - minimal hooks for native Setting rows ─────── */
 
 /* Inline error message under license-key validation. */
-.butter-account-error {
+.butter-license-error {
   color: var(--text-error);
   font-size: 13px;
   margin: 4px 0 8px;
 }
+
+.butter-activating-spinner {
+  display: inline-flex;
+  margin-right: 8px;
+  vertical-align: -0.125em;
+  animation: butter-spin 1.2s linear infinite;
+}
+.butter-activating-spinner svg {
+  width: 16px;
+  height: 16px;
+  color: #d4a017;
+}
+@keyframes butter-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.butter-license-icon-paid,
+.butter-license-icon-trial,
+.butter-license-icon-expired,
+.butter-license-icon-muted {
+  display: inline-flex;
+  margin-right: 8px;
+  vertical-align: -0.125em;
+}
+.butter-license-icon-paid svg,
+.butter-license-icon-trial svg,
+.butter-license-icon-expired svg,
+.butter-license-icon-muted svg {
+  width: 16px;
+  height: 16px;
+}
+.butter-license-icon-paid svg { color: #d4a017; }
+.butter-license-icon-trial svg { color: hsl(var(--color-accent-hsl)); }
+.butter-license-icon-expired svg { color: var(--text-error); }
+.butter-license-icon-muted svg { color: var(--text-muted); }
 
 /* ──────────────────────────────────────────────────────────────
    License tab - gemini layout
@@ -3595,7 +3652,7 @@ body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner-act
   gap: 4px;
   margin-left: 6px;
 }
-.butter-license-banner button {
+.butter-editor-view .butter-license-banner button {
   font-size: var(--font-ui-smaller, 11px);
   font-weight: 500;
   padding: 3px 10px;
@@ -3605,7 +3662,7 @@ body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner-act
   color: rgba(var(--callout-error), 0.85);
   cursor: pointer;
   transition: background 120ms ease;
-  box-shadow: none !important;
+  box-shadow: none;
 }
 .butter-license-banner button:hover {
   background: rgba(var(--callout-error), 0.1);
@@ -4637,8 +4694,7 @@ body.butter-status-bar-hide .status-bar {
    our items keeps the override scoped. The host class
    `.butter-suggest-host-vault` is stamped on by
    `vault-files-suggest.ts` when it renders an item into the
-   container - equivalent to the prior `:has(.butter-vault-suggest-
-   item)` query, lint-clean. */
+   container, avoiding a parent selector here. */
 .suggestion-container.butter-suggest-host-vault {
   z-index: 200;
 }
@@ -5052,7 +5108,7 @@ body:not(.is-mobile) .butter-table-toolbar[data-toolbar-pos="bottom"] {
      • No top margin (gap), no top border-radius (corners shared
        with the main toolbar's bottom edge in top-pos, or the
        reverse in bottom-pos). The main toolbar's adjacent corner
-       gets squared via the `:has()` rules below.
+       gets squared by the matching toolbar-stack state rules below.
      • Side + bottom borders match the main toolbar's; the inner
        `border-top` (from the base rule above) becomes the
        horizontal separator between the two layers.
@@ -5170,8 +5226,8 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
    axis, centered ON the table's outer edge line. JUST DOTS - no
    background pill / focus ring / hover bubble. Element is a `<div>`
    (not `<button>`) so Obsidian's button style cascade can't bleed
-   in; the `!important` resets below are belt-and-suspenders against
-   any future / theme-injected `.is-active`-style rules.
+   in; the `.butter-editor-view` ancestor prefix on each selector
+   provides enough specificity to beat stray theme rules.
    Reveal is selection-driven: the JS plugin tags the handle with
    `is-active` whenever the row / column it represents contains the
    editor's caret or any cell of an active CellSelection. So the
@@ -5183,18 +5239,18 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
      2. `is-active` → faint (opacity 0.6). Dots only.
      3. `is-active:hover` → full opacity.
      4. `is-pressed` (drag in flight) → full opacity. */
-.butter-table-row-handle,
-.butter-table-col-handle {
+.butter-editor-view .butter-table-row-handle,
+.butter-editor-view .butter-table-col-handle {
   position: absolute;
   width: 18px;
   height: 18px;
   display: grid;
   place-items: center;
-  background: transparent !important;
-  border: none !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  outline: none !important;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
   padding: 0;
   margin: 0;
   pointer-events: auto;
@@ -5209,13 +5265,13 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
   appearance: none;
   user-select: none;
 }
-.butter-table-row-handle:focus,
-.butter-table-row-handle:focus-visible,
-.butter-table-col-handle:focus,
-.butter-table-col-handle:focus-visible {
-  outline: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
+.butter-editor-view .butter-table-row-handle:focus,
+.butter-editor-view .butter-table-row-handle:focus-visible,
+.butter-editor-view .butter-table-col-handle:focus,
+.butter-editor-view .butter-table-col-handle:focus-visible {
+  outline: none;
+  background: transparent;
+  box-shadow: none;
 }
 /* `is-hover` - mouse is on a cell of this row/column. Dim gray
    preview so the user knows the handle is there, without committing
@@ -5237,17 +5293,17 @@ body:not(.is-mobile) .butter-table-toolbar-btn svg {
 /* Direct hover on the handle's hit zone - full opacity, color
    inherits from whatever class has set it (gray for hover-only,
    accent for active). */
-.butter-table-row-handle:hover,
-.butter-table-col-handle:hover {
-  background: transparent !important;
+.butter-editor-view .butter-table-row-handle:hover,
+.butter-editor-view .butter-table-col-handle:hover {
+  background: transparent;
   opacity: 1;
 }
-.butter-table-row-handle.is-pressed,
-.butter-table-col-handle.is-pressed {
+.butter-editor-view .butter-table-row-handle.is-pressed,
+.butter-editor-view .butter-table-col-handle.is-pressed {
   cursor: grabbing;
   opacity: 1;
   color: hsl(var(--color-accent-hsl));
-  background: transparent !important;
+  background: transparent;
 }
 
 /* Mobile: no hover state, so reveal every handle whenever the
@@ -5565,12 +5621,9 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 
 .butter-editor-view .butter-task-checkbox {
   cursor: pointer;
-  /* No vertical-align/transform on the checkbox itself - alignment
-     is fully handled by the wrapper's inline-flex. !important on
-     vertical-align suppresses Obsidian's core `.task-list-item-
-     checkbox { vertical-align: middle }` rule which would otherwise
-     fight the wrapper-side alignment we just set up. */
-  vertical-align: baseline !important;
+  /* Suppresses Obsidian's `.task-list-item-checkbox` vertical-align
+     rule - our 0,2,0 specificity already beats its 0,1,0. */
+  vertical-align: baseline;
   /* Keep `position: relative` from Obsidian's base
      `input[type=checkbox]` rule - its `:checked::after` pseudo-element
      (the actual checkmark glyph) is `position: absolute` with
@@ -6161,24 +6214,24 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   display: flex;
   margin-top: 10px;
 }
-.butter-welcome-back {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  color: var(--text-muted) !important;
+.butter-welcome-modal .butter-welcome-back {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-muted);
   font-size: var(--font-ui-small);
-  padding: 4px 8px !important;
-  height: auto !important;
+  padding: 4px 8px;
+  height: auto;
   cursor: pointer;
 }
 /* Decorative back arrow. Kept in CSS rather than the button label so the
    label text stays sentence-case ("Back"). */
-.butter-welcome-back::before {
+.butter-welcome-modal .butter-welcome-back::before {
   content: "← ";
 }
-.butter-welcome-back:hover {
-  color: var(--text-normal) !important;
-  background: var(--background-modifier-hover) !important;
+.butter-welcome-modal .butter-welcome-back:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
 }
 
 /* Settings → Getting Started tab - secondary blurb under the main
@@ -6440,7 +6493,37 @@ body.butter-no-anim .ProseMirror *::after {
 
 /* Block-comment hidden by default. */
 .butter-block-comment-view {
+  display: none !important;
+  margin: 0;
+  padding: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.butter-editor-view .ProseMirror > p.butter-comment-only {
   display: none;
+}
+
+.butter-editor-view.butter-show-comments .butter-comment {
+  display: inline !important;
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+}
+
+.butter-editor-view.butter-show-comments .butter-block-comment-view {
+  display: block !important;
+  height: auto;
+  margin: var(--p-spacing) 0;
+  padding: 0.25em 0.5em;
+  overflow: visible;
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  white-space: pre-wrap;
+  border-left: 2px solid var(--background-modifier-border);
+}
+
+.butter-editor-view.butter-show-comments .ProseMirror > p.butter-comment-only {
+  display: block;
 }
 
 /* Table cell-drag source & destination frames - position via CSS vars. */
@@ -6561,7 +6644,7 @@ body.butter-no-anim .ProseMirror *::after {
 }
 
 /* Account error inline message - default hidden. */
-.butter-account-error.butter-hidden {
+.butter-license-error.butter-hidden {
   display: none;
 }
 

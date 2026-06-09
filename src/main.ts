@@ -31,6 +31,7 @@ import { debug, setVerbose, recordError, getErrorLog, clearErrorLog } from "./in
 import {
   type LayoutItem as ToolbarLayoutItem,
   defaultMainLayout,
+  backfillMissingButtons,
   defaultTableLayout,
   migrateFromHiddenList,
   migrateLegacyHeadingButton,
@@ -58,7 +59,8 @@ import { scrollHost } from "./util/dom-utils";
 import { ButterSettingTab } from "./ui/settings-tab";
 import { installWordCountBridge } from "./ui/wordcount-bridge";
 import { WelcomeModal } from "./ui/welcome-modal";
-import { LicenseClient, LicenseClientError } from "./integration/license/client";
+import { LicenseClient, LicenseClientError, setPluginVersion } from "./integration/license/client";
+import { LINKS } from "./integration/license/links";
 import {
   BUTTER_HOVER_SOURCE,
 } from "./editor/nodeviews";
@@ -372,6 +374,8 @@ export interface ButterSettings {
    */
   enableCM6Bridge: boolean;
   frontmatterVisibility: "match" | "visible" | "hidden";
+  showComments: boolean;
+  showListIndentGuides: boolean;
   /**
    * When on, use Butter's own outline sidebar and disable the core
    * Obsidian Outline plugin (avoids two outlines competing). When
@@ -579,7 +583,7 @@ export interface ButterSettings {
   licenseKey: string;
 
   /** Polar customer ID associated with the license. Set when the
-   *  Worker's /session call returns. Used for the "Account" UI. */
+   *  Worker's /session call returns. Used for the License tab UI. */
   customerId: string;
 
   /** HMAC-signed session payload returned by /session. Cached so
@@ -701,6 +705,8 @@ const DEFAULT_SETTINGS: ButterSettings = {
   viewCycleModes: ["source", "live", "reading", "butter"],
   enableCM6Bridge: false,
   frontmatterVisibility: "match",
+  showComments: false,
+  showListIndentGuides: true,
   useButterOutline: true,
   dragMotion: "springy",
   dragHandleVisibility: "hover",
@@ -798,7 +804,7 @@ export default class ButterEditorPlugin extends Plugin {
 
   /** Computed on every load + on demand; NOT persisted (the underlying
    *  state is in `settings.sessionToken` etc.). Drives read-only
-   *  gating in ButterEditorView and the Account settings tab UI.
+   *  gating in ButterEditorView and the License settings tab UI.
    *
    *   - `valid`: live session token, plugin is licensed
    *   - `trial`: same as valid but the key is from the trial product
@@ -812,6 +818,8 @@ export default class ButterEditorPlugin extends Plugin {
    *     before refreshLicenseStatus() returns) */
   public licenseStatus: "valid" | "trial" | "expired" | "unlicensed" | "unknown" = "unknown";
   public hasShownLicensePopupThisSession = false;
+  private upgradePoller: number | null = null;
+  private upgradePollTicks = 0;
 
   /** When the cached sessionToken expires, in ms epoch. Distinct from
    *  the underlying setting so consumers can read this off the plugin
@@ -852,12 +860,62 @@ export default class ButterEditorPlugin extends Plugin {
     this.openSettings("license");
   }
 
+  startLifetimeCheckoutFlow(): void {
+    window.open(LINKS.buyLifetime(this.settings.deviceId), "_blank");
+
+    if (!this.settings.licenseKey) {
+      new Notice(
+        "Complete your purchase in the browser, then use the license link on the welcome page to activate Butter.",
+        8000,
+      );
+      return;
+    }
+
+    this.startUpgradePolling();
+  }
+
+  private startUpgradePolling(): void {
+    if (this.upgradePoller != null) return;
+    this.upgradePollTicks = 0;
+    new Notice("Complete your purchase in the browser. Butter will update automatically.", 8000);
+    this.upgradePoller = window.setInterval(() => {
+      void this.pollForUpgrade();
+    }, 2000);
+  }
+
+  private stopUpgradePolling(): void {
+    if (this.upgradePoller == null) return;
+    window.clearInterval(this.upgradePoller);
+    this.upgradePoller = null;
+    this.upgradePollTicks = 0;
+  }
+
+  private async pollForUpgrade(): Promise<void> {
+    this.upgradePollTicks++;
+    if (this.upgradePollTicks > 300) {
+      this.stopUpgradePolling();
+      return;
+    }
+
+    try {
+      await this.refreshLicenseStatus(true);
+      if (this.licenseStatus === "valid") {
+        this.stopUpgradePolling();
+        this.app.workspace.trigger("butter:license-updated");
+        (this.settingTab as { display?: () => void })?.display?.();
+      }
+    } catch {
+      // refreshLicenseStatus is defensive, but keep the checkout poll
+      // resilient if a future caller lets network errors bubble.
+    }
+  }
+
   /**
    * Refresh `licenseStatus` against the cached session token + (when
    * needed) the Worker's /session endpoint. Call sites:
    *
    *  - `onload()` once on plugin start
-   *  - 24-hour interval registered in `onload()`
+   *  - Forced 24-hour interval registered in `onload()`
    *  - After the user enters a key or completes a trial in settings
    *  - After the magic-link deep-link auto-fills a key
    *
@@ -865,7 +923,8 @@ export default class ButterEditorPlugin extends Plugin {
    * § "Architecture overview"):
    *
    *   no licenseKey         → unlicensed
-   *   sessionToken fresh    → valid (no network call)
+   *   sessionToken fresh    → valid/trial (no network call unless forced)
+   *   local trial expired   → call /session (can still auto-upgrade)
    *   sessionToken stale    → call /session
    *      success            → valid, refresh cached token
    *      license_invalid    → expired
@@ -907,10 +966,11 @@ export default class ButterEditorPlugin extends Plugin {
       }
     } else if (
       !force &&
+      this.deriveLocalLicenseStatus(this.settings.licenseKey, now) !== "expired" &&
       this.settings.sessionToken &&
       this.settings.sessionExpiresAt > now + ONE_DAY_MS
     ) {
-      this.licenseStatus = this.deriveTrialOrValid(this.settings.licenseKey);
+      this.licenseStatus = this.deriveLocalLicenseStatus(this.settings.licenseKey, now);
     } else {
       // Token missing, expired, or near expiry → re-validate online.
       try {
@@ -922,13 +982,14 @@ export default class ButterEditorPlugin extends Plugin {
         if (session.upgrade) {
           this.settings.licenseKey = session.upgrade.licenseKey;
           this.settings.customerId = session.upgrade.customerId;
+          this.settings.customerEmail = "";
           this.settings.pendingTrialActivation = null;
           await this.saveSettings();
           new Notice("Your license has been upgraded!", 5000);
           import("canvas-confetti").then((m) => {
             void (m.default || m)({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
           }).catch(() => {});
-          return this._refreshLicenseStatusInner();
+          return this._refreshLicenseStatusInner(true);
         }
         this.settings.sessionToken = session.sessionToken;
         const parsedExpiry = Date.parse(session.expiresAt);
@@ -946,7 +1007,7 @@ export default class ButterEditorPlugin extends Plugin {
         this.settings.wasInvalidated = false;
         this.settings.lastReason = "";
         await this.saveSettings();
-        this.licenseStatus = this.deriveTrialOrValid(this.settings.licenseKey);
+        this.licenseStatus = this.deriveLocalLicenseStatus(this.settings.licenseKey, now);
       } catch (err) {
         const kind = err instanceof LicenseClientError ? err.kind : "unknown";
         if (err instanceof LicenseClientError && err.kind === "license_invalid") {
@@ -971,7 +1032,6 @@ export default class ButterEditorPlugin extends Plugin {
           this.settings.lastReason = kind;
           this.settings.sessionToken = "";
           this.settings.sessionExpiresAt = 0;
-          this.settings.everValidated = false;
           this.settings.lastValidatedAt = 0;
           this.settings.licenseKey = "";
           this.settings.customerId = "";
@@ -985,7 +1045,7 @@ export default class ButterEditorPlugin extends Plugin {
           // (treated as unlicensed by the editor gate but distinct in
           // the settings UI so we can show "Couldn't check, retrying…"
           // instead of "License required").
-          this.licenseStatus = this.settings.everValidated ? this.deriveTrialOrValid(this.settings.licenseKey) : "unknown";
+          this.licenseStatus = this.settings.everValidated ? this.deriveLocalLicenseStatus(this.settings.licenseKey) : "unknown";
         }
       }
     }
@@ -1011,8 +1071,11 @@ export default class ButterEditorPlugin extends Plugin {
     return key.startsWith("BTR-T-") || key.startsWith("BUTTER_TRIAL");
   }
 
-  private deriveTrialOrValid(key: string): "valid" | "trial" {
-    return this.isTrialKey(key) ? "trial" : "valid";
+  private deriveLocalLicenseStatus(key: string, now = Date.now()): "valid" | "trial" | "expired" {
+    if (!this.isTrialKey(key)) return "valid";
+    const expiresAt = this.settings.licenseExpiresAt || 0;
+    if (expiresAt > 0 && expiresAt <= now) return "expired";
+    return "trial";
   }
 
   /** Short-term retries when the initial /session call lands in
@@ -1103,7 +1166,7 @@ export default class ButterEditorPlugin extends Plugin {
    * would reject a key that isn't on Polar's records.
    *
    * UX: silently auto-fills + validates. On success: opens settings
-   * to the Account tab + toast. On failure: opens to Account tab so
+   * to the License tab + toast. On failure: opens to the License tab so
    * the user sees the error context inline.
    */
   async handleRecoveryDeepLink(rawKey?: string, rawCustomer?: string): Promise<void> {
@@ -1135,24 +1198,31 @@ export default class ButterEditorPlugin extends Plugin {
     } catch (err) {
       const msg = err instanceof LicenseClientError && err.kind === "license_invalid"
         ? "Recovery link's key is not valid (revoked, expired, or unrecognized)."
-        : "Couldn't validate the recovered license. Try again from Settings → Account.";
+        : "Couldn't validate the recovered license. Try again from Settings → License.";
       new Notice(msg, 8000);
       this.openSettings("license");
     }
   }
 
   async onload() {
-    await this.loadSettings();
+    try { await this.loadSettings(); } catch { /* corrupt data.json — defaults applied */ }
+    setPluginVersion(this.manifest.version);
 
     const origGetActiveViewOfType = this.app.workspace.getActiveViewOfType.bind(this.app.workspace);
-    this.app.workspace.getActiveViewOfType = (type: unknown) => {
+    const wsPatched = this.app.workspace as unknown as {
+      getActiveViewOfType: (type: { name?: string }) => unknown;
+      activeLeaf: WorkspaceLeaf | null;
+      _butterActiveEditorProxied?: boolean;
+      activeEditor: unknown;
+    };
+    wsPatched.getActiveViewOfType = (type: { name?: string }) => {
       if (type && type.name === "MarkdownView") {
-        const activeLeaf = (this.app.workspace as unknown as { activeLeaf: WorkspaceLeaf | null }).activeLeaf;
+        const activeLeaf = wsPatched.activeLeaf;
         if (activeLeaf && activeLeaf.view instanceof ButterEditorView) {
-          return activeLeaf.view as unknown;
+          return activeLeaf.view;
         }
       }
-      return origGetActiveViewOfType(type);
+      return origGetActiveViewOfType(type as Parameters<typeof origGetActiveViewOfType>[0]);
     };
 
     const origGetLeavesOfType = this.app.workspace.getLeavesOfType.bind(this.app.workspace);
@@ -1169,26 +1239,26 @@ export default class ButterEditorPlugin extends Plugin {
     // Safely proxy activeEditor for widgets. We check the call stack
     // to ensure we return the real activeEditor (usually undefined for Butter)
     // during Obsidian's internal layout lifecycle, preventing crashes.
-    const ws = this.app.workspace as import("obsidian").Workspace & { _butterActiveEditorProxied?: boolean, activeEditor?: unknown };
-    if (!ws._butterActiveEditorProxied) {
-      ws._butterActiveEditorProxied = true;
-      const origDescriptor = Object.getOwnPropertyDescriptor(ws, "activeEditor") || { value: ws.activeEditor, writable: true, configurable: true };
-      Object.defineProperty(ws, "activeEditor", {
+    const wsEditor = this.app.workspace as import("obsidian").Workspace & { _butterActiveEditorProxied?: boolean, activeEditor?: unknown };
+    if (!wsEditor._butterActiveEditorProxied) {
+      wsEditor._butterActiveEditorProxied = true;
+      const origDescriptor = Object.getOwnPropertyDescriptor(wsEditor, "activeEditor") || { value: wsEditor.activeEditor, writable: true, configurable: true };
+      Object.defineProperty(wsEditor, "activeEditor", {
         get: () => {
           const stack = new Error().stack || "";
           if (stack.includes("updateViewState") || stack.includes("_onFileOpen") || stack.includes("activeLeafEvents")) {
-            if (origDescriptor.get) return origDescriptor.get.call(ws) as unknown;
+            if (origDescriptor.get) return origDescriptor.get.call(wsEditor) as unknown;
             return origDescriptor.value as unknown;
           }
           const butterView = origGetActiveViewOfType(ButterEditorView) as unknown as ButterEditorView | null;
           if (butterView) {
             return butterView;
           }
-          if (origDescriptor.get) return origDescriptor.get.call(ws) as unknown;
+          if (origDescriptor.get) return origDescriptor.get.call(wsEditor) as unknown;
           return origDescriptor.value as unknown;
         },
         set: (val: unknown) => {
-          if (origDescriptor.set) origDescriptor.set.call(ws, val);
+          if (origDescriptor.set) origDescriptor.set.call(wsEditor, val);
           else origDescriptor.value = val;
         },
         configurable: true
@@ -1221,7 +1291,7 @@ export default class ButterEditorPlugin extends Plugin {
     // timer is cleared on plugin unload (no stray callbacks).
     this.registerInterval(
       window.setInterval(() => {
-        void this.refreshLicenseStatus();
+        void this.refreshLicenseStatus(true);
       }, 24 * 60 * 60 * 1000),
     );
     // Re-validate on wake-from-sleep / mobile-background-return so a
@@ -1231,7 +1301,7 @@ export default class ButterEditorPlugin extends Plugin {
       if (activeDocument.visibilityState !== "visible") return;
       const staleMs = Date.now() - (this.settings.lastValidatedAt || 0);
       if (staleMs > 60 * 60 * 1000) {
-        void this.refreshLicenseStatus();
+        void this.refreshLicenseStatus(true);
       }
     });
     // Magic-link recovery deep-link. The Worker's HTML recovery page
@@ -1352,6 +1422,9 @@ export default class ButterEditorPlugin extends Plugin {
       const onScroll = (ev: Event) => {
         const target = ev.target as HTMLElement | null;
         if (!target || !target.classList.contains("butter-editor-view")) return;
+        if (activeDocument.body.classList.contains("butter-is-dragging")) return;
+        const dragEnd = parseInt(activeDocument.body.dataset.butterDragEndedAt || "0", 10);
+        if (Date.now() - dragEnd < 600) return;
         const st = target.scrollTop;
         const delta = st - lastScrollTop;
         // Hide chrome when scrolling DOWN past a small threshold;
@@ -1711,6 +1784,8 @@ export default class ButterEditorPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.stopUpgradePolling();
+
     // FIRST: flush any in-flight scheduled saves across open Butter
     // views. If the user disables Butter mid-typing (within the save
     // scheduler's idle window), pending edits would otherwise get
@@ -1898,6 +1973,32 @@ export default class ButterEditorPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "toggle-frontmatter-visibility",
+      name: "Toggle frontmatter visibility",
+      callback: async () => {
+        const cycle: Record<string, "match" | "visible" | "hidden"> =
+          { match: "visible", visible: "hidden", hidden: "match" };
+        const next = cycle[this.settings.frontmatterVisibility] ?? "match";
+        this.settings.frontmatterVisibility = next;
+        await this.saveSettings();
+        this.refreshAllButterViews();
+        const labels = { match: "Match Obsidian", visible: "Always visible", hidden: "Always hidden" };
+        new Notice(`Frontmatter: ${labels[next]}`);
+      },
+    });
+
+    this.addCommand({
+      id: "toggle-comments",
+      name: "Toggle comments",
+      callback: async () => {
+        this.settings.showComments = !this.settings.showComments;
+        await this.saveSettings();
+        this.refreshAllButterViews();
+        new Notice(`Comments: ${this.settings.showComments ? "shown" : "hidden"}`);
+      },
+    });
+
     // One-shot source normalizer on the active file. Applies BOTH
     // normalizers (heading-gap + condense-blanks) to the current
     // file's content via vault.modify, independent of the global
@@ -1930,7 +2031,7 @@ export default class ButterEditorPlugin extends Plugin {
 
     this.addCommand({
       id: "canonicalize-current-note",
-      name: "Rewrite current note in canonical form",
+      name: "Rewrite current note in standard format",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "md") return false;
@@ -1941,7 +2042,7 @@ export default class ButterEditorPlugin extends Plugin {
 
     this.addCommand({
       id: "canonicalize-vault",
-      name: "Rewrite entire vault in canonical form (irreversible - Git commit first)",
+      name: "Rewrite entire vault in standard format (irreversible - back up first)",
       callback: () => void this.canonicalizeVaultWithConfirm(),
     });
 
@@ -2268,6 +2369,8 @@ export default class ButterEditorPlugin extends Plugin {
       if (typeof v?.renderProperties === "function") {
         v.renderProperties();
       }
+      v?.contentEl?.toggleClass("butter-no-indent-guides", !this.settings.showListIndentGuides);
+      v?.contentEl?.toggleClass("butter-show-comments", this.settings.showComments);
     }
   }
 
@@ -2543,6 +2646,12 @@ export default class ButterEditorPlugin extends Plugin {
         defaultTableLayout(),
         this.settings.tableToolbarHiddenButtons,
       );
+    }
+    if (this.settings.mobileToolbarLayout) {
+      backfillMissingButtons(this.settings.mobileToolbarLayout, mobileLayoutDefault());
+    }
+    if (this.settings.toolbarLayout) {
+      backfillMissingButtons(this.settings.toolbarLayout, defaultMainLayout());
     }
     // Generate a per-install device ID on first load. Used as the
     // stable identifier for trial dedupe + session token binding.

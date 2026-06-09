@@ -288,12 +288,26 @@ class SelectionFrameView {
       this.sourceFrame.removeClass("butter-cell-frame-positioned");
       return;
     }
+    const leaf = this.view.dom.closest(".workspace-leaf-content");
+    const header = leaf?.querySelector<HTMLElement>(".view-header");
+    const stack = leaf?.querySelector<HTMLElement>(".butter-toolbar-stack");
+    const tableBar = stack?.querySelector<HTMLElement>(".butter-table-toolbar:not(.is-hidden)");
+    const hb = header?.getBoundingClientRect().bottom ?? 0;
+    const sb = stack?.getBoundingClientRect().bottom ?? 0;
+    const tb = tableBar?.getBoundingClientRect().bottom ?? 0;
+    const chromeBottom = Math.max(hb, sb, tb);
+    const clippedTop = Math.max(vr.top, chromeBottom);
+    const clippedHeight = vr.height - (clippedTop - vr.top);
+    if (clippedHeight <= 0) {
+      this.sourceFrame.removeClass("butter-cell-frame-positioned");
+      return;
+    }
     this.sourceFrame.addClass("butter-cell-frame-positioned");
     this.sourceFrame.setCssProps({
       "--butter-pos-left": `${vr.left}px`,
-      "--butter-pos-top": `${vr.top}px`,
+      "--butter-pos-top": `${clippedTop}px`,
       "--butter-pos-width": `${vr.width}px`,
-      "--butter-pos-height": `${vr.height}px`,
+      "--butter-pos-height": `${clippedHeight}px`,
     });
   }
 

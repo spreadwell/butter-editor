@@ -93,8 +93,8 @@ const BUTTONS = {
   insert: [
     { id: "table", icon: "table", label: "Insert table", kind: "insert" as const, nodeName: "table" },
     { id: "image", icon: "image", label: "Insert image", kind: "insert" as const, nodeName: "image" },
-    { id: "insert-base-inline", icon: "database", label: "Insert inline base", kind: "insert" as const },
-    { id: "insert-base-embed",  icon: "file-spreadsheet", label: "Insert existing base", kind: "insert" as const },
+    { id: "insert-base-inline", icon: "database", label: "Insert Base query", kind: "insert" as const },
+    { id: "insert-base-embed",  icon: "file-spreadsheet", label: "Embed a Base file", kind: "insert" as const },
   ],
   // Callout types - one button per Obsidian callout type so the user
   // can drag any subset onto the toolbar. Default layout packages

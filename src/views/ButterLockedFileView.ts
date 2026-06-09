@@ -118,7 +118,7 @@ class ButterLockedFileView extends ItemView {
       cls: "butter-locked-filename",
     });
     desc.appendText(
-      " can't be opened right now because another process on your device is locking it. Most likely: VS Code with the file open · antivirus mid-scan · another Obsidian window.",
+      " can't be opened because another app is using it. Common causes: VS Code with the file open, antivirus scanning, or another Obsidian window.",
     );
 
     const actions = container.createDiv({ cls: "empty-state-action-list" });

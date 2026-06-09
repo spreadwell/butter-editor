@@ -1,45 +1,39 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - '[0-9]+.[0-9]+.[0-9]+'
+  release:
+    types: [published]
 
 permissions:
   contents: write
-  # Required by actions/attest-build-provenance to mint a Sigstore
-  # cert tied to this workflow run.
   id-token: write
   attestations: write
 
 jobs:
-  release:
+  push-to-master:
     runs-on: ubuntu-latest
+    if: "!github.event.release.prerelease"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
 
-      # Provenance attestations for the binary assets BRAT and the
-      # Obsidian community store fetch. Lets anyone verify the
-      # main.js / styles.css they downloaded came from this repo at
-      # this commit, without trusting the release page metadata.
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
             main.js
             styles.css
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          # Notes file is written by publish-release.mjs from the dev
-          # repo; it's part of the public tree so the Action can read it
-          # directly without any other inputs.
-          body_path: release-notes/${{ github.ref_name }}.md
-          # Land as a draft so the notes can be reviewed before customers
-          # see it. Publish manually from the Releases page when ready.
-          draft: true
-          files: |
-            main.js
-            manifest.json
-            styles.css
+      - name: Push release commit to master and clean up
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          COMMIT=$(git rev-list -n 1 "refs/tags/$TAG")
+          echo "Pushing $TAG ($COMMIT) to master"
+          git push origin "$COMMIT:refs/heads/master"
+          if git ls-remote --exit-code origin refs/heads/review >/dev/null 2>&1; then
+            git push origin --delete refs/heads/review
+            echo "Deleted review branch"
+          else
+            echo "No review branch to clean up"
+          fi

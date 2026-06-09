@@ -301,6 +301,19 @@ export function collectButtonIds(layout: Layout): Set<string> {
   return ids;
 }
 
+/** Backfill buttons that exist in `defaults` but are missing from
+ *  `layout`. Appends them at the end so existing user ordering is
+ *  untouched. Returns the layout (mutated in place). */
+export function backfillMissingButtons(layout: Layout, defaults: Layout): Layout {
+  const existing = collectButtonIds(layout);
+  for (const item of defaults) {
+    if (item.type === "button" && !existing.has(item.id)) {
+      layout.push({ type: "button", id: item.id });
+    }
+  }
+  return layout;
+}
+
 /** Find an item by id anywhere in the layout, returning its parent
  *  array + index so the caller can splice. Returns null if not found. */
 export function locate(

@@ -14,18 +14,25 @@
  * Architecture reference lives in the private planning notes.
  */
 
-import { requestUrl } from "obsidian";
+import { Platform, requestUrl } from "obsidian";
 
 export const WORKER_BASE = "https://api.buttereditor.com";
+
+let _pluginVersion = "";
+export function setPluginVersion(v: string) { _pluginVersion = v; }
+
+function detectPlatform(): string {
+  if (Platform.isWin) return "windows";
+  if (Platform.isMacOS) return "macos";
+  if (Platform.isIosApp) return "ios";
+  if (Platform.isAndroidApp) return "android";
+  if (Platform.isLinux) return "linux";
+  return "unknown";
+}
 
 /** Hard cap on each Worker call. The Worker itself has 8s timeouts on
  * its upstream Polar/Resend calls, so 10s leaves a small margin. */
 const REQUEST_TIMEOUT_MS = 10_000;
-
-export interface TrialResponse {
-  checkoutUrl: string;
-  pollToken: string;
-}
 
 export interface InstantTrialResponse {
   licenseKey: string;
@@ -56,6 +63,8 @@ export interface DeviceWireRecord {
   lastSeenAt: number;
   /** True for the device whose sessionToken made the request. */
   isCurrent: boolean;
+  /** Platform label (windows, macos, ios, android, linux). */
+  platform?: string;
 }
 
 export interface DevicesListResponse {
@@ -136,6 +145,7 @@ async function call(
     "content-type": "application/json",
     "accept": "application/json",
   };
+  if (_pluginVersion) headers["x-butter-version"] = _pluginVersion;
   if (init.bearer) headers.authorization = `Bearer ${init.bearer}`;
   let res;
 
@@ -193,15 +203,8 @@ export class LicenseClient {
    * Throws `LicenseClientError("trial_used")` if the email or device
    * has already started a trial.
    */
-  async startTrial(deviceId: string, email?: string): Promise<TrialResponse> {
-    const body: Record<string, string> = { deviceId };
-    if (email) body.email = email;
-    const res = await call("/trial", { method: "POST", body });
-    return expectOk<TrialResponse>("/trial", res);
-  }
-
   async startInstantTrial(deviceId: string): Promise<InstantTrialResponse> {
-    const res = await call("/trial/instant", { method: "POST", body: { deviceId } });
+    const res = await call("/trial/instant", { method: "POST", body: { deviceId, platform: detectPlatform() } });
     return expectOk<InstantTrialResponse>("/trial/instant", res);
   }
 
@@ -235,7 +238,7 @@ export class LicenseClient {
   ): Promise<SessionResponse> {
     const res = await call("/session", {
       method: "POST",
-      body: { licenseKey, deviceId },
+      body: { licenseKey, deviceId, platform: detectPlatform() },
     });
     return expectOk<SessionResponse>("/session", res);
   }

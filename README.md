@@ -14,7 +14,7 @@ Butter is a paid plugin. **Free 15-day trial (*no email or credit card required*
 
 - **Edit and style your notes freely** without seeing raw markdown (including with color!)
 - **Fully supports Obsidian syntax** and common features like **Wikilinks**, **Callouts**, **Bases** and more.
-- **Your files stay compatible** with any markdown software. Clean source & round-trip safe.
+- **Your files stay compatible** with any markdown software. Clean source that won't drift between editors.
 - **Drag & drop blocks** to reorder your notes easily.
 - **Use slash commands** '/' to quickly add anything.
 - **Works on your phone and desktop** (same plugin, same license for all your devices).
@@ -64,7 +64,7 @@ Butter bundles two open-source libraries:
 - [ProseMirror](https://prosemirror.net/) (MIT), the editor toolkit.
 - [markdown-it](https://github.com/markdown-it/markdown-it) (MIT), the markdown parser.
 
-Their licenses are preserved in the compiled bundle. Everything else (the Obsidian-Markdown bridge, schema, serializer, NodeViews, and all features) is original Butter Editor code.
+Their licenses are preserved in the plugin. Everything else is original Butter Editor code.
 
 ## Support
 
@@ -74,4 +74,4 @@ Their licenses are preserved in the compiled bundle. Everything else (the Obsidi
 
 ## License
 
-Butter Editor is source-available proprietary software. The source is published in this repository under the [LICENSE](./LICENSE), which permits private use, internal organizational use, and bespoke client-specific implementations, but restricts use as a substantial component of a general-purpose competing Obsidian product. Runtime use is governed by the End User License Agreement at [buttereditor.com/terms](https://buttereditor.com/terms) and requires a valid Butter Editor license (or an active trial).
+Butter Editor is source-available proprietary software. The source is published in this repository under the [LICENSE](./LICENSE), which permits private use, internal organizational use, and custom one-off implementations, but restricts use as a substantial component of a competing Obsidian product. Runtime use is governed by the End User License Agreement at [buttereditor.com/terms](https://buttereditor.com/terms) and requires a valid Butter Editor license (or an active trial).

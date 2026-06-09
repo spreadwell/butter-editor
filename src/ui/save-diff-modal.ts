@@ -31,17 +31,16 @@ export class SaveDiffModal extends Modal {
     // query on the diff-wrap child.
     modalEl.classList.add("butter-modal-save-diff");
     if (Platform.isMobile) modalEl.addClass("mod-lg");
-    titleEl.setText("Butter - structural normalization on save");
+    titleEl.setText("Butter - formatting adjusted on save");
 
     const intro = contentEl.createDiv({ cls: "butter-save-diff-intro" });
     intro.setText(
-      "Butter saved your work, but the bytes on disk don't re-parse to " +
-        "the exact same structural shape as the in-memory document. The " +
-        "content is preserved; the block-level structure was normalized " +
-        "to a form the parser accepts cleanly. Compare the previous and " +
-        "new versions below. To roll back to a prior save, use Obsidian's " +
-        "core File Recovery plugin (Settings → Core plugins → File " +
-        "recovery → View recovered files).",
+      "Butter saved your work, but had to adjust some formatting to " +
+        "keep the file consistent. Your content is preserved - only the " +
+        "layout of certain blocks changed. Compare the previous and new " +
+        "versions below. To roll back to a prior save, use Obsidian's " +
+        "core File Recovery plugin (Settings > Core plugins > File " +
+        "recovery > View recovered files).",
     );
 
     const reasonEl = contentEl.createDiv({ cls: "butter-save-diff-reason" });
@@ -54,14 +53,14 @@ export class SaveDiffModal extends Modal {
     const diffWrap = contentEl.createDiv({ cls: "butter-save-diff-wrap" });
 
     const beforeCol = diffWrap.createDiv({ cls: "butter-save-diff-col" });
-    beforeCol.createEl("h4", { text: "Before (previous on-disk bytes)" });
+    beforeCol.createEl("h4", { text: "Before (previous version)" });
     const beforePre = beforeCol.createEl("pre", {
       cls: "butter-save-diff-pre",
     });
     beforePre.setText(this.original);
 
     const afterCol = diffWrap.createDiv({ cls: "butter-save-diff-col" });
-    afterCol.createEl("h4", { text: "After (bytes Butter just wrote)" });
+    afterCol.createEl("h4", { text: "After (current version)" });
     const afterPre = afterCol.createEl("pre", {
       cls: "butter-save-diff-pre",
     });

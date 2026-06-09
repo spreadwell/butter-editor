@@ -53,8 +53,8 @@ export function handlePlacementFor(
     return { top: glyphCenter - HANDLE_HEIGHT / 2, height: HANDLE_HEIGHT };
   }
   return {
-    top: rect.top,
-    height: Math.min(rect.height, HANDLE_HEIGHT + 10),
+    top: rect.top + rect.height / 2 - HANDLE_HEIGHT / 2,
+    height: HANDLE_HEIGHT,
   };
 }
 

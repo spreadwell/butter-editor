@@ -25,7 +25,7 @@ import type { SourcePurityMode } from "../welcome-modal";
       purity.createEl("p", {
         cls: "setting-item-description butter-preset-custom-indicator",
         text:
-          "Custom: your bundled settings don't match any preset. Apply one below to return to a known baseline.",
+          "Custom: your settings don't match any preset. Apply one below to return to a known starting point.",
       });
     }
 
@@ -52,7 +52,7 @@ import type { SourcePurityMode } from "../welcome-modal";
         icon: "paintbrush",
         bestFor: "Best for colorful, freely styled notes.",
         rest:
-          "If you just want to color and style your notes how you want without worrying about markdown source then use this preset. This mixes some HTML into your note under the hood; invisible to you but some don't prefer that.",
+          "Color and style your notes freely without worrying about what the file looks like behind the scenes. Some formatting gets stored as HTML in the file, which is invisible to you but may matter if you use other tools to read your notes.",
       },
     ];
 
@@ -119,7 +119,7 @@ import type { SourcePurityMode } from "../welcome-modal";
       text: "Best for keeping your files exactly as written.",
     });
     preserveRow.descEl.appendText(
-      " Useful for git-tracked vaults or hand-formatted notes. Find the toggle and related normalizers under the Advanced tab.",
+      " Useful for git-tracked vaults or hand-formatted notes. Find the toggle and cleanup options under the Advanced tab.",
     );
     preserveRow.addButton((b) =>
       b
@@ -220,7 +220,7 @@ import type { SourcePurityMode } from "../welcome-modal";
     new Setting(formatting)
       .setName("HTML formatting")
       .setDesc(
-        "Show toolbar buttons for marks that can only be written as inline HTML in source: text color, custom highlight color, underline, superscript, subscript, keyboard key. Turn off to keep your source pure Markdown. Existing HTML in files is still read and round-tripped either way.",
+        "Show toolbar buttons for text color, custom highlight color, underline, superscript, subscript, and keyboard key. These use HTML in your files. Turn off to keep your notes in standard Markdown only. Existing formatting is still displayed either way.",
       )
       .addToggle((t) =>
         t
@@ -232,8 +232,8 @@ import type { SourcePurityMode } from "../welcome-modal";
           }),
       );
 
-    const properties = this.createSettingGroup(root, "Properties");
-    new Setting(properties)
+    const display = this.createSettingGroup(root, "Display");
+    new Setting(display)
       .setName("Frontmatter visibility")
       .setDesc("Control whether the properties/frontmatter panel is shown at the top of notes.")
       .addDropdown((d) =>
@@ -247,6 +247,17 @@ import type { SourcePurityMode } from "../welcome-modal";
             await this.plugin.saveSettings();
             this.plugin.refreshAllButterViews();
           }),
+      );
+
+    new Setting(display)
+      .setName("List indentation guides")
+      .setDesc("Show vertical lines connecting nested list levels.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.showListIndentGuides).onChange(async (v) => {
+          this.plugin.settings.showListIndentGuides = v;
+          await this.plugin.saveSettings();
+          this.plugin.refreshAllButterViews();
+        }),
       );
 
     const dragDrop = this.createSettingGroup(root, "Drag and drop");
@@ -324,7 +335,7 @@ import type { SourcePurityMode } from "../welcome-modal";
     const compat = this.createSettingGroup(root, "Compatibility");
     new Setting(compat)
       .setName("Plugin autocomplete pop-ups")
-      .setDesc("Pop-ups that appear as you type. `[[` for wikilinks, `#` for tags, `:` for emoji, `@today` for Natural Language Dates. Dismiss with Esc.")
+      .setDesc("Show autocomplete pop-ups from other plugins as you type, like [[ for links, # for tags, and : for emoji. Press Esc to dismiss.")
       .addToggle((t) =>
         t
           .setValue(this.plugin.settings.enableSuggestBridge)
@@ -335,7 +346,7 @@ import type { SourcePurityMode } from "../welcome-modal";
       );
     const themeCompat = new Setting(compat)
       .setName("Max theme compatibility")
-      .setDesc("Claim Obsidian's `.markdown-rendered` class so Reading-mode theme CSS cascades into Butter. Wider theme coverage; some themes assume non-editable content and can break selection or hover.")
+      .setDesc("Let more theme styles apply inside Butter by sharing a class with Reading mode. Gives better theme coverage, but some themes may interfere with editing.")
       .addToggle((t) =>
         t
           .setValue(this.plugin.settings.experimentalThemeCompatMode)

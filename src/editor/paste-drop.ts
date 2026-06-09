@@ -252,10 +252,17 @@ export function pasteDropPlugin(
   schema: Schema,
   parser: Parser,
   getSourcePath: () => string,
+  serializeDoc?: (doc: PMNode) => string,
 ) {
   return new PMPlugin({
     key: new PluginKey("butter-paste-drop"),
     props: {
+      clipboardTextSerializer: serializeDoc
+        ? (slice) => {
+            const wrap = schema.node("doc", null, slice.content);
+            return serializeDoc(wrap);
+          }
+        : undefined,
       handleDOMEvents: {
         paste: (view, event) => {
           const e = event;
@@ -307,6 +314,16 @@ export function pasteDropPlugin(
           const htmlHasTable = !!html && /<table\b/i.test(html);
           if (cursorInCell && htmlHasTable) {
             return false;
+          }
+
+          // PM's own copy writes `data-pm-slice` on the HTML. When the
+          // clipboard came from Butter, text/plain holds our serializer's
+          // markdown (wikilinks, tags, embeds preserved). Use it instead
+          // of the HTML which flattens Obsidian syntax to standard links.
+          if (html && /data-pm-slice/i.test(html) && plain) {
+            e.preventDefault();
+            insertMarkdown(view, schema, parser, plain);
+            return true;
           }
 
           if (html && looksRich(html)) {

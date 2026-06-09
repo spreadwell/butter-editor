@@ -253,7 +253,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   const def = BUTTON_REGISTRY.get(item.id);
   if (!def) return;
   if (def.markName && !ctx.schema.marks[def.markName]) return;
-  if (def.nodeName && !ctx.schema.nodes[def.nodeName]) return;
+  if (def.kind !== "list" && def.nodeName && !ctx.schema.nodes[def.nodeName]) return;
   // Mirror the desktop gate: HTML-only toolbar buttons hide when the
   // user disables HTML formatting in settings. Same setting check;
   // applyToolbarButtonVisibility rebuilds the mobile bar on toggle.

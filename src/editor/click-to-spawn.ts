@@ -59,7 +59,7 @@
  *   editor don't fire blur.
  */
 
-import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
+import { Plugin, PluginKey, TextSelection, NodeSelection, Selection } from "prosemirror-state";
 import type { EditorState, Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorView } from "prosemirror-view";
@@ -653,6 +653,27 @@ export function clickToSpawnPlugin(
       },
       handleDOMEvents: {
         mousedown(view: EditorView, event: MouseEvent): boolean {
+          // Clear selected leaf blocks before PM can re-select them.
+          if (
+            event.button === 0 &&
+            !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey &&
+            view.state.selection instanceof NodeSelection &&
+            (view.state.selection.node.isAtom || view.state.selection.node.isLeaf)
+          ) {
+            const selDom = view.nodeDOM(view.state.selection.from);
+            if (selDom instanceof HTMLElement && selDom.contains(event.target as Node)) {
+              event.preventDefault();
+              const $pos = view.state.doc.resolve(view.state.selection.from);
+              let textSel = Selection.near($pos);
+              if (textSel instanceof NodeSelection && textSel.from === view.state.selection.from) {
+                textSel = Selection.near($pos, -1);
+              }
+              view.dispatch(view.state.tr.setSelection(textSel));
+              view.focus();
+              return true;
+            }
+          }
+
           // Only left-button, unmodified clicks.
           if (event.button !== 0) return false;
           if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)

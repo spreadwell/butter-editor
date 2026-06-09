@@ -4,7 +4,7 @@ import { PresetDriftConfirmModal } from "../welcome-modal";
 import type { SourcePurityMode } from "../welcome-modal";
 
 export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
-    const formSection = this.createSettingGroup(root, "Canonical form");
+    const formSection = this.createSettingGroup(root, "Formatting style");
 
     new Setting(formSection)
       .setName("Bullet marker")
@@ -31,7 +31,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
 
     new Setting(formSection)
       .setName("Italic marker")
-      .setDesc("Wrapper for emphasized text.")
+      .setDesc("Character used to italicize text.")
       .addDropdown((d) =>
         d
           .addOptions({
@@ -53,7 +53,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
 
     new Setting(formSection)
       .setName("Bold marker")
-      .setDesc("Wrapper for strong text.")
+      .setDesc("Character used to bold text.")
       .addDropdown((d) =>
         d
           .addOptions({
@@ -75,7 +75,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
 
     new Setting(formSection)
       .setName("Code fence character")
-      .setDesc("Triple-backtick is the convention; tildes are valid CommonMark too.")
+      .setDesc("Triple-backtick is the standard; tildes are an alternative.")
       .addDropdown((d) =>
         d
           .addOptions({
@@ -97,7 +97,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
 
     new Setting(formSection)
       .setName("Horizontal rule")
-      .setDesc("Marker for thematic breaks (`<hr>`).")
+      .setDesc("Character used for horizontal divider lines.")
       .addDropdown((d) =>
         d
           .addOptions({
@@ -121,9 +121,9 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
     const presSection = this.createSettingGroup(root, "Source preservation");
 
     const preserveSetting = new Setting(presSection)
-      .setName("Preserve original source byte-for-byte")
+      .setName("Preserve original formatting exactly")
       .setDesc(
-        "Untouched blocks are written back verbatim from the file you opened: whitespace, marker style, indentation, and blank-line counts all preserved. Edited blocks are still re-serialized canonically.",
+        "Parts of the note you didn't edit stay exactly as they were in the original file: spacing, formatting style, and blank lines all preserved. Sections you edited are saved in Butter's standard clean format.",
       )
       .addToggle((t) =>
         t
@@ -133,7 +133,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
               t,
               "preserveOriginalSource",
               v,
-              "Preserve original source byte-for-byte",
+              "Preserve original formatting exactly",
             ))) return;
             this.plugin.settings.preserveOriginalSource = v;
             await this.plugin.saveSettings();
@@ -196,7 +196,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
 
     new Setting(normSection)
       .setName("Close unclosed code fences")
-      .setDesc("Append a closing fence when the file ends mid-fence. Prevents later edits from being swallowed when parsers extend the fence to end-of-file. Top-level fences only.")
+      .setDesc("Add a closing fence when the file ends inside an open code block. Prevents new content below the block from being treated as part of it.")
       .addToggle((t) =>
         t.setValue(this.plugin.settings.closeUnclosedFences).onChange(async (v) => {
           if (!(await this.gateBundledToggle(
@@ -239,7 +239,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
     const commandNote = normSection.createDiv({ cls: "setting-item-description" });
     commandNote.createEl("div", {
       text:
-        "Three palette commands clean files on demand. Tidy whitespace applies the normalizers above. Rewrite current note re-serializes with your canonical preferences. Rewrite entire vault does the same across all notes (commit to Git first).",
+        "Three commands (find them in the command palette) clean files on demand. 'Tidy whitespace' applies the cleanup options above. 'Rewrite current note' reformats the whole note with your marker choices. 'Rewrite entire vault' does the same across all notes (back up with Git first).",
     });
   }
 

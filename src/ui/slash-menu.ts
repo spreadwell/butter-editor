@@ -106,7 +106,7 @@ export const SLASH_ITEMS: SlashItem[] = [
   {
     id: "task",
     label: "Task list",
-    desc: "- [ ] checkable items",
+    desc: "Checkable to-do items",
     icon: "list-checks",
     keywords: ["task", "todo", "checkbox", "check"],
     run: (v, s) => insertFlatListItem(v, s, "task"),

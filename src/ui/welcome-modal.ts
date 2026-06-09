@@ -387,7 +387,7 @@ export const PRESET_BUNDLES: Record<
  *  lockstep with PRESET_BUNDLES. */
 export const BUNDLED_SETTING_LABELS: Record<string, string> = {
   sourcePurity: "Formatting style",
-  preserveOriginalSource: "Byte-for-byte preservation",
+  preserveOriginalSource: "Exact formatting preservation",
   normalizeHeadingGap: "Normalize heading gap",
   condenseBlankLines: "Condense blank lines",
   closeUnclosedFences: "Close unclosed code fences",

@@ -23,7 +23,6 @@ import {
 import type ButterEditorPlugin from "../main";
 import type { ButterSettings } from "../main";
 import { LicenseClientError } from "../integration/license/client";
-import { LINKS } from "../integration/license/links";
 import type { DeviceWireRecord } from "../integration/license/client";
 import type { ToolbarLayoutItem } from "../main";
 
@@ -33,8 +32,9 @@ import {
   type SourcePurityMode,
 } from "./welcome-modal";
 
-import { renderLicense, computeLicensePhase, renderRowsFor, renderUnlicensedRows, renderPollingRows, renderTrialRows, renderLifetimeRows, renderDeactivatedRows, renderInvalidatedRows, reasonCopyFor, renderExpiredRows, renderOfflineRows, renderUnknownRows, trialHeadlineFor, trialStatLineFor, formatActivationDate, formatRelativeTime, renderKeyRow, renderAccountIdentityRow, renderPasteKeyRow, renderRecoveryRow, renderDevicesSection, renderDeviceListSkeleton, renderDeviceRow, renderCurrentDeviceFallback, renderDeviceUtilities, renderSupportSection, computeRemaining, scheduleTrialPoll, friendlyError } from "./settings/license-tab";
+import { renderLicense, computeLicensePhase, renderRowsFor, renderUnlicensedRows, renderPollingRows, renderTrialRows, renderLifetimeRows, renderDeactivatedRows, renderInvalidatedRows, reasonCopyFor, renderExpiredRows, renderUnknownRows, trialHeadlineFor, trialStatLineFor, formatActivationDate, formatRelativeTime, renderKeyRow, renderPasteKeyRow, renderRecoveryRow, renderDevicesSection, renderDeviceListSkeleton, renderDeviceRow, renderCurrentDeviceFallback, renderDeviceUtilities, renderSupportSection, computeRemaining, scheduleTrialPoll, friendlyError } from "./settings/license-tab";
 import { renderGeneral, renderGeneralIntroSections, renderBehavior, renderAdvanced, renderStartTrialCardIfApplicable } from "./settings/general-tab";
+import { TRIAL_LENGTH_DAYS } from "../integration/license/policy";
 import { renderToolbar, renderLayoutSection, createSettingGroup, renderPrimaryToolbarSection, renderTableToolbarSection, renderLayoutEditor, openMoveToSubmenuMenu, openSubmenuEditModal, wireDrag } from "./settings/toolbar-tab";
 import { renderOutlineSection } from "./settings/outline-tab";
 import { renderDragSection } from "./settings/drag-tab";
@@ -337,7 +337,7 @@ export class ButterSettingTab extends PluginSettingTab {
       // pre-1.7.0 Worker). Fall back to local-only view.
       this.renderCurrentDeviceFallback(
         listEl,
-        "Sign in on another machine to add it here.",
+        "Paste your license key on another machine to add it here.",
       );
       return;
     }
@@ -351,7 +351,7 @@ export class ButterSettingTab extends PluginSettingTab {
     // that you can add more.
     const count = devices.length;
     const summary = count === 1
-      ? "1 device · sign in on another machine to add it here."
+      ? "1 device · paste your key on another machine to add it here."
       : `${count} devices on this license.`;
     listEl.createDiv({ cls: "butter-license-devices-hint", text: summary });
   }
@@ -518,7 +518,7 @@ export class ButterSettingTab extends PluginSettingTab {
       this.plugin.settings.pendingTrialActivation = null;
       await this.plugin.saveSettings();
       await this.plugin.refreshLicenseStatus();
-      new Notice("Trial activated! You have 15 days of full access.", 5000);
+      new Notice(`Trial activated! You have ${TRIAL_LENGTH_DAYS} days of full access.`, 5000);
       import("canvas-confetti").then((module) => {
         const confetti = module.default || module;
         void confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
@@ -544,31 +544,8 @@ export class ButterSettingTab extends PluginSettingTab {
     (this as unknown as { display: () => void }).display();
   }
 
-  private _upgradePoller: ReturnType<typeof setInterval> | null = null;
-
   public openCheckoutAndPoll(): void {
-    window.open(LINKS.buyLifetime(this.plugin.settings.deviceId), "_blank");
-    if (this._upgradePoller) return;
-    new Notice("Complete your purchase in the browser. Butter will update automatically.", 8000);
-    let ticks = 0;
-    this._upgradePoller = window.setInterval(() => {
-      ticks++;
-      if (ticks > 300) {
-        if (this._upgradePoller) window.clearInterval(this._upgradePoller);
-        this._upgradePoller = null;
-        return;
-      }
-      void (async () => {
-        try {
-          await this.plugin.refreshLicenseStatus(true);
-          if (this.plugin.licenseStatus === "valid") {
-            if (this._upgradePoller) window.clearInterval(this._upgradePoller);
-            this._upgradePoller = null;
-            (this as unknown as { display: () => void }).display();
-          }
-        } catch { /* keep polling */ }
-      })();
-    }, 2000);
+    this.plugin.startLifetimeCheckoutFlow();
   }
 
   /** Single `/trial/poll` request. Updates settings on `ready`,
@@ -839,10 +816,6 @@ export class ButterSettingTab extends PluginSettingTab {
     return renderExpiredRows.call(this, parent);
   }
 
-  public renderOfflineRows(parent: HTMLElement) {
-    return renderOfflineRows.call(this, parent);
-  }
-
   public renderUnknownRows(parent: HTMLElement) {
     return renderUnknownRows.call(this, parent);
   }
@@ -865,10 +838,6 @@ export class ButterSettingTab extends PluginSettingTab {
 
   public renderKeyRow(parent: HTMLElement) {
     return renderKeyRow.call(this, parent);
-  }
-
-  public renderAccountIdentityRow(parent: HTMLElement) {
-    return renderAccountIdentityRow.call(this, parent);
   }
 
   public renderPasteKeyRow(parent: HTMLElement, asUpdate: boolean) {
@@ -1024,11 +993,11 @@ export class NormalizeWarningModal extends Modal {
     titleEl.setText("Enable source normalization?");
     contentEl.createEl("p", {
       text:
-        "You're turning on a setting that automatically modifies file source on save. Files with non-matching formatting will get a one-time diff the next time they're saved.",
+        "You're turning on a setting that automatically changes file formatting on save. Files with different formatting will be adjusted the next time they're saved.",
     });
     contentEl.createEl("p", {
       text:
-        "This is an advanced feature. Most Butter users want the default (source is truth) so they can move freely between Butter, live preview, and source without their files being rewritten.",
+        "This is an advanced feature. Most users prefer the default so they can switch freely between Butter, Live Preview, and Source mode without their files being reformatted.",
     });
     contentEl.createEl("p", {
       text:

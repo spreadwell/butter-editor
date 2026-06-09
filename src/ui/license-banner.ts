@@ -18,7 +18,6 @@
 
 import { Modal, setIcon, Platform } from "obsidian";
 import type ButterEditorPlugin from "../main";
-import { LINKS } from "../integration/license/links";
 
 export class LicenseActionSheet extends Modal {
   constructor(
@@ -173,7 +172,7 @@ export function mountLicenseBanner(
 
     const stateText = status === "expired" ? "Trial expired"
       : status === "unknown" ? "Checking license…"
-      : isTrialAvailable ? "No license" : "License required";
+      : isTrialAvailable ? "Free trial available" : "License required";
     bannerEl.createSpan({ cls: `${BANNER_CLASS}-state`, text: stateText });
     bannerEl.createSpan({ cls: `${BANNER_CLASS}-separator`, text: "•" });
     bannerEl.createSpan({ cls: `${BANNER_CLASS}-readonly`, text: "Read-only" });
@@ -188,7 +187,7 @@ export function mountLicenseBanner(
     if (status !== "unknown") {
       const purchaseBtn = actions.createEl("button", { text: "Purchase" });
       purchaseBtn.addEventListener("click", () => {
-        window.open(LINKS.buyLifetime(plugin.settings.deviceId), "_blank");
+        plugin.startLifetimeCheckoutFlow();
       });
     }
 

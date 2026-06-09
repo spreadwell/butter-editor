@@ -25,7 +25,7 @@ import {
   Plugin as PMPlugin,
   PluginKey,
   NodeSelection,
-  TextSelection,
+  Selection,
 } from "prosemirror-state";
 import type { EditorState, Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
@@ -266,6 +266,18 @@ const DOUBLE_CLICK_PX = 6;
 let lastClickX = -1;
 let lastClickY = -1;
 let lastClickTime = 0;
+
+function selectionNearButNotSameNode(
+  state: EditorState,
+  pos: number,
+): Selection {
+  const $pos = state.doc.resolve(pos);
+  let sel = Selection.near($pos);
+  if (sel instanceof NodeSelection && sel.from === pos) {
+    sel = Selection.near($pos, -1);
+  }
+  return sel;
+}
 
 /**
  * Open the GROUP context menu for a multi-block selection. Visually
@@ -742,20 +754,48 @@ export function multiBlockSelectPlugin(
         const hasNodeSel = pmSel instanceof NodeSelection;
         if (!hasMulti && !hasNodeSel) return;
 
-        let tr = editorView.state.tr;
-        if (hasMulti) tr = tr.setMeta(multiBlockKey, { kind: "clear" });
+        // In-node leaf clicks are handled by click-to-spawn first.
+        let skipNodeSelClear = false;
         if (hasNodeSel) {
+          const selDom = editorView.nodeDOM(pmSel.from);
+          if (selDom instanceof HTMLElement && selDom.contains(target)) {
+            skipNodeSelClear = true;
+          }
+        }
+
+        const nodeSelFrom = hasNodeSel ? pmSel.from : null;
+        const clearNodeSelection = () => {
+          const liveSel = editorView.state.selection;
+          if (!(liveSel instanceof NodeSelection)) return;
+          if (nodeSelFrom != null && liveSel.from !== nodeSelFrom) return;
           try {
-            tr = tr.setSelection(
-              TextSelection.near(
-                editorView.state.doc.resolve(pmSel.from),
+            editorView.dispatch(
+              editorView.state.tr.setSelection(
+                selectionNearButNotSameNode(editorView.state, liveSel.from),
               ),
             );
           } catch {
             /* doc shifted under us - leave selection alone. */
           }
+        };
+
+        let tr = editorView.state.tr;
+        if (hasMulti) tr = tr.setMeta(multiBlockKey, { kind: "clear" });
+        if (hasNodeSel && !skipNodeSelClear) {
+          try {
+            tr = tr.setSelection(
+              selectionNearButNotSameNode(editorView.state, pmSel.from),
+            );
+          } catch {
+            /* doc shifted under us - leave selection alone. */
+          }
         }
-        editorView.dispatch(tr);
+        if (hasMulti || (hasNodeSel && !skipNodeSelClear)) {
+          editorView.dispatch(tr);
+        }
+        if (hasNodeSel && !skipNodeSelClear) {
+          window.setTimeout(clearNodeSelection, 0);
+        }
       };
       // Document-level Tab / Shift-Tab. PM's keymap only fires when
       // the editor has focus, but click-selecting via a drag handle

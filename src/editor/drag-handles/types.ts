@@ -29,6 +29,7 @@ export interface DragHandlesConfig {
    *  to flip it back on so contenteditable accepts focus + typing.
    *  No-op on desktop. */
   unlockMobileEditable?: () => void;
+  chromeBottom?: () => number;
 }
 
 /** Motion curves per dragMotion setting. Drag engine sets these as

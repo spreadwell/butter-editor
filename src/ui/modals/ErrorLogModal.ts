@@ -60,8 +60,8 @@ export class ErrorLogModal extends Modal {
       cls: "setting-item-description",
     });
     desc.setText(
-      "Most-recent error first. Long-press to copy, paste into a bug " +
-        "report. The buffer holds the last 50 entries; older ones are " +
+      "Most recent error first. Long-press to copy for a bug " +
+        "report. The log keeps the last 50 entries; older ones are " +
         "discarded.",
     );
 

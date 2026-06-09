@@ -119,6 +119,18 @@ function pushDevice(device, sourceDir) {
       "-SourceDir", sourceDir,
     ], { stdio: ["ignore", "inherit", "inherit"] });
     ps.on("error", () => {});
+  } else if (device.type === "icloud") {
+    const pluginDir = resolve(device.vaultPath, `.obsidian/plugins/${PLUGIN_ID}`);
+    try {
+      if (!existsSync(pluginDir)) mkdirSync(pluginDir, { recursive: true });
+      for (const f of ["main.js", "manifest.json", "styles.css"]) {
+        const src = resolve(sourceDir, f);
+        if (existsSync(src)) copyFileSync(src, resolve(pluginDir, f));
+      }
+      console.log(`→ pushed to ${device.name} (iCloud)`);
+    } catch (err) {
+      console.warn(`→ ${device.name}: iCloud push skipped (${err.message})`);
+    }
   } else if (device.type === "ssh") {
     const script = resolve(__dirname, "scripts", "push-ssh.ps1");
     const args = [

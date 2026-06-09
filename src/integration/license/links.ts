@@ -7,7 +7,7 @@
  */
 
 export const LINKS = {
-  docs: "https://buttereditor.com/docs",
+  docs: "https://github.com/spreadwell/butter-editor#readme",
 
   issues: "https://github.com/spreadwell/butter-editor/issues",
 
@@ -30,5 +30,5 @@ export const LINKS = {
   buyLifetime: (deviceId?: string) =>
     `https://api.buttereditor.com/checkout/lifetime${deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""}`,
 
-  accountPortal: "https://licenses.buttereditor.com",
+  licensePortal: "https://licenses.buttereditor.com",
 } as const;

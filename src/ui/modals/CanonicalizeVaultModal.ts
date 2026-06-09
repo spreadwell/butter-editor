@@ -47,23 +47,23 @@ export class CanonicalizeVaultModal extends Modal {
   onOpen() {
     const { contentEl, titleEl } = this;
     if (Platform.isMobile) this.modalEl.addClass("mod-lg");
-    titleEl.setText("Canonicalize entire vault?");
+    titleEl.setText("Reformat entire vault?");
     contentEl.createEl("p", {
       text:
-        `This will rewrite every markdown file in the vault (${this.fileCount} files) in canonical form using your current marker preferences. Each file is parsed, re-serialized, and written back.`,
+        `This will reformat every markdown file in the vault (${this.fileCount} files) using your current marker preferences. Each file is opened, reformatted, and saved.`,
     });
     contentEl.createEl("p", {
       text:
-        "This operation is not undoable from inside Butter. Strongly recommended: commit your vault to Git first, so you have a recovery point if a file's canonical form turns out to be unexpected.",
+        "This is not undoable from inside Butter. Strongly recommended: commit your vault to Git first, so you have a recovery point if a file's new formatting turns out to be unexpected.",
     });
     contentEl.createEl("p", {
       text:
-        "Files that fail to parse will be skipped and reported. Files already in canonical form will not be touched (no spurious mtime bumps).",
+        "Files that can't be read will be skipped and reported. Files already matching your preferences won't be touched.",
     });
     const btnRow = contentEl.createDiv({ cls: "modal-button-container" });
     const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
     const okBtn = btnRow.createEl("button", {
-      text: "Canonicalize all files",
+      text: "Reformat all files",
       cls: "mod-warning",
     });
     cancelBtn.addEventListener("click", () => {

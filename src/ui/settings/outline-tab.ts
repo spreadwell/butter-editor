@@ -4,7 +4,7 @@ import { ButterSettingTab } from "../settings-tab";
 export function renderOutlineSection(this: ButterSettingTab, root: HTMLElement) {
     new Setting(root)
       .setName("Use Butter outline")
-      .setDesc("Use Butter's outline sidebar instead of the core outline plugin. The core plugin is disabled while this is on and restored when off.")
+      .setDesc("Replace Obsidian's built-in outline sidebar with Butter's version. The built-in outline is disabled while this is on and restored when off.")
       .addToggle((t) =>
         t.setValue(this.plugin.settings.useButterOutline).onChange(async (v) => {
           this.plugin.settings.useButterOutline = v;

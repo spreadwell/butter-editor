@@ -8,6 +8,10 @@ import { Selection } from "prosemirror-state";
 import { MathEditModal } from "./math-edit-modal";
 import { recordError } from "../integration/debug";
 
+interface WidgetInfoHost extends HTMLElement {
+  __butterWidgetInfo?: unknown;
+}
+
 /** Safe wrapper around MarkdownRenderer.render. Buggy third-party
  *  processors (Dataview query syntax error, Mermaid parse failure,
  *  custom code-block handler that throws) reject the returned Promise.
@@ -386,7 +390,7 @@ export function codeBlockView(
     const mount = activeDocument.createElement("div");
     mount.classList.add("obsidian-render-mount");
     if (butterView) {
-      (mount as unknown).__butterWidgetInfo = { view, getPos, butterView, node };
+      (mount as WidgetInfoHost).__butterWidgetInfo = { view, getPos, butterView, node };
     }
     viewWrap.appendChild(mount);
     dom.appendChild(viewWrap);
@@ -802,7 +806,7 @@ export function embedView(
     const mount = activeDocument.createElement("div");
     mount.classList.add("obsidian-render-mount");
     if (butterView) {
-      (mount as unknown).__butterWidgetInfo = { view, getPos, butterView, node };
+      (mount as WidgetInfoHost).__butterWidgetInfo = { view, getPos, butterView, node };
     }
     dom.appendChild(mount);
 
@@ -897,7 +901,7 @@ export function embedInlineView(
     const mount = activeDocument.createElement("span");
     mount.classList.add("obsidian-render-mount");
     if (butterView) {
-      (mount as unknown).__butterWidgetInfo = { view, getPos, butterView, node };
+      (mount as WidgetInfoHost).__butterWidgetInfo = { view, getPos, butterView, node };
     }
     dom.appendChild(mount);
 
@@ -1249,7 +1253,7 @@ export function mathBlockView(
     const mount = activeDocument.createElement("div");
     mount.classList.add("obsidian-render-mount");
     if (butterView) {
-      (mount as unknown).__butterWidgetInfo = { view, getPos, butterView, node };
+      (mount as WidgetInfoHost).__butterWidgetInfo = { view, getPos, butterView, node };
     }
     dom.appendChild(mount);
 
@@ -1319,7 +1323,7 @@ export function inlineMathView(
     const mount = activeDocument.createElement("span");
     mount.classList.add("obsidian-render-mount");
     if (butterView) {
-      (mount as unknown).__butterWidgetInfo = { view, getPos, butterView, node };
+      (mount as WidgetInfoHost).__butterWidgetInfo = { view, getPos, butterView, node };
     }
     dom.appendChild(mount);
 
@@ -1420,6 +1424,7 @@ export function blockCommentView() {
   return (node: PMNode): NodeView => {
     const dom = activeDocument.createElement("div");
     dom.classList.add("butter-block-comment-view");
+    dom.textContent = `%%${node.attrs.value ?? ""}%%`;
     return { dom };
   };
 }

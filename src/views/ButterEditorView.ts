@@ -62,6 +62,7 @@ import {
 } from "../core/doc-fingerprint";
 import { normalizeDocForSave } from "../core/doc-normalize";
 import { checkboxPlugin } from "../editor/checkbox-plugin";
+import { commentOnlyParagraphPlugin } from "../editor/comment-only-paragraph";
 import { listNumberingPlugin } from "../editor/list-numbering";
 import { selectionOverlayPlugin } from "../editor/selection-overlay";
 import { multiBlockSelectPlugin } from "../editor/multi-block-select";
@@ -545,8 +546,9 @@ export class ButterEditorView extends TextFileView {
     const content = this.contentEl; // .view-content
     if (!leaf || !content || !this.toolbarDom) return;
 
-    const style = this.settings.toolbarStyle;
-    const pos = this.settings.toolbarPosition;
+    const bannerActive = !(this.plugin.licenseStatus === "valid" || this.plugin.licenseStatus === "trial");
+    const style = bannerActive ? "attached" : this.settings.toolbarStyle;
+    const pos = bannerActive ? "top" : this.settings.toolbarPosition;
     this.toolbarDom.setAttribute("data-toolbar-style", style);
     this.toolbarDom.setAttribute("data-toolbar-pos", pos);
     content.setAttribute("data-toolbar-pos", pos);
@@ -965,10 +967,7 @@ export class ButterEditorView extends TextFileView {
     heading.createDiv({ cls: "metadata-properties-title", text: "Properties" });
     heading.addEventListener("click", (e) => {
       e.preventDefault();
-      metaContainer.toggleClass(
-        "is-collapsed",
-        !metaContainer.hasClass("is-collapsed"),
-      );
+      metaContainer.toggleClass("is-collapsed", !metaContainer.hasClass("is-collapsed"));
     });
 
     const content = metaContainer.createDiv({ cls: "metadata-content" });
@@ -1269,6 +1268,8 @@ export class ButterEditorView extends TextFileView {
     const container = this.contentEl;
     container.empty();
     container.addClass("butter-editor-view");
+    container.toggleClass("butter-no-indent-guides", !this.plugin.settings.showListIndentGuides);
+    container.toggleClass("butter-show-comments", this.plugin.settings.showComments);
 
     // View-type indicator on the tab/header
     this.containerEl.addClass("butter-view-root");
@@ -1314,6 +1315,7 @@ export class ButterEditorView extends TextFileView {
       }
     });
     this.inlineTitleEl = inlineTitle;
+    (this as unknown as { titleEl: HTMLElement }).titleEl = inlineTitle;
 
     // Properties
     this.propertiesEl = container.createDiv({
@@ -1330,6 +1332,7 @@ export class ButterEditorView extends TextFileView {
     this.registerEvent(
       this.app.workspace.on("butter:license-changed" as never, () => {
         this.licenseBanner?.refresh();
+        this.applyToolbarPosition();
         if (this.pmView) {
           this.pmView.dispatch(this.pmView.state.tr);
         }
@@ -1552,7 +1555,7 @@ export class ButterEditorView extends TextFileView {
     this.nodeViewManager = new NodeViewManager();
     const mgr = this.nodeViewManager;
 
-    const plugins: PMPlugin[] = [
+    const plugins = [
       toolbarPlugin,
       autocompletePlugin(this.app, schema),
       slashMenuPlugin(this.app, schema),
@@ -1560,6 +1563,7 @@ export class ButterEditorView extends TextFileView {
       buildKeymap(schema),
       blockIdStamperPlugin(),
       blockSpacingPlugin(),
+      commentOnlyParagraphPlugin(),
       checkboxPlugin(),
       listNumberingPlugin(),
       multiBlockSelectPlugin({
@@ -1580,6 +1584,15 @@ export class ButterEditorView extends TextFileView {
         dragTriggerBias: () => this.settings.blockDragSensitivity,
         disableAnimations: () => this.settings.disableAnimations,
         unlockMobileEditable: () => this.mobileSetEditable?.(true),
+        chromeBottom: () => {
+          const header = this.containerEl?.querySelector<HTMLElement>(".view-header");
+          const stack = this.containerEl?.querySelector<HTMLElement>(".butter-toolbar-stack");
+          const tableBar = stack?.querySelector<HTMLElement>(".butter-table-toolbar:not(.is-hidden)");
+          const hb = header?.getBoundingClientRect().bottom ?? 0;
+          const sb = stack?.getBoundingClientRect().bottom ?? 0;
+          const tb = tableBar?.getBoundingClientRect().bottom ?? 0;
+          return Math.max(hb, sb, tb);
+        },
       }),
       // Cell-range drag MUST register BEFORE tableEditing() so its
       // mousedown handler fires first. When the user grabs an active
@@ -1624,7 +1637,7 @@ export class ButterEditorView extends TextFileView {
     ];
 
     if (this.settings.enablePasteDrop) {
-      plugins.push(pasteDropPlugin(this.app, schema, parser, getSourcePath));
+      plugins.push(pasteDropPlugin(this.app, schema, parser, getSourcePath, (d) => serializer.serialize(d)));
     }
 
     if (this.settings.enableSuggestBridge) {
@@ -2308,12 +2321,24 @@ export class ButterEditorView extends TextFileView {
     );
   }
 
-  setViewData(data: string, _clear: boolean) {
+  setViewData(data: string, clear: boolean) {
     this.data = data;
     const body = this.stripFrontmatter(data);
     this.renderProperties();
     if (this.inlineTitleEl && this.file) {
       this.inlineTitleEl.textContent = this.file.basename;
+      if (clear && !body.trim()) {
+        window.requestAnimationFrame(() => {
+          const el = this.inlineTitleEl;
+          if (!el) return;
+          el.focus();
+          const range = activeDocument.createRange();
+          range.selectNodeContents(el);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        });
+      }
     }
     if (!this.pmView) return;
 

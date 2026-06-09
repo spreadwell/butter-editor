@@ -28,6 +28,25 @@ import { scrollHost } from "../../util/dom-utils";
 import { BLOCK_ANIMATOR_SKIP_IDS } from "../block-animator";
 import { EXPLICIT_SELECTION_META } from "../selection-overlay";
 
+function findScrollAnchor(view: EditorView, drag: LiveDragState): HTMLElement | null {
+  const draggedSet = new Set(drag.draggedPositions);
+  const vp = view.dom.closest(".butter-editor-view");
+  if (!vp) return null;
+  const vpTop = vp.getBoundingClientRect().top;
+  const doc = view.state.doc;
+  let best: HTMLElement | null = null;
+  let bestDist = Infinity;
+  doc.forEach((child, offset) => {
+    if (draggedSet.has(offset + 1)) return;
+    const dom = view.nodeDOM(offset + 1);
+    if (dom instanceof HTMLElement) {
+      const dist = Math.abs(dom.getBoundingClientRect().top - vpTop);
+      if (dist < bestDist) { bestDist = dist; best = dom; }
+    }
+  });
+  return best;
+}
+
 // ── Constants ────────────────────────────────────────────────
 
 
@@ -51,7 +70,7 @@ export class HandleLayer {
     return this.pool[idx];
   }
 
-  update(view: EditorView): void {
+  update(view: EditorView, chromeBottom = 0): void {
     const allBlocks: {
       pos: number;
       rect: DOMRect;
@@ -96,6 +115,12 @@ export class HandleLayer {
     let idx = 0;
     for (const block of allBlocks) {
       const handle = this.acquire(idx);
+      if (block.top < chromeBottom) {
+        handle.hide();
+        handle.classList.remove("is-visible");
+        idx++;
+        continue;
+      }
       handle.style.left = `${block.rect.left + block.inset - HANDLE_OFFSET_LEFT}px`;
       handle.style.top = `${block.top}px`;
       handle.style.height = `${block.height}px`;
@@ -142,6 +167,8 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
       let autoscrollRAF = 0;
       let activeMenu: Menu | null = null;
 
+      const chromeY = () => config.chromeBottom?.() ?? 0;
+
       // ── Handle elements ──
       // Mounted on document.body for correct position:fixed coords
       // (host ancestors may have transforms that break fixed positioning).
@@ -165,7 +192,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
               onLayerPointerDown,
             );
           }
-          alwaysLayer.update(editorView);
+          alwaysLayer.update(editorView, chromeY());
         } else {
           alwaysLayer?.hideAll();
           hoverHandle.show();
@@ -176,15 +203,18 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         hoverHandle.hide();
         alwaysLayer = new HandleLayer();
         // Defer initial update so the editor has rendered
-        window.requestAnimationFrame(() => alwaysLayer?.update(editorView));
+        window.requestAnimationFrame(() => alwaysLayer?.update(editorView, chromeY()));
       }
 
       // ── Handle positioning (hover mode) ──
       function showHoverHandle(hit: BlockHit): void {
         const inset = listItemHandleInset(hit.node, hit.dom);
         const placement = handlePlacementFor(hit.node, hit.dom, hit.rect);
+        const top = placement.top;
+        const chromeY = config.chromeBottom?.() ?? 0;
+        if (top < chromeY) { hideHoverHandle(); return; }
         hoverHandle.style.left = `${hit.rect.left + inset - HANDLE_OFFSET_LEFT}px`;
-        hoverHandle.style.top = `${placement.top}px`;
+        hoverHandle.style.top = `${top}px`;
         hoverHandle.style.height = `${placement.height}px`;
         hoverHandle.dataset.blockPos = String(hit.pos);
         hoverHandle.classList.add("is-visible");
@@ -1322,6 +1352,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           // already-visible block. Clean up drag-idx attrs only; the
           // source class stays until `finish()` after the slide.
           activeDocument.body.classList.remove("butter-is-dragging");
+          activeDocument.body.dataset.butterDragEndedAt = String(Date.now());
           cleanupReflowStyles(drag);
           for (const ctxKey of drag.stampedContainerKeys) {
             const sibs = drag.siblingsByContainer.get(ctxKey);
@@ -1379,6 +1410,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         const SETTLE_MS = 300;
 
         activeDocument.body.classList.remove("butter-is-dragging");
+        activeDocument.body.dataset.butterDragEndedAt = String(Date.now());
 
         // Remove the source-collapsed class before dispatch so the
         // source returns to natural size. PM's dispatch will then put
@@ -1414,7 +1446,19 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           if (draggedIds.length > 0) {
             tr.setMeta(BLOCK_ANIMATOR_SKIP_IDS, draggedIds);
           }
+          const movingUp = drag.targetSlotIdx < drag.sourceSlotIdx;
+          const scroller = movingUp
+            ? editorView.dom.closest(".butter-editor-view") : null;
+          const anchorDom = scroller ? findScrollAnchor(editorView, drag) : null;
+          const anchorTopBefore = anchorDom?.getBoundingClientRect().top ?? 0;
           editorView.dispatch(tr);
+          if (scroller && anchorDom) {
+            const anchorTopAfter = anchorDom.getBoundingClientRect().top;
+            const drift = anchorTopAfter - anchorTopBefore;
+            if (Math.abs(drift) > 2) {
+              scroller.scrollTop += drift;
+            }
+          }
         }
         // Cleanup reflow stylesheet + dragIdx attrs now that DOM is
         // in its new order. Source class STAYS — block is invisible
@@ -1629,6 +1673,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         // Ghost slides back to the source slot (where the user
         // grabbed from) and fades out — settling back into the page.
         activeDocument.body.classList.remove("butter-is-dragging");
+        activeDocument.body.dataset.butterDragEndedAt = String(Date.now());
         const ghostStart = drag.ghost.getBoundingClientRect();
         const sourceRect = drag.draggedDoms[0]?.getBoundingClientRect();
         const motion = DRAG_MOTIONS[config.dragMotion()] ?? DRAG_MOTIONS.springy;
@@ -1680,6 +1725,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
 
       function finishDrag(): void {
         activeDocument.body.classList.remove("butter-is-dragging");
+        activeDocument.body.dataset.butterDragEndedAt = String(Date.now());
         activeDocument.body.style.removeProperty("--butter-drag-spring");
         activeDocument.body.style.removeProperty("--butter-drag-spring-soft");
         activeDocument.body.style.removeProperty("--butter-drag-ease");
@@ -1687,7 +1733,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
 
         // Re-show handles
         if (currentMode === "always") {
-          alwaysLayer?.update(editorView);
+          alwaysLayer?.update(editorView, chromeY());
         }
       }
 
@@ -1756,7 +1802,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
       // ── Scroll/resize reposition (for handles) ──
       const onScroll = () => {
         if (phase.kind === "idle" && currentMode === "always") {
-          alwaysLayer?.update(editorView);
+          alwaysLayer?.update(editorView, chromeY());
         } else if (phase.kind === "idle" && currentMode === "hover" && currentHit) {
           const dom = editorView.nodeDOM(currentHit.pos);
           if (dom instanceof HTMLElement) {
@@ -1825,7 +1871,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
               !view.state.doc.eq(prevState.doc) ||
               !view.state.selection.eq(prevState.selection)
             ) {
-              alwaysLayer?.update(view);
+              alwaysLayer?.update(view, chromeY());
             }
           } else if (currentHit) {
             const node = view.state.doc.nodeAt(currentHit.pos);
@@ -1857,6 +1903,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
             cleanupDragAttrs(phase.drag);
           }
           activeDocument.body.classList.remove("butter-is-dragging");
+          activeDocument.body.dataset.butterDragEndedAt = String(Date.now());
           activeDocument.body.style.removeProperty("--butter-drag-spring");
           activeDocument.body.style.removeProperty("--butter-drag-spring-soft");
           activeDocument.body.style.removeProperty("--butter-drag-ease");

@@ -139,11 +139,26 @@ class SelectionOverlayView {
     }
     if (!firstDom || !isFinite(minTop)) return false;
 
+    const leaf = this.view.dom.closest(".workspace-leaf-content");
+    const header = leaf?.querySelector<HTMLElement>(".view-header");
+    const stack = leaf?.querySelector<HTMLElement>(".butter-toolbar-stack");
+    const tableBar = stack?.querySelector<HTMLElement>(".butter-table-toolbar:not(.is-hidden)");
+    const hb = header?.getBoundingClientRect().bottom ?? 0;
+    const sb = stack?.getBoundingClientRect().bottom ?? 0;
+    const tb = tableBar?.getBoundingClientRect().bottom ?? 0;
+    const chromeBottom = Math.max(hb, sb, tb);
+
     const inset = 9;
+    const rawTop = minTop - inset;
+    const clippedTop = Math.max(rawTop, chromeBottom);
+    const fullHeight = maxBottom - minTop + inset * 2;
+    const clippedHeight = fullHeight - (clippedTop - rawTop);
+    if (clippedHeight <= 0) return false;
+
     overlay.style.left = `${minLeft - inset}px`;
-    overlay.style.top = `${minTop - inset}px`;
+    overlay.style.top = `${clippedTop}px`;
     overlay.style.width = `${maxRight - minLeft + inset * 2}px`;
-    overlay.style.height = `${maxBottom - minTop + inset * 2}px`;
+    overlay.style.height = `${clippedHeight}px`;
     if (positions.length === 1) {
       const computed = getComputedStyle(firstDom);
       if (computed.borderRadius && computed.borderRadius !== "0px") {

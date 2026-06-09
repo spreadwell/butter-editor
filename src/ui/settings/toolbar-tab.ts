@@ -147,7 +147,7 @@ export function renderToolbar(this: ButterSettingTab, root: HTMLElement) {
       } else {
         new Setting(layoutItems)
           .setName("Mobile toolbar style")
-          .setDesc("Native matches Obsidian's mobile bar. Butter is taller, with accent pills and backdrop blur.")
+          .setDesc("Detached matches Obsidian's mobile toolbar look. Attached is Butter's own style with larger buttons and frosted glass.")
           .addDropdown((d) =>
             d
               .addOptions({ detached: "Detached", attached: "Attached" })
@@ -854,48 +854,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       row.before(placeholder);
 
       const flipSwap = (action: () => void) => {
-        const noTransition = "none";
-        const noTransform = "none";
-        const flipTransition = "transform 150ms ease";
-        const resetValue = "";
-        const elements = Array.from(list.children).filter(
-          c => c.classList.contains("butter-layout-row") && (c as HTMLElement).style.display !== "none"
-        ) as HTMLElement[];
-        if (!elements.includes(placeholder)) elements.push(placeholder);
-
-        const firsts = new Map<HTMLElement, number>();
-        for (const el of elements) {
-          firsts.set(el, el.getBoundingClientRect().top);
-          el.style.transition = noTransition;
-          el.style.transform = noTransform;
-        }
-
         action();
-
-        const lasts = new Map<HTMLElement, number>();
-        for (const el of elements) {
-          lasts.set(el, el.getBoundingClientRect().top);
-        }
-
-        for (const el of elements) {
-          const first = firsts.get(el);
-          const last = lasts.get(el);
-          if (first === undefined || last === undefined) continue;
-          const delta = first - last;
-          if (delta !== 0) {
-            el.style.transform = `translateY(${delta}px)`;
-          }
-        }
-
-        void list.offsetHeight;
-
-        for (const el of elements) {
-          if (firsts.get(el) !== lasts.get(el)) {
-            el.style.transition = flipTransition;
-            el.style.transform = resetValue;
-            window.setTimeout(() => { el.style.transition = resetValue; }, 150);
-          }
-        }
       };
 
       type DropTarget = { kind: "before" | "after"; refRowId: string } | { kind: "into"; submenuId: string };
