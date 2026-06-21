@@ -335,7 +335,7 @@ import type { SourcePurityMode } from "../welcome-modal";
     const compat = this.createSettingGroup(root, "Compatibility");
     new Setting(compat)
       .setName("Plugin autocomplete pop-ups")
-      .setDesc("Show autocomplete pop-ups from other plugins as you type, like [[ for links, # for tags, and : for emoji. Press Esc to dismiss.")
+      .setDesc("Show autocomplete pop-ups from other plugins as you type, like [[ for links, # for tags, and : for emoji. Press esc to dismiss.")
       .addToggle((t) =>
         t
           .setValue(this.plugin.settings.enableSuggestBridge)
@@ -346,7 +346,7 @@ import type { SourcePurityMode } from "../welcome-modal";
       );
     const themeCompat = new Setting(compat)
       .setName("Max theme compatibility")
-      .setDesc("Let more theme styles apply inside Butter by sharing a class with Reading mode. Gives better theme coverage, but some themes may interfere with editing.")
+      .setDesc("Let more theme styles apply inside Butter by sharing a class with reading mode. Gives better theme coverage, but some themes may interfere with editing.")
       .addToggle((t) =>
         t
           .setValue(this.plugin.settings.experimentalThemeCompatMode)

@@ -8,6 +8,7 @@
  */
 
 import type { Node as PMNode, Schema } from "prosemirror-model";
+import { isInlineMathSource } from "../core/inline-math-delimiters";
 
 /** A single editable field on an atom - for atoms (like wikilink)
  *  whose attrs map naturally onto multiple labelled inputs rather
@@ -269,7 +270,7 @@ export const SPECS: Record<string, AtomSpec> = {
     },
     fromSource(src, schema) {
       const t = src.trim();
-      if (!t.startsWith("$") || !t.endsWith("$") || t.length < 3) return null;
+      if (!isInlineMathSource(t)) return null;
       const value = t.slice(1, -1);
       return schema.nodes.inline_math.create({ value });
     },

@@ -22,9 +22,6 @@ import {
   wrapIn,
 } from "prosemirror-commands";
 import {
-  splitListItem,
-} from "prosemirror-schema-list";
-import {
   inputRules,
   wrappingInputRule,
   textblockTypeInputRule,
@@ -36,16 +33,18 @@ import type { EditorView } from "prosemirror-view";
 import { Fragment, type Schema } from "prosemirror-model";
 import type { Command } from "prosemirror-state";
 import { enterMovesDown } from "./table-editing";
+import { buildInlineMathInputRule } from "./inline-math-input-rule";
 
 // ── Task-list Enter command ──
 //
 // Enter behavior for task list items, per user expectation:
-//   • Empty task item → lift out of the list entirely
+//   • Empty top-level task item → lift out of the list entirely
+//   • Empty nested task item → fall through to the flat-list outdent
 //   • Non-empty task item → split and carry the task attr over as
 //     unchecked, so consecutive Enters produce a new `[ ]` each time
 //     without the user retyping.
 //
-// Chained BEFORE the generic splitListItem so our version wins when
+// Chained BEFORE the generic flat-list split so our version wins when
 // the caret is inside a task.
 
 const handleEnterInTaskList: Command = (state, dispatch) => {
@@ -69,10 +68,15 @@ const handleEnterInTaskList: Command = (state, dispatch) => {
   const liEnd = liPos + liNode.nodeSize;
   const paraEnd = liPos + 1 + liNode.firstChild!.nodeSize - 1;
 
-  // Empty task - convert the list_item directly to a paragraph in
-  // place. (Flat schema: no parent list to escape from. The item IS
-  // a top-level block; we just retype it.)
+  // Empty nested task - let the generic flat-list Enter handler
+  // outdent it one level, matching Obsidian Live Preview.
   if (liNode.firstChild && liNode.firstChild.textContent.length === 0) {
+    const depth = typeof liNode.attrs.depth === "number" ? liNode.attrs.depth : 0;
+    if (depth > 0) return false;
+
+    // Empty top-level task - convert the list_item directly to a
+    // paragraph in place. (Flat schema: no parent list to escape
+    // from. The item IS a top-level block; we just retype it.)
     if (!dispatch) return true;
     const tr = state.tr;
     const para = state.schema.nodes.paragraph.create();
@@ -107,6 +111,95 @@ const handleEnterInTaskList: Command = (state, dispatch) => {
   const tr = state.tr.insert(liEnd, newItem);
   const newCaret = liEnd + 2; // inside new paragraph
   tr.setSelection(TextSelection.near(tr.doc.resolve(newCaret)));
+  dispatch(tr.scrollIntoView());
+  return true;
+};
+
+// ── Flat-list Enter command ──
+
+const handleEnterInFlatListItem: Command = (state, dispatch) => {
+  const { selection } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return false;
+
+  const { $from } = selection;
+  let liDepth = -1;
+  for (let d = $from.depth; d > 0; d--) {
+    if ($from.node(d).type.name === "list_item") {
+      liDepth = d;
+      break;
+    }
+  }
+  if (liDepth < 0) return false;
+
+  const liNode = $from.node(liDepth);
+  const liPos = $from.before(liDepth);
+  const liEnd = liPos + liNode.nodeSize;
+
+  if (
+    liNode.childCount === 1 &&
+    liNode.firstChild?.type.name === "paragraph" &&
+    liNode.firstChild.content.size === 0
+  ) {
+    const depth = typeof liNode.attrs.depth === "number" ? liNode.attrs.depth : 0;
+    if (!dispatch) return true;
+    if (depth > 0) {
+      const tr = state.tr.setNodeMarkup(liPos, undefined, {
+        ...liNode.attrs,
+        depth: depth - 1,
+        sourceRange: null,
+      });
+      tr.setSelection(TextSelection.near(tr.doc.resolve(liPos + 2)));
+      dispatch(tr.scrollIntoView());
+      return true;
+    }
+    const para = state.schema.nodes.paragraph.create();
+    const tr = state.tr.replaceWith(liPos, liEnd, para);
+    tr.setSelection(TextSelection.near(tr.doc.resolve(liPos + 1)));
+    dispatch(tr.scrollIntoView());
+    return true;
+  }
+
+  if ($from.depth !== liDepth + 1 || !$from.parent.type.inlineContent) {
+    return false;
+  }
+
+  const childIndex = $from.index(liDepth);
+  const currentBlock = liNode.child(childIndex);
+  const splitOffset = $from.parentOffset;
+  const beforeBlock = currentBlock.cut(0, splitOffset);
+  const afterBlock = currentBlock.cut(splitOffset);
+
+  if (!dispatch) return true;
+
+  const leftChildren = [];
+  for (let i = 0; i < childIndex; i++) leftChildren.push(liNode.child(i));
+  leftChildren.push(beforeBlock);
+
+  const rightChildren = [afterBlock];
+  for (let i = childIndex + 1; i < liNode.childCount; i++) {
+    rightChildren.push(liNode.child(i));
+  }
+
+  const liAttrs = liNode.attrs as Record<string, unknown>;
+  const rightAttrs = {
+    ...liAttrs,
+    checked: liAttrs.kind === "task" ? false : liAttrs.checked,
+    start: null,
+    sourceRange: null,
+  };
+  const leftItem = liNode.type.create(
+    { ...liAttrs, sourceRange: null },
+    Fragment.fromArray(leftChildren),
+  );
+  const rightItem = liNode.type.create(rightAttrs, Fragment.fromArray(rightChildren));
+
+  const tr = state.tr.replaceWith(
+    liPos,
+    liEnd,
+    Fragment.fromArray([leftItem, rightItem]),
+  );
+  const rightItemPos = liPos + leftItem.nodeSize;
+  tr.setSelection(TextSelection.near(tr.doc.resolve(rightItemPos + 2)));
   dispatch(tr.scrollIntoView());
   return true;
 };
@@ -342,7 +435,7 @@ export function buildKeymap(schema: Schema) {
   // command dispatches and also the event bubbles to PM's keymap.
 
   // List keybindings - task-aware Enter is chained before the generic
-  // splitListItem so empty tasks exit the list and non-empty tasks
+  // flat-list split so empty tasks exit the list and non-empty tasks
   // produce a new unchecked task item without user retyping the marker.
   if (schema.nodes.list_item) {
     keys["Enter"] = chainCommands(
@@ -350,7 +443,7 @@ export function buildKeymap(schema: Schema) {
       handleEnterInHeading,
       handleEnterToCreateCodeFence,
       handleEnterInTaskList,
-      splitListItem(schema.nodes.list_item),
+      handleEnterInFlatListItem,
       newlineInCode,
       createParagraphNear,
       liftEmptyBlockGuarded,
@@ -640,6 +733,12 @@ export function buildInputRules(schema: Schema) {
   // ── Inline mark rules ──
   // Typing `**text**` wraps `text` with the strong mark and removes
   // the delimiters, so markdown shortcuts feel native.
+
+  // Inline math: `$x + 1$` becomes an inline math atom as soon as
+  // the closing `$` is typed. Currency-shaped dollars intentionally
+  // stay plain text.
+  const inlineMathRule = buildInlineMathInputRule(schema);
+  if (inlineMathRule) rules.push(inlineMathRule);
 
   const wrapMark = (
     pattern: RegExp,

@@ -13,7 +13,11 @@
  */
 import { App, Modal, Platform, setIcon } from "obsidian";
 import { closeMobileInsertDrawer } from "../ui/insert-drawer";
-import { installOverscrollRubberBand } from "../ui/toolbar-mobile";
+import {
+  cleanupMobileToolbarOverflowIndicators,
+  installMobileToolbarOverflowIndicators,
+  installOverscrollRubberBand,
+} from "../ui/toolbar-mobile";
 import {
   Plugin as PMPlugin,
   PluginKey,
@@ -598,16 +602,24 @@ export function tableToolbarPlugin(
         setIcon(closeBtn, "x");
         closeBtn.addEventListener("click", (e) => {
           e.preventDefault();
-          closeMobileInsertDrawer();
-          window.setTimeout(() => editorView.focus(), 0);
+          const closeDelay = closeMobileInsertDrawer({ returningKeyboard: true });
+          window.setTimeout(() => editorView.focus(), closeDelay);
         });
 
+        let overflowHost: HTMLElement;
         if (style === "attached") {
           // Solid full-width row: [main list] [right chrome]
           const row = activeDocument.createElement("div");
           row.classList.add("butter-mobile-bar-row");
+          const listWrap = activeDocument.createElement("div");
+          listWrap.classList.add(
+            "butter-mobile-bar-list-wrap",
+            "butter-mobile-overflow-host",
+          );
           inner.classList.add("butter-mobile-bar-list");
-          row.appendChild(inner);
+          listWrap.appendChild(inner);
+          row.appendChild(listWrap);
+          overflowHost = listWrap;
           const chrome = activeDocument.createElement("div");
           chrome.classList.add("butter-mobile-bar-chrome");
           chrome.appendChild(swap);
@@ -619,9 +631,13 @@ export function tableToolbarPlugin(
           const container = activeDocument.createElement("div");
           container.classList.add("mobile-toolbar-options-container");
           const listWrap = activeDocument.createElement("div");
-          listWrap.classList.add("mobile-toolbar-options-list-container");
+          listWrap.classList.add(
+            "mobile-toolbar-options-list-container",
+            "butter-mobile-overflow-host",
+          );
           listWrap.appendChild(inner);
           container.appendChild(listWrap);
+          overflowHost = listWrap;
           const rightFloat = activeDocument.createElement("div");
           rightFloat.classList.add(
             "mobile-toolbar-floating-options",
@@ -635,6 +651,7 @@ export function tableToolbarPlugin(
         // Springy rubber-band overscroll on the inner button list,
         // matching the main bar's behaviour.
         installOverscrollRubberBand(inner);
+        installMobileToolbarOverflowIndicators(dom, inner, overflowHost);
       } else {
         // Desktop chrome lives on `.butter-table-toolbar` (outer)
         // and `.butter-table-toolbar-inner` (row). All desktop
@@ -829,6 +846,7 @@ export function tableToolbarPlugin(
           // get unbound. Otherwise they leak past view close and fire
           // on every body click for the rest of the session.
           closePopover();
+          cleanupMobileToolbarOverflowIndicators(dom);
           setAncestorState(dom, false);
           dom.remove();
           if (isMobile) {

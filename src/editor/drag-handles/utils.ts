@@ -128,10 +128,7 @@ export function collectContainerSiblings(
 
 export function isContainer(node: PMNode): boolean {
   const name = node.type.name;
-  return (
-    (name === "obsidian_callout" || name === "blockquote") &&
-    node.childCount > 0
-  );
+  return name === "obsidian_callout" || name === "blockquote";
 }
 
 /** Walk the doc depth-first, emitting one `DropSlot` per visual

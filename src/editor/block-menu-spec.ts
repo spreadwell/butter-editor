@@ -44,6 +44,7 @@ import {
 import { MathEditModal } from "./math-edit-modal";
 import { MobileAtomEditModal } from "./mobile-atom-sheet";
 import { SPECS as ATOM_SPECS } from "./inline-atom-specs";
+import { clearSourceRange } from "../core/source-range";
 
 // ── Spec types ─────────────────────────────────────────────────
 
@@ -291,6 +292,31 @@ export function buildConvertedNode(
     });
     return out;
   })();
+  const paragraphLikeInlineFromText = (() => {
+    if (!Array.isArray(inlineFromText)) return inlineFromText;
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^[ \t]+|[ \t]+$/g, ""))
+      .filter((line) => line.length > 0);
+    if (lines.some((line, i) => i > 0 && /^(?:[#\-*+>]|\d+\.)/.test(line))) {
+      return schema.text(lines.join(" "));
+    }
+    const out: PMNode[] = [];
+    for (let i = 0; i < inlineFromText.length; i++) {
+      const node = inlineFromText[i];
+      if (node.type.name !== "softbreak") {
+        out.push(node);
+        continue;
+      }
+      const next = inlineFromText[i + 1];
+      if (next?.isText && /^(?:[#\-*+>]|\d+\.)/.test(next.text ?? "")) {
+        out.push(schema.text(" "));
+      } else {
+        out.push(node);
+      }
+    }
+    return out.length > 0 ? out : null;
+  })();
 
   // Heading inline content. When converting any source to a heading,
   // the source's inline (or text) cannot contain `softbreak` nodes —
@@ -374,7 +400,7 @@ export function buildConvertedNode(
 
   switch (targetId) {
     case "paragraph":
-      return schema.nodes.paragraph.create(null, inline || inlineFromText);
+      return schema.nodes.paragraph.create(null, inline || paragraphLikeInlineFromText);
     case "h1":
     case "h2":
     case "h3":
@@ -396,12 +422,11 @@ export function buildConvertedNode(
       if (source.type.name === "list_item") {
         const checkedRaw = (source.attrs as { checked?: unknown }).checked;
         return schema.nodes.list_item.create(
-          {
+          clearSourceRange({
             ...source.attrs,
             kind,
             checked: kind === "task" ? (typeof checkedRaw === "boolean" ? checkedRaw : false) : null,
-            sourceRange: null,
-          },
+          }),
           source.content,
         );
       }
@@ -422,15 +447,15 @@ export function buildConvertedNode(
           );
         }
       }
-      const para = schema.nodes.paragraph.create(null, inline || inlineFromText);
+      const para = schema.nodes.paragraph.create(null, inline || paragraphLikeInlineFromText);
       return schema.nodes.list_item.create(liAttrs, [para]);
     }
     case "blockquote": {
-      const para = schema.nodes.paragraph.create(null, inline || inlineFromText);
+      const para = schema.nodes.paragraph.create(null, inline || paragraphLikeInlineFromText);
       return schema.nodes.blockquote.create(null, para);
     }
     case "obsidian_callout": {
-      const para = schema.nodes.paragraph.create(null, inline || inlineFromText);
+      const para = schema.nodes.paragraph.create(null, inline || paragraphLikeInlineFromText);
       return schema.nodes.obsidian_callout.create(
         { calloutType: "note" },
         para,
@@ -575,9 +600,8 @@ export function buildSingleBlockMenuItems(
           showLangPopover(dom, cur, (next) => {
             v.dispatch(
               v.state.tr.setNodeMarkup(p, undefined, {
-                ...n.attrs,
+                ...clearSourceRange(n.attrs),
                 language: next,
-                sourceRange: null,
               }),
             );
           });
@@ -589,9 +613,8 @@ export function buildSingleBlockMenuItems(
         isCurrent: !currentLang,
         applyTr: (tr, p, n) => {
           tr.setNodeMarkup(p, undefined, {
-            ...n.attrs,
+            ...clearSourceRange(n.attrs),
             language: "",
-            sourceRange: null,
           });
         },
       };
@@ -603,9 +626,8 @@ export function buildSingleBlockMenuItems(
         isCurrent: currentLang.toLowerCase() === lang,
         applyTr: (tr, p, n) => {
           tr.setNodeMarkup(p, undefined, {
-            ...n.attrs,
+            ...clearSourceRange(n.attrs),
             language: lang,
-            sourceRange: null,
           });
         },
       }));
@@ -634,9 +656,8 @@ export function buildSingleBlockMenuItems(
           new MathEditModal(app, cur, (next) => {
             v.dispatch(
               v.state.tr.setNodeMarkup(p, undefined, {
-                ...n.attrs,
+                ...clearSourceRange(n.attrs),
                 value: next,
-                sourceRange: null,
               }),
             );
           }).open();
@@ -655,9 +676,8 @@ export function buildSingleBlockMenuItems(
           isCurrent: currentType === t,
           applyTr: (tr, p, n) => {
             tr.setNodeMarkup(p, undefined, {
-              ...n.attrs,
+              ...clearSourceRange(n.attrs),
               calloutType: t,
-              sourceRange: null,
             });
           },
         })),

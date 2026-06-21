@@ -147,7 +147,7 @@ export class WelcomeModal extends Modal {
 
     const info = card.createDiv({ cls: "butter-visual-info" });
     const titleRow = info.createDiv({ cls: "butter-visual-title" });
-    
+
     const iconSpan = titleRow.createSpan({ cls: "butter-visual-icon" });
     setIcon(iconSpan, spec.mode === "strict" ? "file-text" : "paint-bucket");
     titleRow.appendChild(activeDocument.createTextNode(spec.title));

@@ -8,6 +8,10 @@ import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
 import type StateBlock from "markdown-it/lib/rules_block/state_block.mjs";
 import type StateCore from "markdown-it/lib/rules_core/state_core.mjs";
 import type Token from "markdown-it/lib/token.mjs";
+import {
+  findInlineMathClose,
+  isValidInlineMathOpenAt,
+} from "./inline-math-delimiters";
 
 // ══════════════════════════════════════════
 // 1. Highlights  ==text==
@@ -72,20 +76,14 @@ export function inlineMathPlugin(md: MarkdownIt) {
   function inlineMathRule(state: StateInline, silent: boolean): boolean {
     const src = state.src;
     const start = state.pos;
-    if (src.charCodeAt(start) !== 0x24 /* $ */) return false;
-    // Not block math ($$)
-    if (src.charCodeAt(start + 1) === 0x24) return false;
+    if (!isValidInlineMathOpenAt(src, start)) return false;
 
-    let end = start + 1;
-    while (end < state.posMax) {
-      if (src.charCodeAt(end) === 0x24 /* $ */ && src.charCodeAt(end - 1) !== 0x5C /* \ */) break;
-      end++;
-    }
-    if (end >= state.posMax) return false;
+    const end = findInlineMathClose(src, start, state.posMax);
+    if (end < 0 || end >= state.posMax) return false;
     if (end === start + 1) return false; // empty $$ → skip
 
     const content = src.slice(start + 1, end);
-    if (!content.trim()) return false;
+    if (!content.trim() || content !== content.trim()) return false;
 
     // Advance pos before silent return (see highlight rule above).
     state.pos = end + 1;

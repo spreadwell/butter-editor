@@ -49,9 +49,7 @@ export function newId(prefix: string): string {
 // between groups. These are what the user sees if they've never
 // customized + on Reset.
 
-/** Full preset - the canonical "everything available" layout shipped
- *  as the default for new users. Equivalent to what the Reset button
- *  in the customizer's section header restores. */
+/** Full preset - the canonical "everything available" layout. */
 export function mainLayoutFull(): Layout {
   return [
     { type: "button", id: "undo" },
@@ -166,9 +164,9 @@ export function mainLayoutSimple(): Layout {
   ];
 }
 
-/** New users get the Full preset on first load. */
+/** New users get the Simple preset on first load. */
 export function defaultMainLayout(): Layout {
-  return mainLayoutFull();
+  return mainLayoutSimple();
 }
 
 /** Mobile preset - flat 14-button strip tuned for thumb-typing on a

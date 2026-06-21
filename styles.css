@@ -1382,21 +1382,10 @@ body:not(.is-mobile) .butter-toolbar {
      instead of letting the gradient bleed through the toolbar. */
   position: relative;
   z-index: 10;
-  display: flex;
-  align-items: center;
-  /* `safe center` falls back to flex-start when content overflows,
-     so the leftmost buttons stay reachable instead of being scrolled
-     off-screen by a forced center. The bar becomes horizontally
-     scrollable when the editor pane is too narrow to fit every
-     button. Vertical overflow stays hidden so the chrome row's
-     height doesn't grow. */
-  justify-content: safe center;
-  gap: var(--size-2-1, 2px);
   /* Bar spans full pane width (chrome continuation); button group
      stays centered within it as a single horizontal cluster.
      Vertical padding sized so 30px buttons + 1px bottom border land
      at 43px overall toolbar height. */
-  padding: var(--size-2-3, 6px) var(--size-4-3, 12px);
   background: var(--background-primary);
   border: 0;
   border-radius: 0;
@@ -1404,22 +1393,85 @@ body:not(.is-mobile) .butter-toolbar {
   max-width: none;
   margin: 0;
   box-sizing: border-box;
+  overflow: hidden;
+}
+body:not(.is-mobile) .butter-toolbar-scroll {
+  display: flex;
+  align-items: center;
+  /* `safe center` falls back to flex-start when content overflows,
+     so the leftmost buttons stay reachable instead of being scrolled
+     off-screen by a forced center. The row becomes horizontally
+     scrollable when the editor pane is too narrow to fit every
+     button. Vertical overflow stays hidden so the chrome row's
+     height doesn't grow. */
+  justify-content: safe center;
+  gap: var(--size-2-1, 2px);
+  padding: var(--size-2-3, 6px) var(--size-4-3, 12px);
+  width: 100%;
+  box-sizing: border-box;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: var(--background-modifier-border-hover) transparent;
+  scrollbar-width: none;
 }
-body:not(.is-mobile) .butter-toolbar::-webkit-scrollbar {
-  height: 6px;
+body:not(.is-mobile) .butter-toolbar-scroll::-webkit-scrollbar {
+  display: none;
 }
-body:not(.is-mobile) .butter-toolbar::-webkit-scrollbar-thumb {
-  background: var(--background-modifier-border-hover);
-  border-radius: 3px;
+body:not(.is-mobile) .butter-toolbar-overflow-indicator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.15s ease, color 0.15s ease;
+  z-index: 2;
+}
+body:not(.is-mobile) .butter-toolbar-overflow-indicator.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+body:not(.is-mobile) .butter-toolbar-overflow-indicator:hover {
+  color: var(--text-normal);
+}
+body:not(.is-mobile) .butter-toolbar-overflow-indicator:focus {
+  outline: none;
+}
+body:not(.is-mobile) .butter-toolbar-overflow-indicator:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+body:not(.is-mobile) .butter-toolbar-overflow-indicator.is-left {
+  left: 0;
+  background: linear-gradient(
+    to right,
+    var(--background-primary) 0%,
+    var(--background-primary) 50%,
+    transparent 100%
+  );
+}
+body:not(.is-mobile) .butter-toolbar-overflow-indicator.is-right {
+  right: 0;
+  background: linear-gradient(
+    to left,
+    var(--background-primary) 0%,
+    var(--background-primary) 50%,
+    transparent 100%
+  );
+}
+body:not(.is-mobile) .butter-toolbar-overflow-indicator .svg-icon {
+  width: 16px;
+  height: 16px;
 }
 /* Children keep natural width - no shrinking when we're at the
    point of overflow. Without this, flex would compress the buttons
    into illegibly thin strips before activating the scroll. */
-body:not(.is-mobile) .butter-toolbar > * {
+body:not(.is-mobile) .butter-toolbar-scroll > * {
   flex-shrink: 0;
 }
 
@@ -1457,9 +1509,12 @@ body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"] {
   border: 0;
   border-radius: 0;
   margin: 0;
-  padding: 0 var(--size-4-2, 8px);
   height: auto;
   overflow: hidden;
+}
+body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"]
+  .butter-toolbar-scroll {
+  padding: 0 var(--size-4-2, 8px);
 }
 body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"] .butter-toolbar-group {
   flex-shrink: 1;
@@ -1647,6 +1702,37 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
 }
 
 /* ── Submenu dot indicator ── */
+.butter-toolbar-submenu-popup[data-active-style="filled"] .butter-btn.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.butter-toolbar-submenu-popup[data-active-style="filled"] .butter-btn.is-active:hover {
+  background: var(--interactive-accent-hover, var(--interactive-accent));
+  color: var(--text-on-accent);
+}
+.butter-toolbar-submenu-popup[data-active-style="soft"] .butter-btn.is-active {
+  background: hsla(var(--interactive-accent-hsl), 0.15);
+  color: var(--interactive-accent);
+}
+.butter-toolbar-submenu-popup[data-active-style="outlined"] .butter-btn.is-active {
+  background: hsla(var(--interactive-accent-hsl), 0.08);
+  color: var(--interactive-accent);
+  box-shadow: inset 0 0 0 1.5px var(--interactive-accent);
+}
+.butter-toolbar-submenu-popup[data-active-style="underline"] .butter-btn.is-active {
+  color: var(--interactive-accent);
+}
+.butter-toolbar-submenu-popup[data-active-style="underline"] .butter-btn.is-active::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+}
+
 .butter-submenu-dot {
   position: absolute;
   right: 3px;
@@ -1710,77 +1796,375 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
    conventions as the table grid picker so the popover language
    stays consistent across the toolbar. */
 .butter-color-palette {
-  background: var(--background-primary);
-  border: var(--border-width, 1px) solid var(--background-modifier-border);
-  border-radius: var(--radius-m, 6px);
-  box-shadow: var(--shadow-l, 0 12px 32px rgba(0,0,0,0.12));
-  padding: var(--size-4-2, 10px);
-  z-index: 100;
-  animation: butter-dropdown-in 140ms ease;
-  min-width: 220px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+  align-items: flex-start;
+  --butter-alpha-pattern: repeating-linear-gradient(
+    135deg,
+    rgba(127, 127, 127, 0.18) 0,
+    rgba(127, 127, 127, 0.18) 1px,
+    transparent 1px,
+    transparent 5px
+  );
+}
+.butter-color-preview {
+  background-color: var(--background-secondary);
+  background-image: var(--butter-alpha-pattern);
+}
+.butter-color-preview-fill,
+.butter-color-cell-fill {
+  position: absolute;
+  inset: 0;
+}
+.butter-color-custom-value {
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  line-height: 1;
 }
 .butter-color-grid {
   display: grid;
-  grid-template-columns: repeat(9, 22px);
-  gap: var(--size-2-2, 4px);
+  grid-template-columns: repeat(7, 30px);
+  gap: var(--size-2-1, 2px);
+  justify-content: center;
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: 100%;
 }
 .butter-color-cell {
-  width: 22px;
-  height: 22px;
+  position: relative;
+  width: 30px;
+  height: 30px;
+  box-sizing: border-box;
   border: var(--border-width, 1px) solid var(--background-modifier-border);
-  border-radius: 50%;
+  border-radius: var(--radius-s, 4px);
   padding: 0;
   cursor: pointer;
-  transition: transform 80ms ease;
+  overflow: hidden;
+  background-color: var(--background-secondary);
+  background-image: var(--butter-alpha-pattern);
+  color: var(--text-muted);
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 90ms ease,
+    box-shadow 90ms ease,
+    transform 90ms ease;
 }
-.butter-color-cell:hover {
-  transform: scale(1.15);
-  border-color: var(--interactive-accent);
+.butter-color-default,
+.butter-color-custom.is-empty {
+  background: transparent;
+  background-image: none;
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
 }
-.butter-color-footer {
+.butter-color-custom.is-empty .butter-color-cell-fill {
+  display: none;
+}
+.butter-color-custom.butter-btn.is-active .butter-color-cell-fill {
+  opacity: 0.32;
+}
+.butter-color-cell:not(.butter-color-default):not(.butter-color-custom):hover {
+  color: var(--text-normal);
+  border-color: var(--background-modifier-border-hover);
+  box-shadow: inset 0 0 0 1px var(--background-modifier-border-hover);
+  transform: translateY(-1px);
+}
+.butter-color-default:hover,
+.butter-color-custom:hover {
+  border-color: var(--background-modifier-border);
+  box-shadow: none;
+}
+.butter-color-cell.is-selected:not(.butter-color-default):not(.butter-color-custom) {
+  border-color: var(--background-modifier-border);
+  box-shadow: none;
+}
+.butter-color-cell-check {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.45))
+    drop-shadow(0 -1px 1px rgba(0, 0, 0, 0.45));
+  pointer-events: none;
+}
+.butter-color-cell.is-selected:not(.butter-color-default):not(.butter-color-custom)
+  .butter-color-cell-check {
+  display: flex;
+}
+.butter-color-cell.is-selected:not(.butter-color-default):not(.butter-color-custom)
+  .butter-color-cell-icon {
+  display: none;
+}
+.butter-color-cell-check .svg-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2px;
+}
+.butter-color-cell-icon {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
-  gap: var(--size-4-1, 4px);
+  justify-content: center;
+  color: currentColor;
+  filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.45))
+    drop-shadow(0 -1px 1px rgba(0, 0, 0, 0.45));
+  pointer-events: none;
+}
+.butter-color-cell-icon .svg-icon,
+.butter-color-default > .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+.butter-color-custom .butter-color-cell-check {
+  display: none;
+}
+.butter-color-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  grid-template-columns: none;
+  grid-template-rows: none;
+  place-items: center;
+  width: auto;
+  min-width: 30px;
+  padding: 0 var(--size-4-2, 8px);
+  gap: var(--size-2-2, 4px);
+  white-space: nowrap;
+}
+.butter-color-control.is-disabled,
+.butter-color-control:disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+.butter-color-control .svg-icon {
+  flex: 0 0 auto;
+}
+.butter-color-control-label {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1;
+}
+
+.butter-color-palette[data-active-style="filled"] .butter-btn.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.butter-color-palette[data-active-style="filled"] .butter-btn.is-active:hover {
+  background: var(--interactive-accent-hover, var(--interactive-accent));
+  color: var(--text-on-accent);
+}
+.butter-color-palette[data-active-style="soft"] .butter-btn.is-active {
+  background: hsla(var(--interactive-accent-hsl), 0.15);
+  color: var(--interactive-accent);
+}
+.butter-color-palette[data-active-style="outlined"] .butter-btn.is-active {
+  background: hsla(var(--interactive-accent-hsl), 0.08);
+  color: var(--interactive-accent);
+  box-shadow: inset 0 0 0 1.5px var(--interactive-accent);
+}
+.butter-color-palette[data-active-style="underline"] .butter-btn.is-active {
+  color: var(--interactive-accent);
+}
+.butter-color-palette[data-active-style="underline"] .butter-btn.is-active::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+}
+.butter-color-palette .butter-color-control.is-disabled,
+.butter-color-palette .butter-color-control:disabled {
+  background: transparent;
+  color: var(--text-faint);
+  box-shadow: none;
+}
+.butter-color-palette .butter-color-control.is-disabled::after,
+.butter-color-palette .butter-color-control:disabled::after {
+  display: none;
+}
+.butter-color-custom-panel {
+  width: 100%;
+  flex: 0 0 100%;
   margin-top: var(--size-4-2, 10px);
   padding-top: var(--size-4-2, 10px);
   border-top: var(--border-width, 1px) solid var(--background-modifier-border);
-  font-size: var(--font-ui-smaller, 12px);
-  color: var(--text-muted);
+  --butter-picker-hue: #ff0000;
+  --butter-picker-s: 100%;
+  --butter-picker-v: 0%;
+  --butter-picker-h: 0%;
+  --butter-picker-alpha: 40%;
 }
-.butter-color-clear,
-.butter-color-custom {
-  display: inline-flex;
+.butter-color-custom-header {
+  display: flex;
   align-items: center;
-  gap: var(--size-2-2, 4px);
-  padding: var(--size-2-2, 4px) var(--size-4-2, 8px);
-  border: var(--border-width, 1px) solid transparent;
-  border-radius: var(--radius-s, 4px);
-  background: transparent;
-  cursor: pointer;
+  justify-content: space-between;
+  gap: var(--size-4-2, 10px);
+  margin-bottom: var(--size-4-1, 6px);
+}
+.butter-color-custom-title {
   color: var(--text-normal);
-  white-space: nowrap;
+  font-size: var(--font-ui-smaller, 12px);
+  font-weight: var(--font-medium, 500);
+  line-height: 1;
 }
-.butter-color-clear:hover,
-.butter-color-custom:hover {
-  background: var(--background-modifier-hover);
-  border-color: var(--background-modifier-border);
+.butter-color-sv {
+  position: relative;
+  width: 100%;
+  height: 128px;
+  border-radius: var(--radius-s, 4px);
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  background:
+    linear-gradient(to top, #000000, transparent),
+    linear-gradient(to right, #ffffff, transparent),
+    var(--butter-picker-hue);
+  cursor: crosshair;
+  touch-action: none;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
-.butter-color-clear .svg-icon,
-.butter-color-custom .svg-icon {
-  width: 14px;
-  height: 14px;
+.butter-color-sv:focus-visible,
+.butter-color-hue:focus-visible,
+.butter-color-alpha-slider:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
 }
-.butter-color-custom-input {
+.butter-color-sv-thumb {
   position: absolute;
-  width: 0;
-  height: 0;
-  opacity: 0;
+  left: var(--butter-picker-s);
+  top: var(--butter-picker-v);
+  width: 12px;
+  height: 12px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  transform: translate(-50%, -50%);
   pointer-events: none;
 }
-.butter-color-custom {
+.butter-color-hue {
   position: relative;
+  height: 12px;
+  margin-top: var(--size-4-2, 10px);
+  border-radius: 999px;
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  background: linear-gradient(
+    to right,
+    #ff0000,
+    #ffff00,
+    #00ff00,
+    #00ffff,
+    #0000ff,
+    #ff00ff,
+    #ff0000
+  );
+  cursor: pointer;
+  touch-action: none;
 }
-
+.butter-color-hue-thumb {
+  position: absolute;
+  left: var(--butter-picker-h);
+  top: 50%;
+  width: 12px;
+  height: 18px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.butter-color-custom-controls {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: var(--size-4-1, 6px);
+  align-items: center;
+  margin-top: var(--size-4-2, 10px);
+}
+.butter-color-preview {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-s, 4px);
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+.butter-color-hex-input {
+  height: 28px;
+  min-width: 0;
+  padding: 0 var(--size-4-2, 8px);
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller, 12px);
+  transition: border-color 90ms ease, background-color 90ms ease;
+}
+.butter-color-hex-input.is-invalid {
+  border-color: var(--text-error, #ed4b55);
+  background: rgba(237, 75, 85, 0.08);
+}
+.butter-color-alpha {
+  display: grid;
+  grid-template-columns: auto 1fr 34px;
+  gap: var(--size-4-1, 6px);
+  align-items: center;
+  margin-top: var(--size-4-2, 10px);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 12px);
+}
+.butter-color-alpha-label,
+.butter-color-alpha-value {
+  line-height: 1;
+}
+.butter-color-alpha-value {
+  text-align: right;
+  font-family: var(--font-monospace);
+  color: var(--text-faint);
+}
+.butter-color-alpha-slider {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  height: 12px;
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-radius: 999px;
+  cursor: pointer;
+  accent-color: var(--interactive-accent);
+  appearance: none;
+  -webkit-appearance: none;
+}
+.butter-color-alpha-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 18px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+.butter-color-alpha-slider::-moz-range-thumb {
+  width: 8px;
+  height: 14px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+.butter-color-custom-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--size-2-2, 4px);
+  margin-top: var(--size-4-2, 10px);
+}
 /* In-modal variant - the modal already provides chrome, so drop the
    redundant border/shadow/padding from the popover wrapper. */
 .butter-color-palette-in-modal {
@@ -1839,6 +2223,8 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   opacity: 0;
   pointer-events: none;
   transform: translateY(100%);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
   transition:
     opacity 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
     transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -1923,6 +2309,7 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   display: flex;
   flex: 0 1 auto;
   min-width: 0;
+  position: relative;
   border-radius: var(--touch-radius-m, 44px);
   overflow: hidden;
   background: var(--touch-background, var(--background-modifier-hover));
@@ -1944,6 +2331,68 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
 }
 .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-options-list::-webkit-scrollbar {
   display: none;
+}
+.butter-mobile-bar .butter-mobile-overflow-host {
+  position: relative;
+}
+.butter-mobile-bar .butter-mobile-overflow-indicator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.15s ease, color 0.15s ease;
+  z-index: 3;
+}
+.butter-mobile-bar .butter-mobile-overflow-indicator.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.butter-mobile-bar .butter-mobile-overflow-indicator:hover,
+.butter-mobile-bar .butter-mobile-overflow-indicator:active {
+  color: var(--text-normal);
+}
+.butter-mobile-bar .butter-mobile-overflow-indicator:focus {
+  outline: none;
+}
+.butter-mobile-bar .butter-mobile-overflow-indicator:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+.butter-mobile-bar .butter-mobile-overflow-indicator.is-left {
+  left: 0;
+}
+.butter-mobile-bar .butter-mobile-overflow-indicator.is-right {
+  right: 0;
+}
+.butter-mobile-bar .butter-mobile-overflow-indicator .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+.butter-mobile-bar[data-mobile-style="detached"]
+  .butter-mobile-overflow-indicator.is-left {
+  background: linear-gradient(
+    to right,
+    var(--touch-background, var(--background-modifier-hover)) 0%,
+    var(--touch-background, var(--background-modifier-hover)) 50%,
+    transparent 100%
+  );
+}
+.butter-mobile-bar[data-mobile-style="detached"]
+  .butter-mobile-overflow-indicator.is-right {
+  background: linear-gradient(
+    to left,
+    var(--touch-background, var(--background-modifier-hover)) 0%,
+    var(--touch-background, var(--background-modifier-hover)) 50%,
+    transparent 100%
+  );
 }
 /* Floating pill - separate small capsule on the side of the main
    pill (matches Obsidian's right-side tab-switcher pill). Used for
@@ -2063,6 +2512,15 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
   width: 100%;
   height: 40px;
 }
+.butter-mobile-bar[data-mobile-style="attached"] .butter-mobile-bar-list-wrap {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  background: var(--background-secondary);
+}
 .butter-mobile-bar[data-mobile-style="attached"] .butter-mobile-bar-list {
   display: flex;
   flex: 1 1 auto;
@@ -2100,6 +2558,24 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
 }
 .butter-mobile-bar[data-mobile-style="attached"] .butter-mobile-bar-list::-webkit-scrollbar {
   display: none;
+}
+.butter-mobile-bar[data-mobile-style="attached"]
+  .butter-mobile-overflow-indicator.is-left {
+  background: linear-gradient(
+    to right,
+    var(--background-secondary) 0%,
+    var(--background-secondary) 50%,
+    transparent 100%
+  );
+}
+.butter-mobile-bar[data-mobile-style="attached"]
+  .butter-mobile-overflow-indicator.is-right {
+  background: linear-gradient(
+    to left,
+    var(--background-secondary) 0%,
+    var(--background-secondary) 50%,
+    transparent 100%
+  );
 }
 /* Right-side chrome - swap toggle, separated from the formatting
    row by a soft shadow on its left edge so the buttons appear to
@@ -2561,7 +3037,10 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
    defense-in-depth: today neither of our bars carries the
    `.mobile-toolbar` class, but if a future change reintroduces it
    for theme cascade, our bars stay visible automatically. */
-body.butter-mobile-active .mobile-toolbar:not(.butter-mobile-bar) {
+body.butter-mobile-active .mobile-toolbar:not(.butter-mobile-bar),
+body.butter-mobile-drawer-open .mobile-toolbar:not(.butter-mobile-bar),
+body.butter-mobile-drawer-returning-keyboard .mobile-toolbar:not(.butter-mobile-bar),
+body.butter-mobile-suppress-native-toolbar .mobile-toolbar:not(.butter-mobile-bar) {
   display: none !important;
 }
 
@@ -2704,11 +3183,57 @@ body.butter-mobile-drawer-open .butter-mobile-toolbar.butter-mobile-bar {
   opacity: 1 !important;
   pointer-events: auto !important;
   transform: translateY(0) !important;
+  transition: none !important;
   /* Bar above the drawer. For butter style, also reset the
      keyboard-height padding (the drawer is the visible element
      below the bar - bar's padding would overlap and hide it). */
   bottom: var(--butter-mobile-drawer-height, 320px) !important;
   padding-bottom: 0 !important;
+}
+body.butter-mobile-drawer-returning-keyboard
+  .butter-mobile-toolbar.butter-mobile-bar {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: translateY(0) !important;
+  bottom: max(
+    var(--butter-mobile-drawer-height, 320px),
+    var(--keyboard-height, 0px)
+  ) !important;
+  padding-bottom: 0 !important;
+  transition: none !important;
+}
+body.butter-mobile-drawer-keyboard-aligning
+  .butter-mobile-toolbar.butter-mobile-bar {
+  transition:
+    bottom 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    padding-bottom 220ms cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+}
+/* While the keyboard is returning, a small drawer can be shorter than
+   the keyboard. Attached style must use its normal colored filler again,
+   reserving the taller of the outgoing drawer and incoming keyboard. */
+body.butter-mobile-drawer-returning-keyboard
+  .butter-mobile-toolbar.butter-mobile-bar[data-mobile-style="attached"] {
+  bottom: 0 !important;
+  padding-bottom: max(
+    var(--butter-mobile-drawer-height, 320px),
+    var(--keyboard-height, 0px)
+  ) !important;
+}
+body.butter-mobile-drawer-returning-keyboard.butter-mobile-drawer-returning-keyboard-live
+  .butter-mobile-toolbar.butter-mobile-bar {
+  bottom: var(
+    --butter-mobile-return-keyboard-height,
+    var(--keyboard-height, var(--butter-mobile-drawer-height, 320px))
+  ) !important;
+  padding-bottom: 0 !important;
+}
+body.butter-mobile-drawer-returning-keyboard.butter-mobile-drawer-returning-keyboard-live
+  .butter-mobile-toolbar.butter-mobile-bar[data-mobile-style="attached"] {
+  bottom: 0 !important;
+  padding-bottom: var(
+    --butter-mobile-return-keyboard-height,
+    var(--keyboard-height, var(--butter-mobile-drawer-height, 320px))
+  ) !important;
 }
 
 /* Butter chrome wrapper visibility - now always shown because the
@@ -2793,7 +3318,12 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   /* Slide up from below; matched by the JS `is-open` toggle on
      the next animation frame so the transition fires. */
   transform: translateY(100%);
-  transition: transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  will-change: transform, height;
+  backface-visibility: hidden;
+  contain: layout paint;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    height 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .butter-mobile-insert-drawer * {
   box-sizing: border-box;
@@ -2801,15 +3331,344 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
 .butter-mobile-insert-drawer.is-open {
   transform: translateY(0);
 }
-.butter-mobile-insert-drawer-handle {
-  /* Subtle grab indicator at the very top edge - purely visual.
-     Tap-to-close lives on the bar's chrome slot (right side). */
-  width: 36px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--background-modifier-border);
-  margin: 6px auto;
+.butter-mobile-color-drawer {
+  --butter-alpha-pattern: repeating-linear-gradient(
+    135deg,
+    rgba(120, 120, 120, 0.18) 0 6px,
+    rgba(120, 120, 120, 0.05) 6px 12px
+  );
+}
+/* Keyboard-height sheet, exactly like the slash/insert drawer (inherits the
+   base .butter-mobile-insert-drawer height var). The toolbar anchors to that
+   same var - set once on open, never republished - so it rides flush on top
+   and never moves. Page 1's grid fills this fixed height (1fr rows) so the
+   colour wall reaches every edge with no whitespace. */
+.butter-mobile-insert-drawer.butter-mobile-color-drawer {
+  /* Clear the Android nav bar / home indicator via Obsidian's reliable
+     safe-area var (env() reads 0 on some Android builds); nothing on phones
+     without an inset, so the grid reaches the very bottom edge. */
+  padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+}
+.butter-mobile-color-shell {
+  /* flex-basis 0 (not auto) so each level fills the fixed drawer height
+     regardless of content min-sizes - the canonical "fill" idiom. */
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Header: back affordance (Custom page) + close (slot mode). Square hit
+   targets, no radius. */
+.butter-mobile-color-header.butter-mobile-drawer-header {
   flex: 0 0 auto;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-1, 2px);
+  padding: 0 var(--file-margins, var(--size-4-3, 12px));
+}
+.butter-mobile-color-header.butter-mobile-drawer-header[hidden] {
+  display: none;
+}
+.butter-mobile-color-back,
+.butter-mobile-color-close {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 0;
+}
+.butter-mobile-color-close {
+  margin-left: auto;
+}
+.butter-mobile-color-back svg,
+.butter-mobile-color-close svg {
+  width: 18px;
+  height: 18px;
+}
+.butter-mobile-color-back-label {
+  font-size: var(--font-ui-smaller, 12px);
+  color: var(--text-muted);
+}
+.butter-mobile-color-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.butter-mobile-color-page {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.butter-mobile-color-body .butter-mobile-color-page[hidden] {
+  display: none;
+}
+/* ── Page 1: the full-bleed colour wall ──
+   Pure flexbox so it ALWAYS fills (fr-rows-in-a-flex-item don't reliably
+   fill): the page is a flex column of three equal-height rows (flex:1),
+   and each row's cells flex to fill the width. No gaps, no padding, no
+   rounded corners, no whitespace - colour reaches every edge. */
+.butter-mobile-color-page.butter-mobile-color-grid {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.butter-mobile-color-row {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  align-items: stretch;
+  overflow: hidden;
+}
+.butter-mobile-color-action-row {
+  flex: 0 0 46px;
+  min-height: 46px;
+}
+.butter-mobile-color-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  align-self: stretch;
+  /* Reset Obsidian's default <button> box: its vertical margin + min-height
+     were shrinking each cell inside its row, leaving strips of the drawer
+     background showing between rows. Zero them so the cell fills its row. */
+  width: auto !important;
+  height: 100% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  min-height: 0 !important;
+  box-shadow: none !important;
+  position: relative;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  /* Checkerboard shows through translucent highlight presets/shades. */
+  background-color: var(--background-secondary);
+  background-image: var(--butter-alpha-pattern);
+  overflow: hidden;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  cursor: pointer;
+}
+.butter-mobile-color-cell-fill {
+  position: absolute;
+  inset: 0;
+}
+.butter-mobile-color-cell-check {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  color: #fff;
+  font-size: 20px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+/* Selected: an inset ring (square, doesn't break the tiling) + check. */
+.butter-mobile-color-cell.is-active {
+  z-index: 2;
+}
+.butter-mobile-color-cell.is-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-shadow:
+    inset 0 0 0 3px #fff,
+    inset 0 0 0 4px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+.butter-mobile-color-cell.is-active .butter-mobile-color-cell-check {
+  display: grid;
+}
+/* Row 3: Clear / Custom. Each flexes to fill, so two share the row
+   (half each) and a lone Custom fills it. */
+.butter-mobile-color-action {
+  flex: 1 1 0;
+  min-width: 0;
+  align-self: stretch;
+  /* Same Obsidian <button> reset as the cells. */
+  width: auto !important;
+  height: 100% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  min-height: 0 !important;
+  box-shadow: none !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-2-3, 6px);
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small, 13px);
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  cursor: pointer;
+}
+.butter-mobile-color-action:active {
+  background: var(--background-modifier-hover) !important;
+}
+.butter-mobile-color-action.is-active:not([aria-current="true"]) {
+  color: var(--interactive-accent);
+  box-shadow: inset 0 0 0 2px var(--interactive-accent);
+}
+.butter-mobile-color-action-icon {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+.butter-mobile-color-notice {
+  flex: 0 0 28px;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--size-4-3, 12px);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1;
+  text-align: center;
+  background: transparent;
+}
+/* ── Custom (sliders) page ──
+   Inset from the side edges so the tracks/thumbs sit in a comfortable
+   column. Square tracks + thumbs to match the no-radius grid. */
+.butter-mobile-color-page-custom {
+  display: flex;
+  flex-direction: column;
+  padding: var(--size-4-2, 8px) var(--size-4-4, 16px) 0;
+}
+.butter-mobile-color-custom-nav-row {
+  margin: auto calc(var(--size-4-4, 16px) * -1) 0;
+}
+.butter-mobile-color-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-2, 4px);
+  margin-bottom: var(--size-2-3, 6px);
+}
+.butter-mobile-color-section-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 11px);
+  font-weight: var(--font-medium, 500);
+}
+.butter-mobile-color-slider {
+  position: relative;
+  height: 24px;
+  border-radius: 0;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  touch-action: none;
+}
+.butter-mobile-color-slider-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  width: 24px;
+  height: 24px;
+  border-radius: 0;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+/* ── Settings: preset colours section ── */
+.butter-setting-group.is-disabled-section {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.butter-preset-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-2-3, 6px);
+}
+.butter-preset-color-button {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(120, 120, 120, 0.18) 0 6px,
+    rgba(120, 120, 120, 0.05) 6px 12px
+  );
+  overflow: hidden;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.butter-preset-color-button-fill {
+  position: absolute;
+  inset: 0;
+}
+.butter-preset-color-picker-popover {
+  width: min(320px, calc(100vw - 24px));
+}
+.butter-preset-colors-note .setting-item-name {
+  color: var(--text-muted);
+}
+/* Mobile preset editor: large swatch chips that open the in-app colour
+   picker (replaces the desktop native <input type=color> row). */
+.butter-preset-chip-group {
+  margin-top: var(--size-4-2, 8px);
+}
+.butter-preset-chip-label {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller, 11px);
+  font-weight: var(--font-medium, 500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-bottom: var(--size-2-2, 4px);
+}
+.butter-preset-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--size-2-3, 6px);
+}
+.butter-preset-chip {
+  position: relative;
+  aspect-ratio: 1;
+  min-height: 48px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m, 8px);
+  overflow: hidden;
+  cursor: pointer;
+  /* Checkerboard so translucent highlight presets read correctly. */
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(120, 120, 120, 0.18) 0 6px,
+    rgba(120, 120, 120, 0.05) 6px 12px
+  );
+  -webkit-appearance: none;
+  appearance: none;
+}
+.butter-preset-chip-fill {
+  position: absolute;
+  inset: 0;
+}
+.butter-preset-chip-pencil {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-s, 4px);
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+}
+.butter-preset-chip-pencil svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* Block-actions tile states - mirror the desktop block-context
@@ -3346,6 +4205,50 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
 .butter-settings-tabs-indicator .svg-icon {
   width: 16px;
   height: 16px;
+}
+
+.butter-toolbar-update-toast {
+  position: sticky;
+  top: var(--size-4-2, 8px);
+  z-index: 20;
+  height: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.butter-toolbar-update-toast__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-2-2, 4px);
+  min-height: 30px;
+  padding: 0 var(--size-4-3, 12px);
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-shadow: var(--shadow-s);
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+  transition:
+    opacity 160ms ease,
+    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.butter-toolbar-update-toast.is-visible .butter-toolbar-update-toast__chip {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.butter-toolbar-update-toast__icon {
+  display: grid;
+  place-items: center;
+  color: var(--interactive-accent);
+}
+.butter-toolbar-update-toast__icon .svg-icon {
+  width: 15px;
+  height: 15px;
+}
+.butter-toolbar-update-toast__label {
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
 }
 
 /* The tab is a <div role="tab">, not a <button>, specifically so

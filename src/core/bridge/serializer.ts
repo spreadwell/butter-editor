@@ -1,6 +1,7 @@
 import { Node as PMNode, Fragment, Mark } from "prosemirror-model";
 import { schema } from "../schema";
 import { CANONICAL_DEFAULTS, type CanonicalFormOptions } from "./common";
+import { isDigitCode } from "../inline-math-delimiters";
 
 
 
@@ -28,11 +29,11 @@ export const markSpecs: Record<string, MarkSpec> = {
   strikethrough: { open: "~~", close: "~~", expel: true },
   highlight: {
     // A custom `color` attr forces HTML form so the
-    // background-color survives the round-trip. Plain (no color)
+    // background survives the round-trip. Plain (no color)
     // highlights honour `html` for the markdown vs HTML shape choice.
     open: (mark) => {
       if (mark.attrs.color) {
-        return `<mark style="background-color: ${mark.attrs.color}">`;
+        return `<mark style="background:${mark.attrs.color}">`;
       }
       return mark.attrs.html ? "<mark>" : "==";
     },
@@ -128,8 +129,14 @@ function backticksFor(node: PMNode, side: number): string {
 
 // ── Escape helpers ──
 
+function escapeTildeRuns(str: string): string {
+  return str.replace(/~{2,}/g, (run) => run.replace(/~/g, "\\~"));
+}
+
 function esc(str: string, startOfLine = false): string {
-  str = str.replace(/[`*\\~[\]_]/g, "\\$&");
+  str = str.replace(/[`*\\[\]_]/g, "\\$&");
+  str = escapeTildeRuns(str);
+  str = str.replace(/\u00a0/g, "&nbsp;");
   if (startOfLine)
     str = str.replace(/^[#\-*+>]/, "\\$&").replace(/^(\s*\d+)\./, "$1\\.");
   return str;
@@ -390,6 +397,7 @@ export class SerState {
   closed: PMNode | false = false;
   delim = "";
   canonicalForm: Required<CanonicalFormOptions>;
+  inlineMathClosePending = false;
 
   /** Marks (by type+attrs key) whose range overlaps another mark's
    *  range in the current inline-render parent. CommonMark emphasis
@@ -437,7 +445,7 @@ export class SerState {
       if (name === "strikethrough") return "<s>";
       if (name === "highlight") {
         return mark.attrs.color
-          ? `<mark style="background-color: ${mark.attrs.color}">`
+          ? `<mark style="background:${mark.attrs.color}">`
           : "<mark>";
       }
     }
@@ -517,6 +525,19 @@ export class SerState {
     }
   }
 
+  writeTextAfterInlineMath(text: string, escape = true) {
+    let rest = text;
+    if (this.inlineMathClosePending && this.out.endsWith("$") && rest.length > 0) {
+      const first = rest.charCodeAt(0);
+      if (first === 0x24 /* $ */ || isDigitCode(first)) {
+        this.write(first === 0x24 /* $ */ ? "&#36;" : `&#${first};`);
+        rest = rest.slice(1);
+      }
+    }
+    this.inlineMathClosePending = false;
+    if (rest) this.text(rest, escape);
+  }
+
   closeBlock(node: PMNode) { this.closed = node; }
 
   wrapBlock(delim: string, firstDelim: string | null, node: PMNode, fn: () => void) {
@@ -578,7 +599,10 @@ export class SerState {
             if (last && !/\s/.test(last)) this.write(" ");
           }
         }
-        this.write(this.sourcePresBody.slice(r.start, r.end));
+        const source = this.sourcePresBody.slice(r.start, r.end);
+        this.write(source);
+        this.inlineMathClosePending =
+          node.type.name === "inline_math" && source.endsWith("$");
         return;
       }
     }
@@ -718,7 +742,7 @@ export class SerState {
         const noEsc = active.some(
           (m) => markSpecs[m.type.name]?.escape === false,
         );
-        this.text(child.text!, !noEsc);
+        this.writeTextAfterInlineMath(child.text!, !noEsc);
       } else {
         this.renderNode(child, parent, index);
       }
@@ -872,7 +896,7 @@ function computeDepthIndent(
   }
   if (!hasImmediateParent) return "";
 
-  let prefix = "";
+  let requiredColumns = 0;
   for (let d = depth - 1; d >= 0; d--) {
     let ancestor: PMNode | null = null;
     let ancestorIdx = -1;
@@ -894,14 +918,26 @@ function computeDepthIndent(
       // task would get 6-space indent (matching `- [ ] `) and
       // markdown-it would treat the line as a 4+ space-indented
       // code block.
-      prefix += " ".repeat(bareMarkerWidth(ancestor, parent, ancestorIdx));
+      requiredColumns += bareMarkerWidth(ancestor, parent, ancestorIdx);
     } else {
       // No ancestor at this depth but immediate parent exists - a
       // partial chain. Use 2 spaces, the bullet-marker width.
-      prefix += "  ";
+      requiredColumns += 2;
     }
   }
-  return prefix;
+  const tabColumns = depth * 4;
+  return requiredColumns <= tabColumns
+    ? "\t".repeat(depth)
+    : " ".repeat(requiredColumns);
+}
+
+function indentVisualWidth(indent: string): number {
+  let col = 0;
+  for (const ch of indent) {
+    if (ch === "\t") col += 4 - (col % 4);
+    else col++;
+  }
+  return col;
 }
 
 /**
@@ -1165,7 +1201,7 @@ export const nodeSer: Record<string, NodeSer> = {
     // lines would land at column 6+ which markdown-it reads as a
     // 4+ space-indented code block, corrupting any callout / nested
     // markdown content inside the task.
-    const contIndent = depthIndent.length + bareMarkerWidth(node, parent, index);
+    const contIndent = indentVisualWidth(depthIndent) + bareMarkerWidth(node, parent, index);
     const old = state.delim;
     state.delim += " ".repeat(contIndent);
     state.renderContent(node);
@@ -1502,6 +1538,7 @@ export const nodeSer: Record<string, NodeSer> = {
   },
   inline_math(state, node) {
     state.write(`$${(node.attrs.value as string | undefined) ?? ""}$`);
+    state.inlineMathClosePending = true;
   },
   inline_footnote(state, node) {
     state.write(`^[${(node.attrs.content as string | undefined) ?? ""}]`);
@@ -1840,4 +1877,3 @@ function normalizeBlockSynth(synth: string): string {
   while (s.endsWith("\n")) s = s.slice(0, -1);
   return s + "\n";
 }
-

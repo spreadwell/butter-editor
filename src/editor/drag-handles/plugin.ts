@@ -1105,7 +1105,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           newTargetDepth = Math.min(maxDepth, requested);
         }
 
-        // Even if the slot didn't change, we MUST proceed to applySlotReflow 
+        // Even if the slot didn't change, we MUST proceed to applySlotReflow
         // to heal any asynchronous DOM mutations (like Markdown PostProcessors)
         // that replaced nodes and destroyed their inline CSS transforms.
         const depthChanged = newTargetDepth !== drag.targetDepth;
@@ -1781,8 +1781,8 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
               activeDocument.body.classList.remove("butter-drag-autoscrolling");
             }
             // Run reflow every frame even if not scrolling. This continuously
-            // monitors for asynchronous DOM mutations from Obsidian's Markdown 
-            // PostProcessors (e.g. Prism loaders finishing) and instantly heals 
+            // monitors for asynchronous DOM mutations from Obsidian's Markdown
+            // PostProcessors (e.g. Prism loaders finishing) and instantly heals
             // the layout by reapplying transforms to newly mounted DOM nodes.
             updateReflow(drag, drag.lastPointerX, speed !== 0 ? speed : 0);
           }

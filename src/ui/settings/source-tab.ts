@@ -239,7 +239,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
     const commandNote = normSection.createDiv({ cls: "setting-item-description" });
     commandNote.createEl("div", {
       text:
-        "Three commands (find them in the command palette) clean files on demand. 'Tidy whitespace' applies the cleanup options above. 'Rewrite current note' reformats the whole note with your marker choices. 'Rewrite entire vault' does the same across all notes (back up with Git first).",
+        "Three commands (find them in the command palette) clean files on demand. 'tidy whitespace' applies the cleanup options above. 'rewrite current note' reformats the whole note with your marker choices. 'rewrite entire vault' does the same across all notes (back up with Git first).",
     });
   }
 

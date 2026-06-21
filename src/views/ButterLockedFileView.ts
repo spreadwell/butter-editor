@@ -7,17 +7,9 @@ import {
   ViewStateResult,
 } from "obsidian";
 
-// Extensions MUST be registered before schema.ts or obsidian-md-bridge
-// evaluate their module bodies - those are where the registry is
-// read to build the live schema / token handlers / serializers.
-// The internal Extension API exists, but no example extensions are
-// activated in shipped builds. The dogfooded `:::spoiler` block +
-// `@username` inline atom previously imported from
-// `./integration/extensions-examples` are now developer reference
-// only (see that file's header). To turn them back on for local
-// dev / testing, re-add the side-effect import here ABOVE the
-// schema/parser/serializer imports below.
-
+// Extension registration must happen before schema.ts or obsidian-md-bridge
+// evaluate their module bodies. Example extensions are not activated in
+// shipped builds.
 
 
 import {
@@ -154,4 +146,4 @@ class ButterLockedFileView extends ItemView {
       this.app.commands?.executeCommandById("file-explorer:new-file");
     });
   }
-}
+}

@@ -31,6 +31,7 @@ export class ParseState {
   // it through on their behalf.
   tokens: Token[] | null = null;
   lineStarts: number[] | null = null;
+  sourceText: string | null = null;
   totalLen = 0;
   currentTokIdx = -1;
 
@@ -144,6 +145,17 @@ export class ParseState {
       return { start: lineToOffset(tok.map[0]), end: lineToOffset(endLine) };
     }
     return null;
+  }
+
+  sourceLine(line: number): string | null {
+    if (!this.sourceText || !this.lineStarts) return null;
+    const start = this.lineStarts[line];
+    if (start == null) return null;
+    const end =
+      line + 1 < this.lineStarts.length
+        ? this.lineStarts[line + 1]
+        : this.totalLen;
+    return this.sourceText.slice(start, end).replace(/\r?\n$/, "");
   }
 
   /** Merge the current token's sourceRange into attrs (if any). */
@@ -320,6 +332,14 @@ function cellAlign(tok: Token): string | null {
   return m ? m[1] : null;
 }
 
+function computeLineStarts(markdown: string): number[] {
+  const lineStarts: number[] = [0];
+  for (let i = 0; i < markdown.length; i++) {
+    if (markdown[i] === "\n") lineStarts.push(i + 1);
+  }
+  return lineStarts;
+}
+
 // ── token handler table ──
 
 function buildHandlers(): Record<string, TokenHandler> {
@@ -358,6 +378,11 @@ function buildHandlers(): Record<string, TokenHandler> {
       s.listItemOpen = saved.itemOpen;
     }
   };
+  const isSingleDashSetextHeadingInListItem = (s: ParseState, t: Token) => {
+    if (s.top().type.name !== "list_item") return false;
+    if (t.tag !== "h2" || t.markup !== "-" || !t.map) return false;
+    return s.sourceLine(t.map[1] - 1)?.trim() === "-";
+  };
 
   // Block open/close pairs
   h.blockquote_open = (s) => {
@@ -371,8 +396,13 @@ function buildHandlers(): Record<string, TokenHandler> {
   };
   h.paragraph_open = (s) => s.push(schema.nodes.paragraph);
   h.paragraph_close = (s) => s.pop();
-  h.heading_open = (s, t) =>
+  h.heading_open = (s, t) => {
+    if (isSingleDashSetextHeadingInListItem(s, t)) {
+      s.push(schema.nodes.paragraph);
+      return;
+    }
     s.push(schema.nodes.heading, { level: +t.tag.slice(1) });
+  };
   h.heading_close = (s) => s.pop();
   // ── Flat list handlers ──
   //
@@ -807,6 +837,9 @@ function transformTaskItems(node: PMNode): PMNode {
 export function parse(markdown: string): PMNode | null {
   const tokens = md.parse(markdown, {});
   const state = new ParseState();
+  state.sourceText = markdown;
+  state.lineStarts = computeLineStarts(markdown);
+  state.totalLen = markdown.length;
   // No source-map context - nodes get no sourceRange attrs.
   for (let i = 0; i < tokens.length; i++) {
     state.currentTokIdx = i;
@@ -1166,6 +1199,7 @@ function parseWithSourceMapInner(markdown: string): SourceMapResult | null {
   // attach sourceRange attrs to created nodes.
   const state = new ParseState();
   state.tokens = tokens;
+  state.sourceText = markdown;
   state.lineStarts = lineStarts;
   state.totalLen = markdown.length;
 
@@ -1432,4 +1466,4 @@ export function parseIncrementally(
 // ═══════════════════════════════════════════════
 //  EXPORTS
 // ═══════════════════════════════════════════════
-
+

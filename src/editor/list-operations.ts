@@ -339,15 +339,14 @@ function changeListItemDepth(delta: 1 | -1): Command {
 }
 
 // ═══════════════════════════════════════════
-//  Continue list on Enter at end of empty list item → exit list
+//  Continue list on Enter at end of empty list item
 // ═══════════════════════════════════════════
 //
-// prosemirror-schema-list's splitListItem handles the typical case
-// (Enter splits an item and creates a new one). But on an EMPTY list
-// item, users expect Enter to lift out of the list entirely - matches
-// Notion / Apple Notes / every other editor. prosemirror-schema-list's
-// splitListItem already does this via its `liftEmptyBlock` fallback
-// in the chain set up in editor-ux.ts. No extra work needed here.
+// Flat-list Enter handling lives in editor-ux.ts because Butter's
+// `list_item` nodes are sibling blocks with a depth attr, not nested
+// prosemirror-schema-list wrappers. Empty items become a normal
+// paragraph there; nested empty items outdent one level; non-empty
+// items split into two flat siblings.
 
 // ═══════════════════════════════════════════
 //  Plugin

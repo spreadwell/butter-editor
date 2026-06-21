@@ -105,7 +105,7 @@ function prependIcon(row: Setting, icon: string, cls: string) {
 
 export function renderUnlicensedRows(this: ButterSettingTab, parent: HTMLElement) {
     const hasActivated = !!this.plugin.settings.everValidated || !!this.plugin.settings.activatedAt;
-    
+
     if (!hasActivated) {
       const row = new Setting(parent)
         .setName("Free trial available")
@@ -133,7 +133,7 @@ export function renderUnlicensedRows(this: ButterSettingTab, parent: HTMLElement
         );
       prependIcon(row, "badge-alert", "butter-license-icon-muted");
     }
-    
+
     this.renderPasteKeyRow(parent, /* asUpdate */ false);
     this.renderRecoveryRow(parent);
   }
@@ -619,17 +619,12 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
       .setDesc(`v${this.plugin.manifest.version}`);
   }
 
-// ── Section 4: Dev (test + reset) ───────────────────────────
+// Section 4: Diagnostics
 
-  /** Dev-time scratch surface for testing the License flow. Force-
-   *  state buttons skip Worker validation (they write fake-but-
-   *  coherent settings shapes with sessionExpiresAt well in the
-   *  future so refreshLicenseStatus trusts the cached "token"
-   *  without round-tripping). Trigger /session refresh exercises
-   *  the real Worker call. Reset clears all license state +
-   *  regenerates deviceId.
-   *
-   *  Dev tools live in btr-dev-tools companion plugin. */
+  /** Diagnostic helpers for license-state troubleshooting. Force-state
+   *  buttons write coherent local settings shapes; refresh exercises
+   *  the real session endpoint. Reset clears license state and
+   *  regenerates deviceId. */
 
 
   /** Returns the trial's progress in days/hours plus a derived

@@ -4,37 +4,6 @@ import {
   Platform,
 } from "obsidian";
 
-// Extensions MUST be registered before schema.ts or obsidian-md-bridge
-// evaluate their module bodies - those are where the registry is
-// read to build the live schema / token handlers / serializers.
-// The internal Extension API exists, but no example extensions are
-// activated in shipped builds. The dogfooded `:::spoiler` block +
-// `@username` inline atom previously imported from
-// `./integration/extensions-examples` are now developer reference
-// only (see that file's header). To turn them back on for local
-// dev / testing, re-add the side-effect import here ABOVE the
-// schema/parser/serializer imports below.
-
-
-
-import {
-  type LayoutItem as ToolbarLayoutItem,
-} from "../../ui/toolbar-layout";
-export type { ToolbarLayoutItem };
-
-
-
-
-
-
-
-
-
-
-
-export const VIEW_TYPE_BUTTER = "butter-editor";
-export const VIEW_TYPE_BUTTER_LOCKED = "butter-locked-file";
-
 export class CanonicalizeVaultModal extends Modal {
   private resolved = false;
   constructor(
@@ -81,4 +50,4 @@ export class CanonicalizeVaultModal extends Modal {
     if (!this.resolved) this.resolve(false);
     this.contentEl.empty();
   }
-}
+}

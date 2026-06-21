@@ -17,7 +17,7 @@ export function applySlotReflow(
   editorView: EditorView,
   drag: LiveDragState,
 ): void {
-  // If compact mode, the source clamp is applied once statically, 
+  // If compact mode, the source clamp is applied once statically,
   // so we don't need to reapply it every frame.
 
   const targetSlot = drag.slots[drag.targetSlotIdx];
@@ -74,7 +74,7 @@ export function applySlotReflow(
     }
   } else {
     for (const sib of targetSiblings) {
-      
+
       let dom = sib.dom;
       if (!dom.isConnected) {
         const newDom = editorView.nodeDOM(sib.pos);
@@ -191,7 +191,7 @@ export function pickTargetSlotIdx(
         }
       }
     }
-    
+
     if (!slot.triggerEl.isConnected) {
       // STILL detached (e.g. temporarily unmounted by Obsidian/React).
       // Return a mocked DOMRect based on the initial cached triggerRect

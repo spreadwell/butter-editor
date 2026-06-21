@@ -42,7 +42,6 @@ export function renderDragSection(this: ButterSettingTab, root: HTMLElement) {
         s
           .setLimits(0, 16, 1)
           .setValue(this.plugin.settings.blockDragSensitivity)
-          .setDynamicTooltip()
           .onChange(async (v) => {
             this.plugin.settings.blockDragSensitivity = v;
             await this.plugin.saveSettings();

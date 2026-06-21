@@ -38,12 +38,20 @@
  *   6. Text node with embedded `\n` → split into text + softbreak
  *      + text alternations. Round-trips cleanly; the original
  *      shape reparses with the softbreak as an explicit node.
+ *   7. Plain text `$...$` that matches Butter's inline math delimiter
+ *      rules -> inline_math atom. Currency-shaped dollars stay text.
+ *   8. Top-level empty paragraphs -> dropped. Blank lines are markdown
+ *      gaps, not durable empty paragraph blocks.
  *
  * All other PM shapes pass through unchanged.
  */
 
 import { Fragment, Node as PMNode } from "prosemirror-model";
 import type { Schema } from "prosemirror-model";
+import {
+  findInlineMathClose,
+  isValidInlineMathOpenAt,
+} from "./inline-math-delimiters";
 
 // ── Per-node normalizers ─────────────────────────────────────────
 
@@ -158,6 +166,22 @@ function dropEmptyListItems(
   return parent.copy(Fragment.fromArray(kids));
 }
 
+function dropTopLevelEmptyParagraphs(doc: PMNode): PMNode | null {
+  if (doc.type.name !== "doc" || doc.childCount <= 1) return null;
+  let changed = false;
+  const kids: PMNode[] = [];
+  for (let i = 0; i < doc.childCount; i++) {
+    const c = doc.child(i);
+    if (c.type.name === "paragraph" && c.childCount === 0) {
+      changed = true;
+      continue;
+    }
+    kids.push(c);
+  }
+  if (!changed || kids.length === 0) return null;
+  return doc.copy(Fragment.fromArray(kids));
+}
+
 function normalizeHeadingInline(
   heading: PMNode,
   schema: Schema,
@@ -239,6 +263,51 @@ function splitTextOnNewlines(
   return out;
 }
 
+function splitTextOnInlineMathSyntax(
+  text: PMNode,
+  schema: Schema,
+): PMNode[] | null {
+  if (!text.isText) return null;
+  if (text.marks.some((mark) => mark.type.name === "code")) return null;
+  const s = text.text!;
+  if (!s.includes("$")) return null;
+  const inlineMath = schema.nodes.inline_math;
+  if (!inlineMath) return null;
+
+  let changed = false;
+  const out: PMNode[] = [];
+  let plainStart = 0;
+  let pos = 0;
+  while (pos < s.length) {
+    if (!isValidInlineMathOpenAt(s, pos)) {
+      pos++;
+      continue;
+    }
+    const close = findInlineMathClose(s, pos);
+    if (close < 0) {
+      pos++;
+      continue;
+    }
+    const value = s.slice(pos + 1, close);
+    if (!value.trim() || value !== value.trim()) {
+      pos++;
+      continue;
+    }
+    if (plainStart < pos) {
+      out.push(schema.text(s.slice(plainStart, pos), text.marks));
+    }
+    out.push(inlineMath.create({ value, sourceRange: null }, null, text.marks));
+    changed = true;
+    pos = close + 1;
+    plainStart = pos;
+  }
+  if (!changed) return null;
+  if (plainStart < s.length) {
+    out.push(schema.text(s.slice(plainStart), text.marks));
+  }
+  return out;
+}
+
 function normalizeTextNodesInInline(
   parent: PMNode,
   schema: Schema,
@@ -256,6 +325,14 @@ function normalizeTextNodesInInline(
     const c = parent.child(i);
     if (c.isText && c.text!.includes("\n")) {
       const split = splitTextOnNewlines(c, schema);
+      if (split) {
+        out.push(...split);
+        changed = true;
+        continue;
+      }
+    }
+    if (c.isText && c.text!.includes("$")) {
+      const split = splitTextOnInlineMathSyntax(c, schema);
       if (split) {
         out.push(...split);
         changed = true;
@@ -389,7 +466,13 @@ export function normalizeDocForSave(doc: PMNode): PMNode {
   // them inside containers via the per-node pass, but a top-level
   // empty list_item needs this final pass).
   const topDropped = dropEmptyListItems(afterClamp, schema);
-  return topDropped ?? afterClamp;
+  const afterTopDrop = topDropped ?? afterClamp;
+
+  // 7. Drop top-level empty paragraphs. These come from click-to-
+  // spawn / transient blank-line editing affordances; CommonMark
+  // represents blank lines as inter-block gaps, not durable empty
+  // paragraph nodes.
+  return dropTopLevelEmptyParagraphs(afterTopDrop) ?? afterTopDrop;
 }
 
 /**
@@ -447,6 +530,10 @@ export function describeNormalizations(doc: PMNode): string[] {
   // List_item orphans are top-level only.
   for (let i = 0; i < doc.childCount; i++) {
     const c = doc.child(i);
+    if (doc.childCount > 1 && c.type.name === "paragraph" && c.childCount === 0) {
+      violations.push(`paragraph @top[${i}]: empty top-level paragraph (will drop)`);
+      continue;
+    }
     if (c.type.name !== "list_item") continue;
     const depth = (c.attrs.depth as number | undefined) ?? 0;
     if (depth === 0) continue;

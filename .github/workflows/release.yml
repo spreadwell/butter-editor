@@ -1,8 +1,19 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to publish
+        required: true
+      replace_existing_release:
+        description: Replace an existing release/tag for this version
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: write
@@ -10,14 +21,21 @@ permissions:
   attestations: write
 
 jobs:
-  push-to-master:
+  publish-release:
     runs-on: ubuntu-latest
-    if: "!github.event.release.prerelease"
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: review
           fetch-depth: 0
+
+      - name: Verify finalized review commit
+        env:
+          TAG: ${{ inputs.version }}
+        run: |
+          test "$(node -p "require('./manifest.json').version")" = "$TAG"
+          test "$(git log -1 --pretty=%s)" = "Release $TAG"
+          test -f "release-notes/$TAG.md"
 
       - uses: actions/attest-build-provenance@v2
         with:
@@ -25,15 +43,43 @@ jobs:
             main.js
             styles.css
 
-      - name: Push release commit to master and clean up
+      - name: Promote release commit to master
+        env:
+          TAG: ${{ inputs.version }}
+          REPLACE_EXISTING: ${{ inputs.replace_existing_release }}
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          COMMIT=$(git rev-list -n 1 "refs/tags/$TAG")
+          COMMIT="$(git rev-parse HEAD)"
+          git fetch origin master
           echo "Pushing $TAG ($COMMIT) to master"
-          git push origin "$COMMIT:refs/heads/master"
-          if git ls-remote --exit-code origin refs/heads/review >/dev/null 2>&1; then
-            git push origin --delete refs/heads/review
-            echo "Deleted review branch"
+          if [ "$REPLACE_EXISTING" = "true" ]; then
+            MASTER_EXPECTED="$(git rev-parse origin/master)"
+            git push --force-with-lease=refs/heads/master:"$MASTER_EXPECTED" origin "$COMMIT:refs/heads/master"
           else
-            echo "No review branch to clean up"
+            git push origin "$COMMIT:refs/heads/master"
           fi
+
+      - name: Remove existing release when replacing
+        if: ${{ inputs.replace_existing_release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.version }}
+        run: |
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          git push origin ":refs/tags/$TAG" || true
+
+      - name: Create published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.version }}
+        run: |
+          COMMIT="$(git rev-parse HEAD)"
+          gh release create "$TAG" \
+            --target "$COMMIT" \
+            --title "$TAG" \
+            --notes-file "release-notes/$TAG.md" \
+            main.js manifest.json styles.css
+
+      - name: Clean up review branch
+        run: |
+          git push origin --delete review || true
+          echo "Deleted review branch"

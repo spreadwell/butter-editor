@@ -11,17 +11,9 @@ import {
   WorkspaceLeaf,
 } from "obsidian";
 
-// Extensions MUST be registered before schema.ts or obsidian-md-bridge
-// evaluate their module bodies - those are where the registry is
-// read to build the live schema / token handlers / serializers.
-// The internal Extension API exists, but no example extensions are
-// activated in shipped builds. The dogfooded `:::spoiler` block +
-// `@username` inline atom previously imported from
-// `./integration/extensions-examples` are now developer reference
-// only (see that file's header). To turn them back on for local
-// dev / testing, re-add the side-effect import here ABOVE the
-// schema/parser/serializer imports below.
-
+// Extension registration must happen before schema.ts or obsidian-md-bridge
+// evaluate their module bodies. Example extensions are not activated in
+// shipped builds.
 import { parser } from "./core/parser";
 import { serializer } from "./core/serializer";
 import { normalize as normalizeSource } from "./core/normalize";
@@ -57,6 +49,7 @@ import { ShortcutHelpModal } from "./ui/shortcut-help";
 import { ButterOutlineView, VIEW_TYPE_BUTTER_OUTLINE } from "./ui/outline-view";
 import { scrollHost } from "./util/dom-utils";
 import { ButterSettingTab } from "./ui/settings-tab";
+import { setPresetColorsProvider } from "./ui/toolbar";
 import { installWordCountBridge } from "./ui/wordcount-bridge";
 import { WelcomeModal } from "./ui/welcome-modal";
 import { LicenseClient, LicenseClientError, setPluginVersion } from "./integration/license/client";
@@ -305,7 +298,7 @@ export interface ButterSettings {
    * Allow HTML-only formatting in the toolbar. When ON (default),
    * Butter exposes the marks that have no markdown shorthand and can
    * only be written as inline HTML in source: `<font color>` (text
-   * color), `<mark style="background-color: ...">` (custom highlight
+   * color), `<mark style="background: ...">` (custom highlight
    * color), `<u>` (underline), `<sup>` / `<sub>`, `<kbd>`.
    *
    * When OFF, those toolbar buttons hide so the user can't author
@@ -315,6 +308,12 @@ export interface ButterSettings {
    * setting is purely a toolbar gate, not a source-level restriction.
    */
   enableHtmlFormatting: boolean;
+  /** Five user-customizable preset colours shown in the text-colour and
+   *  highlight pickers (desktop palette + mobile picker), shared across
+   *  platforms. Text = #rrggbb; highlight = rgba(...). The settings UI
+   *  for these is gated by `enableHtmlFormatting`. */
+  presetTextColors: string[];
+  presetHighlightColors: string[];
   /** Enable EditorSuggest bridge for other Obsidian plugins. */
   enableSuggestBridge: boolean;
   /** Enable rich paste + file drop. */
@@ -479,8 +478,8 @@ export interface ButterSettings {
    * at the cost of potential editing-interaction quirks - some
    * Reading-mode CSS assumes non-contenteditable content and sets
    * `user-select: none` or similar on interactive-looking elements.
-   * OFF by default. Flip on if a specific theme's Reading-mode look
-   * isn't cascading through; flip off if editing feels broken.
+   * ON by default for maximum theme coverage. Flip off if a theme's
+   * Reading-mode CSS interferes with editing.
    */
   experimentalThemeCompatMode: boolean;
   /**
@@ -570,7 +569,6 @@ export interface ButterSettings {
   // source of truth. The plugin caches a signed session token here
   // (7-day TTL) so it doesn't need to hit the network on every load,
   // and reads it back on `loadSettings()` to compute `licenseStatus`.
-  // Architecture reference lives in the private planning notes.
 
   /** Per-install random UUID v4. Generated on first load if missing.
    *  Used as the device identifier for trial dedupe + session tokens.
@@ -664,10 +662,6 @@ export interface ButterSettings {
    *  failure. */
   lastReason: string;
 
-  /** Developer flag. When true, the trial flow generates a tagged
-   *  email so the activation can be executed against production
-   *  surfaces without polluting real customer metrics. */
-  devTestMode: boolean;
 }
 
 /** Module-level timer shared by all Butter views' toolbar hover
@@ -692,8 +686,29 @@ export function refreshButterMobileBodyClass(): void {
   activeDocument.body.classList.toggle("butter-mobile-active", inButter);
 }
 
+/** Default five-swatch palette shared by the desktop colour popover and
+ *  the mobile picker. Users can override these in Settings -> Toolbar ->
+ *  Preset colours. Text = #rrggbb; highlight = translucent rgba so the
+ *  underlying text stays legible. */
+export const DEFAULT_PRESET_TEXT_COLORS = [
+  "#e03131",
+  "#e8590c",
+  "#2f9e44",
+  "#1971c2",
+  "#6741d9",
+];
+export const DEFAULT_PRESET_HIGHLIGHT_COLORS = [
+  "rgba(255, 234, 0, 0.4)",
+  "rgba(255, 140, 0, 0.4)",
+  "rgba(80, 200, 80, 0.4)",
+  "rgba(70, 160, 255, 0.4)",
+  "rgba(140, 140, 140, 0.4)",
+];
+
 const DEFAULT_SETTINGS: ButterSettings = {
   enableHtmlFormatting: true,
+  presetTextColors: [...DEFAULT_PRESET_TEXT_COLORS],
+  presetHighlightColors: [...DEFAULT_PRESET_HIGHLIGHT_COLORS],
   enableSuggestBridge: true,
   enablePasteDrop: true,
   openNewFilesInButter: true,
@@ -722,7 +737,7 @@ const DEFAULT_SETTINGS: ButterSettings = {
   closeUnclosedFences: false,
   normalizeWarningAcknowledged: false,
   splitFullWidthImages: true,
-  experimentalThemeCompatMode: false,
+  experimentalThemeCompatMode: true,
   verboseLogging: false,
   toolbarHiddenButtons: [],
   tableToolbarHiddenButtons: [],
@@ -752,7 +767,6 @@ const DEFAULT_SETTINGS: ButterSettings = {
   wasDeactivated: false,
   wasInvalidated: false,
   lastReason: "",
-  devTestMode: false,
 };
 
 // ═══════════════════════════════════════════
@@ -772,6 +786,10 @@ const BUTTER_BODY_CLASSES = [
   "butter-status-bar-hide",
   "butter-scroll-hide",
   "butter-mobile-active",
+  "butter-mobile-suppress-native-toolbar",
+  "butter-mobile-drawer-returning-keyboard",
+  "butter-mobile-drawer-returning-keyboard-live",
+  "butter-mobile-drawer-keyboard-aligning",
   "butter-mobile-table-active",
   "butter-mobile-prefer-main",
   "butter-mobile-drawer-open",
@@ -838,9 +856,13 @@ export default class ButterEditorPlugin extends Plugin {
       | "toolbar"
       | "advanced"
       | "license",
+    section?: string,
   ): void {
     if (subtab && this.settingTab) {
       this.settingTab.activeTab = subtab;
+    }
+    if (section && this.settingTab) {
+      this.settingTab.pendingFocusSection = section;
     }
     const setting = (this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
     if (!setting) return;
@@ -919,8 +941,7 @@ export default class ButterEditorPlugin extends Plugin {
    *  - After the user enters a key or completes a trial in settings
    *  - After the magic-link deep-link auto-fills a key
    *
-   * State machine (full version in the private planning notes,
-   * § "Architecture overview"):
+   * State machine:
    *
    *   no licenseKey         → unlicensed
    *   sessionToken fresh    → valid/trial (no network call unless forced)
@@ -1206,6 +1227,14 @@ export default class ButterEditorPlugin extends Plugin {
 
   async onload() {
     try { await this.loadSettings(); } catch { /* corrupt data.json — defaults applied */ }
+    // Feed user-customized preset colours into the shared colour palette
+    // (desktop) + mobile picker. Reads settings live, so edits take
+    // effect the next time a picker opens.
+    setPresetColorsProvider((kind) =>
+      kind === "text"
+        ? this.settings.presetTextColors
+        : this.settings.presetHighlightColors,
+    );
     setPluginVersion(this.manifest.version);
 
     const origGetActiveViewOfType = this.app.workspace.getActiveViewOfType.bind(this.app.workspace);
@@ -1250,7 +1279,7 @@ export default class ButterEditorPlugin extends Plugin {
             if (origDescriptor.get) return origDescriptor.get.call(wsEditor) as unknown;
             return origDescriptor.value as unknown;
           }
-          const butterView = origGetActiveViewOfType(ButterEditorView) as unknown as ButterEditorView | null;
+          const butterView = origGetActiveViewOfType(ButterEditorView);
           if (butterView) {
             return butterView;
           }
@@ -1648,7 +1677,7 @@ export default class ButterEditorPlugin extends Plugin {
         // Normalize line endings to \n so indexOf works across Windows/Mac files
         const fullTextRaw = serializer.serialize(doc);
         const fullText = fullTextRaw.replace(/\r\n/g, '\n');
-        
+
         const blockDoc = doc.cut(pos, pos + currentNode.nodeSize);
         const blockStr = serializer.serialize(blockDoc).replace(/\r\n/g, '\n').trim();
 
@@ -1700,7 +1729,7 @@ export default class ButterEditorPlugin extends Plugin {
           } else if (innerText.endsWith("```")) {
             innerText = innerText.substring(0, innerText.length - 3);
           }
-          
+
           if (!pmView.state.doc.nodeAt(pos)) {
             return;
           }

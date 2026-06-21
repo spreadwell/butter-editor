@@ -1,8 +1,7 @@
 /**
  * Customer-facing policy constants for Butter Editor's licensing copy.
- * Mirrors `butter-license-worker/src/policy.ts` so both halves stay in
- * sync without sharing a module across codebases. Keep these in lock-
- * step with the Worker side or copy will drift.
+ * Keep these in sync with the licensing service constants so plugin
+ * copy matches server-side enforcement.
  *
  * Bumping `TRIAL_LENGTH_DAYS` here also needs:
  *   1. Same value in the Worker's `policy.ts`.

@@ -11,7 +11,6 @@
  * settings UI can show the right message (rate-limited, invalid key,
  * trial-already-used, network problem, etc.) without parsing strings.
  *
- * Architecture reference lives in the private planning notes.
  */
 
 import { Platform, requestUrl } from "obsidian";

@@ -641,7 +641,7 @@ const marks: Record<string, MarkSpec> = {
     //
     // `color` is the optional background-color value (CSS color
     // literal: hex, rgb(), or named color). When set, the highlight
-    // serializes as `<mark style="background-color: …">…</mark>` and
+    // serializes as `<mark style="background: …">…</mark>` and
     // forces HTML form regardless of `html`. Null = no custom color
     // (uses Obsidian's theme highlight color via the `.butter-
     // highlight` class).

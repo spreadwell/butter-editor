@@ -1,9 +1,13 @@
 import { Setting, setIcon, Platform } from "obsidian";
 import { ButterSettingTab, SubmenuEditModal } from "../settings-tab";
-import { MAIN_TOOLBAR_BUTTON_DEFS } from "../toolbar";
+import { MAIN_TOOLBAR_BUTTON_DEFS, openMobilePresetColorSheet, createPresetColorPicker } from "../toolbar";
 import { TABLE_TOOLBAR_BUTTON_DEFS } from "../../editor/table-toolbar";
 import { defaultTableLayout, mainLayoutFull, mainLayoutSimple, mobileLayoutDefault, mobileTableLayoutDefault, cloneLayout, collectButtonIds, locate, removeItem, newId } from "../toolbar-layout";
 import type { ToolbarLayoutItem } from "../../main";
+import {
+  DEFAULT_PRESET_TEXT_COLORS,
+  DEFAULT_PRESET_HIGHLIGHT_COLORS,
+} from "../../main";
 
 export function renderToolbar(this: ButterSettingTab, root: HTMLElement) {
     // Single tab-level Desktop/Mobile platform switcher rendered
@@ -79,9 +83,233 @@ export function renderToolbar(this: ButterSettingTab, root: HTMLElement) {
     applyPillState();
 
     this.renderLayoutSection(root, () => segment, reRenders);
+    this.renderPresetColorsSection(root);
     this.renderPrimaryToolbarSection(root, () => segment, reRenders);
     this.renderTableToolbarSection(root, () => segment, reRenders);
   }
+
+/** Preset colours section. Shared across desktop + mobile - one set of
+ *  five text + five highlight swatches feeds both the desktop palette
+ *  and the mobile picker - so it sits outside the platform switcher,
+ *  directly above Primary toolbar. Grayed out when HTML formatting is
+ *  off, since custom colours author inline HTML. */
+export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElement): void {
+  const container = root.createDiv({ cls: "butter-toolbar-segment-body" });
+  container.dataset.butterSettingsSection = "preset-colors";
+
+  // Defensive: keep each list exactly five entries so the row + the
+  // picker indexes line up even if data.json was hand-edited.
+  const ensureFive = (arr: string[], defaults: readonly string[]): void => {
+    defaults.forEach((d, i) => {
+      if (typeof arr[i] !== "string") arr[i] = d;
+    });
+    arr.length = defaults.length;
+  };
+
+  const render = (): void => {
+    container.empty();
+    const enabled = this.plugin.settings.enableHtmlFormatting !== false;
+    const items = this.createSettingGroup(
+      container,
+      "Preset colors",
+      undefined,
+      undefined,
+      { label: "Mobile & Desktop", icons: ["smartphone", "monitor"] },
+    );
+    const group = items.closest(".butter-setting-group");
+    if (group?.instanceOf(HTMLElement)) {
+      group.toggleClass("is-disabled-section", !enabled);
+    }
+
+    if (!enabled) {
+      new Setting(items)
+        .setName("Colours are off")
+        .setDesc(
+          "Turn on HTML formatting in the general tab to customize preset colours.",
+        )
+        .settingEl.addClass("butter-preset-colors-note");
+    }
+
+    ensureFive(this.plugin.settings.presetTextColors, DEFAULT_PRESET_TEXT_COLORS);
+    ensureFive(
+      this.plugin.settings.presetHighlightColors,
+      DEFAULT_PRESET_HIGHLIGHT_COLORS,
+    );
+
+    const buildChipGrid = (
+      label: string,
+      colors: string[],
+      kind: "text" | "highlight",
+    ): void => {
+      const wrap = items.createDiv({ cls: "butter-preset-chip-group" });
+      wrap.createDiv({ cls: "butter-preset-chip-label", text: label });
+      const gridEl = wrap.createDiv({ cls: "butter-preset-chip-grid" });
+      colors.forEach((value, i) => {
+        const chip = gridEl.createEl("button", {
+          cls: "butter-preset-chip",
+          attr: { type: "button", "aria-label": `${label} preset ${i + 1}` },
+        });
+        const fill = chip.createSpan({ cls: "butter-preset-chip-fill" });
+        fill.style.backgroundColor = value;
+        const pencil = chip.createSpan({ cls: "butter-preset-chip-pencil" });
+        setIcon(pencil, "pencil");
+        chip.disabled = !enabled;
+        chip.addEventListener("click", () => {
+          openMobilePresetColorSheet({
+            kind,
+            initial: colors[i],
+            // Paint the chip live as the user picks.
+            preview: (color) => {
+              fill.style.backgroundColor = color;
+            },
+            // Write the picked value (already #rrggbb for text / rgba for
+            // highlight) and persist on close.
+            commit: async (color) => {
+              colors[i] = color;
+              await this.plugin.saveSettings();
+            },
+          });
+        });
+      });
+    };
+
+    const buildDesktopPickerRow = (
+      label: string,
+      colors: string[],
+      kind: "text" | "highlight",
+    ): void => {
+      const setting = new Setting(items).setName(label);
+      setting.controlEl.addClass("butter-preset-color-row");
+      let activePopover: HTMLElement | null = null;
+      let activeCleanup: (() => void) | null = null;
+      let activeOutsideHandler: ((event: MouseEvent) => void) | null = null;
+
+      const closePopover = (): void => {
+        if (activeOutsideHandler) {
+          activeDocument.removeEventListener("mousedown", activeOutsideHandler, true);
+          activeOutsideHandler = null;
+        }
+        activeCleanup?.();
+        activeCleanup = null;
+        activePopover?.remove();
+        activePopover = null;
+      };
+
+      const positionPopover = (popover: HTMLElement, anchor: HTMLElement): void => {
+        const rect = anchor.getBoundingClientRect();
+        const width = Math.min(320, window.innerWidth - 24);
+        const left = Math.min(Math.max(12, rect.left), window.innerWidth - width - 12);
+        const top = Math.min(
+          rect.bottom + 6,
+          Math.max(12, window.innerHeight - 360),
+        );
+        popover.addClass("butter-pos-fixed");
+        popover.setCssProps({
+          "--butter-pos-top": `${top}px`,
+          "--butter-pos-left": `${left}px`,
+        });
+      };
+
+      colors.forEach((value, i) => {
+        const button = setting.controlEl.createEl("button", {
+          cls: "butter-preset-color-button",
+          attr: { type: "button", "aria-label": `${label} preset ${i + 1}` },
+        });
+        button.disabled = !enabled;
+        button.title = `Preset ${i + 1}`;
+        const fill = button.createSpan({ cls: "butter-preset-color-button-fill" });
+        fill.style.backgroundColor = value;
+        button.addEventListener("click", () => {
+          if (activePopover?.dataset.index === String(i)) {
+            activePopover
+              .querySelector<HTMLInputElement>(".butter-color-hex-input")
+              ?.focus();
+            return;
+          }
+          closePopover();
+
+          const popover = activeDocument.createElement("div");
+          popover.classList.add(
+            "butter-toolbar-submenu-popup",
+            "butter-color-palette",
+            "butter-preset-color-picker-popover",
+          );
+          popover.dataset.index = String(i);
+          const picker = createPresetColorPicker({
+            kind,
+            initial: colors[i],
+            preview: (color) => {
+              fill.style.backgroundColor = color;
+            },
+            commit: async (color) => {
+              colors[i] = color;
+              fill.style.backgroundColor = color;
+              await this.plugin.saveSettings();
+            },
+            close: closePopover,
+          });
+          activeCleanup = picker.cleanup;
+          activePopover = popover;
+          popover.appendChild(picker.el);
+          positionPopover(popover, button);
+          activeDocument.body.appendChild(popover);
+          activeOutsideHandler = (event: MouseEvent) => {
+            const target = event.target as Node;
+            if (popover.contains(target) || button.contains(target)) return;
+            closePopover();
+          };
+          window.setTimeout(() => {
+            if (activeOutsideHandler) {
+              activeDocument.addEventListener("mousedown", activeOutsideHandler, true);
+            }
+          }, 0);
+          picker.el
+            .querySelector<HTMLInputElement>(".butter-color-hex-input")
+            ?.focus();
+        });
+      });
+    };
+
+    if (Platform.isMobile) {
+      buildChipGrid("Text", this.plugin.settings.presetTextColors, "text");
+      buildChipGrid(
+        "Highlight",
+        this.plugin.settings.presetHighlightColors,
+        "highlight",
+      );
+    } else {
+      buildDesktopPickerRow(
+        "Text",
+        this.plugin.settings.presetTextColors,
+        "text",
+      );
+      buildDesktopPickerRow(
+        "Highlight",
+        this.plugin.settings.presetHighlightColors,
+        "highlight",
+      );
+    }
+
+    // Reset lives inside the section (not in the heading).
+    new Setting(items)
+      .setName("Reset to defaults")
+      .addButton((b) =>
+        b
+          .setButtonText("Reset")
+          .setTooltip("Reset preset colours to defaults")
+          .onClick(async () => {
+            this.plugin.settings.presetTextColors = [...DEFAULT_PRESET_TEXT_COLORS];
+            this.plugin.settings.presetHighlightColors = [
+              ...DEFAULT_PRESET_HIGHLIGHT_COLORS,
+            ];
+            await this.plugin.saveSettings();
+            render();
+          }),
+      );
+  };
+
+  render();
+}
 
 /** Layout settings group, filtered by the tab-level platform switcher.
    *  Desktop view shows toolbar style + position + status-bar fade;
@@ -224,7 +452,7 @@ export function renderToolbar(this: ButterSettingTab, root: HTMLElement) {
       icon: string;
       tooltip: string;
       onClick: () => void | Promise<void>;
-    }, tag?: { label: string; icon?: string }): HTMLElement {
+    }, tag?: { label: string; icon?: string; icons?: string[] }): HTMLElement {
     const group = parent.createDiv({ cls: "setting-group butter-setting-group" });
     const headerEl = group.createDiv({
       cls: "setting-item setting-item-heading",
@@ -241,9 +469,10 @@ export function renderToolbar(this: ButterSettingTab, root: HTMLElement) {
     // Mobile.
     if (tag) {
       const tagEl = nameEl.createSpan({ cls: "butter-platform-tag" });
-      if (tag.icon) {
+      const icons = tag.icons ?? (tag.icon ? [tag.icon] : []);
+      for (const icon of icons) {
         const iconEl = tagEl.createSpan({ cls: "butter-platform-tag__icon" });
-        setIcon(iconEl, tag.icon);
+        setIcon(iconEl, icon);
       }
       tagEl.createSpan({
         cls: "butter-platform-tag__label",
@@ -439,13 +668,59 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       undefined,
       tag,
     );
+    const settingsRoot = root.closest(".butter-settings-root");
+    let updateToastTimer: number | null = null;
+    let hideToastTimer: number | null = null;
+    let removeToastTimer: number | null = null;
+    let rerender = () => {};
+
+    const showUpdateToast = () => {
+      const host = settingsRoot ?? root;
+      let toast = host.querySelector<HTMLElement>(":scope > .butter-toolbar-update-toast");
+      if (!toast) {
+        toast = activeDocument.createElement("div");
+        toast.classList.add("butter-toolbar-update-toast");
+        const chip = toast.createDiv({ cls: "butter-toolbar-update-toast__chip" });
+        const icon = chip.createSpan({ cls: "butter-toolbar-update-toast__icon" });
+        setIcon(icon, "check");
+        chip.createSpan({ cls: "butter-toolbar-update-toast__label", text: "Toolbar Updated" });
+        host.prepend(toast);
+      }
+      if (removeToastTimer !== null) {
+        window.clearTimeout(removeToastTimer);
+        removeToastTimer = null;
+      }
+      if (hideToastTimer !== null) window.clearTimeout(hideToastTimer);
+      toast.classList.add("is-visible");
+      hideToastTimer = window.setTimeout(() => {
+        toast?.classList.remove("is-visible");
+        removeToastTimer = window.setTimeout(() => {
+          toast?.remove();
+          removeToastTimer = null;
+        }, 220);
+      }, 1600);
+    };
+
+    const scheduleUpdateToast = () => {
+      if (updateToastTimer !== null) window.clearTimeout(updateToastTimer);
+      updateToastTimer = window.setTimeout(() => {
+        updateToastTimer = null;
+        showUpdateToast();
+      }, 500);
+    };
+
+    const commitLayout = async (nextLayout: ToolbarLayoutItem[]) => {
+      const savePromise = saveLayout(nextLayout);
+      rerender();
+      await savePromise;
+      scheduleUpdateToast();
+    };
 
     for (const p of presets) {
       const row = new Setting(items).setName(p.name).setDesc(p.desc);
       row.addButton((b) => {
         b.setButtonText("Apply").onClick(async () => {
-          await saveLayout(p.build());
-          rerender();
+          await commitLayout(p.build());
         });
         if (p.cta) b.setCta();
       });
@@ -466,7 +741,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
 
     const wrap = items.createDiv({ cls: "butter-layout-editor" });
 
-    const rerender = () => {
+    rerender = () => {
       wrap.empty();
       const layout = cloneLayout(getLayout());
 
@@ -538,8 +813,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           editBtn.addEventListener("click", (e) => {
             e.preventDefault();
             this.openSubmenuEditModal(item, async () => {
-              await saveLayout(layout);
-              rerender();
+              await commitLayout(layout);
             });
           });
         }
@@ -567,8 +841,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
                 if (idx < 0) return;
                 parentArr.splice(idx, 1);
                 targetSub.children.push(item);
-                await saveLayout(layout);
-                rerender();
+                await commitLayout(layout);
               });
             });
           }
@@ -587,10 +860,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
               if (idx < 0) return;
               parentArr.splice(idx, 1);
               layout.push(item);
-              void (async () => {
-                await saveLayout(layout);
-                rerender();
-              })();
+              void commitLayout(layout);
             });
           }
         }
@@ -605,10 +875,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           const idx = parentArr.findIndex((i) => i.id === item.id);
           if (idx < 0) return;
           parentArr.splice(idx, 1);
-          void (async () => {
-            await saveLayout(layout);
-            rerender();
-          })();
+          void commitLayout(layout);
         });
 
         // Wire drag-to-reorder. Supports any-depth drops: drop a
@@ -616,8 +883,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         // drop a row INTO a submenu (becomes its last child). See
         // `wireDrag()` below.
         this.wireDrag(handle, row, layout, item.id, async () => {
-          await saveLayout(layout);
-          rerender();
+          await commitLayout(layout);
         });
       };
 
@@ -631,6 +897,11 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           if (item.children.length === 0) {
             const empty = onList.createDiv({
               cls: "butter-layout-row is-nested is-empty",
+              attr: {
+                "data-empty-for": item.id,
+                "data-depth": "1",
+                "data-type": "empty",
+              },
             });
             empty.createDiv({
               cls: "butter-layout-empty",
@@ -668,8 +939,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           },
           async (created) => {
             layout.push(created);
-            await saveLayout(layout);
-            rerender();
+            await commitLayout(layout);
           },
           /* isNew */ true,
         );
@@ -677,10 +947,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       buildAddBtn("minus", "Divider", (e) => {
         e.preventDefault();
         layout.push({ type: "separator", id: newId("sep") });
-        void (async () => {
-          await saveLayout(layout);
-          rerender();
-        })();
+        void commitLayout(layout);
       });
 
       // ── AVAILABLE list ──
@@ -708,10 +975,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           addBtn.addEventListener("click", (e) => {
             e.preventDefault();
             layout.push({ type: "button", id: def.id });
-            void (async () => {
-              await saveLayout(layout);
-              rerender();
-            })();
+            void commitLayout(layout);
           });
         }
       }
@@ -830,7 +1094,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       const placeholder = activeDocument.createElement("div");
       placeholder.className = "butter-layout-row-placeholder";
       if (row.classList.contains("is-nested")) placeholder.classList.add("is-nested");
-      
+
       let totalHeight = 0;
       sourceRows.forEach(r => totalHeight += r.offsetHeight);
       placeholder.style.height = `${totalHeight}px`;
@@ -842,7 +1106,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         "--butter-pos-left": `${startRect.left}px`,
         "--butter-pos-top": `${startRect.top}px`,
       });
-      
+
       sourceRows.forEach(r => {
         const clone = r.cloneNode(true) as HTMLElement;
         clone.classList.remove("is-dragging");
@@ -867,7 +1131,11 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         ghost.style.top = `${startRect.top + pointerY - startY}px`;
 
         const elements = Array.from(list.children).filter(
-          c => c.classList.contains("butter-layout-row") && (c as HTMLElement).style.display !== "none" && c !== placeholder
+          c =>
+            c.classList.contains("butter-layout-row") &&
+            !c.classList.contains("is-empty") &&
+            (c as HTMLElement).style.display !== "none" &&
+            c !== placeholder
         ) as HTMLElement[];
 
         let targetKind: "before" | "after" | "into" | null = null;
@@ -882,11 +1150,30 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
            }
         }
 
+        if (!targetKind && !draggedIsSubmenu) {
+           const emptyRows = Array.from(list.children).filter(
+             c =>
+               c.classList.contains("butter-layout-row") &&
+               c.classList.contains("is-empty") &&
+               (c as HTMLElement).style.display !== "none"
+           ) as HTMLElement[];
+           for (const emptyRow of emptyRows) {
+              const rect = emptyRow.getBoundingClientRect();
+              if (pointerY < rect.top || pointerY > rect.bottom) continue;
+              const submenuId = emptyRow.dataset.emptyFor;
+              targetEl = elements.find((el) => el.dataset.itemId === submenuId) ?? null;
+              if (targetEl) {
+                targetKind = "into";
+                break;
+              }
+           }
+        }
+
         if (!targetKind) {
            for (let i = 0; i < elements.length; i++) {
               const el = elements[i];
               const rect = el.getBoundingClientRect();
-              
+
               if (!draggedIsSubmenu && el.dataset.type === "submenu") {
                 const margin = rect.height * 0.3;
                 if (pointerY >= rect.top + margin && pointerY <= rect.bottom - margin) {
@@ -920,7 +1207,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
               while (next && next.classList.contains("is-nested") && next.style.display !== "none" && next !== placeholder) {
                  next = next.nextElementSibling as HTMLElement | null;
               }
-              desiredNextSibling = next; 
+              desiredNextSibling = next;
            } else if (targetKind === "before") {
               desiredNextSibling = targetEl;
               desiredIsNested = targetEl.classList.contains("is-nested");
@@ -1026,18 +1313,19 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
 
         if (!target) return;
 
-        const removed = removeItem(rootLayout, draggedItemId);
-        if (!removed) return;
-
         if (target.kind === "into") {
           const found = locate(rootLayout, target.submenuId);
           if (!found) return;
           const sub = found.parent[found.index];
           if (sub.type !== "submenu") return;
+          const removed = removeItem(rootLayout, draggedItemId);
+          if (!removed) return;
           sub.children.push(removed);
         } else {
           const ref = locate(rootLayout, target.refRowId);
           if (!ref) return;
+          const removed = removeItem(rootLayout, draggedItemId);
+          if (!removed) return;
           const insertAt = target.kind === "before" ? ref.index : ref.index + 1;
           ref.parent.splice(insertAt, 0, removed);
         }
@@ -1047,7 +1335,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
 
       activeDocument.addEventListener("pointermove", onMove);
       activeDocument.addEventListener("pointerup", onUp);
-      
+
       processMove(startY);
     };
 

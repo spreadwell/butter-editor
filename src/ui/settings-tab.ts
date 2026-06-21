@@ -35,7 +35,7 @@ import {
 import { renderLicense, computeLicensePhase, renderRowsFor, renderUnlicensedRows, renderPollingRows, renderTrialRows, renderLifetimeRows, renderDeactivatedRows, renderInvalidatedRows, reasonCopyFor, renderExpiredRows, renderUnknownRows, trialHeadlineFor, trialStatLineFor, formatActivationDate, formatRelativeTime, renderKeyRow, renderPasteKeyRow, renderRecoveryRow, renderDevicesSection, renderDeviceListSkeleton, renderDeviceRow, renderCurrentDeviceFallback, renderDeviceUtilities, renderSupportSection, computeRemaining, scheduleTrialPoll, friendlyError } from "./settings/license-tab";
 import { renderGeneral, renderGeneralIntroSections, renderBehavior, renderAdvanced, renderStartTrialCardIfApplicable } from "./settings/general-tab";
 import { TRIAL_LENGTH_DAYS } from "../integration/license/policy";
-import { renderToolbar, renderLayoutSection, createSettingGroup, renderPrimaryToolbarSection, renderTableToolbarSection, renderLayoutEditor, openMoveToSubmenuMenu, openSubmenuEditModal, wireDrag } from "./settings/toolbar-tab";
+import { renderToolbar, renderLayoutSection, renderPresetColorsSection, createSettingGroup, renderPrimaryToolbarSection, renderTableToolbarSection, renderLayoutEditor, openMoveToSubmenuMenu, openSubmenuEditModal, wireDrag } from "./settings/toolbar-tab";
 import { renderOutlineSection } from "./settings/outline-tab";
 import { renderDragSection } from "./settings/drag-tab";
 import { renderSourceSection, confirmPresetDrift, showWarning } from "./settings/source-tab";
@@ -67,6 +67,7 @@ export class ButterSettingTab extends PluginSettingTab {
    *  disconnected on hide() and at the top of the next display() so
    *  re-renders don't pile up observers. */
   public tabBarResizeObserver: ResizeObserver | null = null;
+  public pendingFocusSection: string | null = null;
 
   constructor(app: App, public plugin: ButterEditorPlugin) {
     super(app, plugin);
@@ -198,6 +199,16 @@ export class ButterSettingTab extends PluginSettingTab {
           this.renderLicense(body);
           break;
       }
+      const pendingFocusSection = this.pendingFocusSection;
+      if (pendingFocusSection) {
+        this.pendingFocusSection = null;
+        window.requestAnimationFrame(() => {
+          const sectionEl = body.querySelector<HTMLElement>(
+            `[data-butter-settings-section="${pendingFocusSection}"]`,
+          );
+          sectionEl?.scrollIntoView({ block: "start" });
+        });
+      }
     };
 
     const addTab = (id: typeof this.activeTab, label: string) => {
@@ -233,51 +244,51 @@ export class ButterSettingTab extends PluginSettingTab {
     window.requestAnimationFrame(updateIndicators);
   }
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   /** Async fetch + render of the live device list. Replaces the
    *  skeleton in `listEl` with real rows on resolve, or a graceful
@@ -356,9 +367,9 @@ export class ButterSettingTab extends PluginSettingTab {
     listEl.createDiv({ cls: "butter-license-devices-hint", text: summary });
   }
 
-  
 
-  
+
+
 
   /** Self-deactivation: revoke server-side, then clear local
    *  session token + regenerate deviceId so this Obsidian install
@@ -435,13 +446,13 @@ export class ButterSettingTab extends PluginSettingTab {
     (this as unknown as { display: () => void }).display();
   }
 
-  
 
-  
 
-  
 
-  
+
+
+
+
 
   /** Apply a fake license-settings shape and re-render. Starts from
    *  a fully-cleared base so partial patches don't leave stale fields
@@ -463,7 +474,6 @@ export class ButterSettingTab extends PluginSettingTab {
     wasDeactivated?: boolean;
     wasInvalidated?: boolean;
     lastReason?: string;
-    devTestMode?: boolean;
   }, saveToDisk = true) {
     this.plugin.settings.licenseKey = "";
     this.plugin.settings.sessionToken = "";
@@ -479,7 +489,6 @@ export class ButterSettingTab extends PluginSettingTab {
     this.plugin.settings.wasDeactivated = false;
     this.plugin.settings.wasInvalidated = false;
     this.plugin.settings.lastReason = "";
-    this.plugin.settings.devTestMode = false;
     Object.assign(this.plugin.settings, state);
     if (saveToDisk) {
       await this.plugin.saveSettings();
@@ -488,7 +497,7 @@ export class ButterSettingTab extends PluginSettingTab {
     (this as unknown as { display: () => void }).display();
   }
 
-  
+
 
   // ── Inline trial activation (replaces TrialPollingModal) ────
 
@@ -591,7 +600,7 @@ export class ButterSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         await this.plugin.refreshLicenseStatus();
         new Notice("Trial activated!", 4000);
-        
+
         import("canvas-confetti").then((module) => {
           const confetti = module.default || module;
           void confetti({
@@ -678,43 +687,43 @@ export class ButterSettingTab extends PluginSettingTab {
     }
   }
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
 
-  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   /** Drift-check wrapper for a bundled-setting toggle. If changing
    *  `settingKey` to `newValue` would move the user out of an active
@@ -766,7 +775,7 @@ export class ButterSettingTab extends PluginSettingTab {
     return true;
   }
 
-  
+
   public renderGeneralIntroSections(root: HTMLElement) {
     return renderGeneralIntroSections.call(this, root);
   }
@@ -913,11 +922,15 @@ export class ButterSettingTab extends PluginSettingTab {
     return renderLayoutSection.call(this, root, getSegment, reRenders);
   }
 
+  public renderPresetColorsSection(root: HTMLElement): void {
+    return renderPresetColorsSection.call(this, root);
+  }
+
   public createSettingGroup(parent: HTMLElement, heading: string, description?: string, action?: {
       icon: string;
       tooltip: string;
       onClick: () => void | Promise<void>;
-    }, tag?: { label: string; icon?: string }): HTMLElement {
+    }, tag?: { label: string; icon?: string; icons?: string[] }): HTMLElement {
     return createSettingGroup.call(this, parent, heading, description, action, tag);
   }
 
@@ -997,7 +1010,7 @@ export class NormalizeWarningModal extends Modal {
     });
     contentEl.createEl("p", {
       text:
-        "This is an advanced feature. Most users prefer the default so they can switch freely between Butter, Live Preview, and Source mode without their files being reformatted.",
+        "This is an advanced feature. Most users prefer the default so they can switch freely between Butter, live preview, and source mode without their files being reformatted.",
     });
     contentEl.createEl("p", {
       text:
@@ -1215,4 +1228,3 @@ export class DeactivateConfirmModal extends Modal {
     this.contentEl.empty();
   }
 }
-

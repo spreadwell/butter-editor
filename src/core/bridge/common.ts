@@ -79,4 +79,4 @@ export const CANONICAL_DEFAULTS: Required<CanonicalFormOptions> = {
   bold: "**",
   codeFence: "```",
   horizontalRule: "---",
-};
+};

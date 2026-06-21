@@ -43,10 +43,18 @@ import {
   type BlockMenuItem,
   type BlockSubItem,
 } from "../editor/block-menu-spec";
+import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
 
 const BODY_CLASS = "butter-mobile-drawer-open";
+const RETURNING_KEYBOARD_CLASS = "butter-mobile-drawer-returning-keyboard";
+const RETURNING_KEYBOARD_LIVE_CLASS =
+  "butter-mobile-drawer-returning-keyboard-live";
+const KEYBOARD_ALIGNING_CLASS = "butter-mobile-drawer-keyboard-aligning";
 const HEIGHT_VAR = "--butter-mobile-drawer-height";
+const RETURN_KEYBOARD_HEIGHT_VAR = "--butter-mobile-return-keyboard-height";
 const FALLBACK_HEIGHT = 320; // px - typical phone keyboard
+export const DRAWER_TRANSITION_MS = 220;
+const RETURNING_KEYBOARD_MS = 900;
 
 export type DrawerMode = "insert" | "turn-into" | "block-actions";
 
@@ -73,6 +81,175 @@ export interface DrawerOpenOptions {
  *  sites (close button, tile tap, focus-in auto-dismiss) without
  *  passing context. */
 let activeCleanup: (() => void) | null = null;
+let closeTimer: number | null = null;
+let returningKeyboardTimer: number | null = null;
+let keyboardAlignTimer: number | null = null;
+let returningKeyboardShowHandler: ((ev: Event) => void) | null = null;
+
+export interface DrawerPrepareResult {
+  replacedDrawer: boolean;
+  previousHeightPx: number | null;
+}
+
+export function setMobileDrawerCleanup(cleanup: (() => void) | null): void {
+  activeCleanup = cleanup;
+}
+
+function clearPendingClose(): void {
+  if (closeTimer == null) return;
+  window.clearTimeout(closeTimer);
+  closeTimer = null;
+}
+
+function clearReturningKeyboardTimer(): void {
+  if (returningKeyboardTimer == null) return;
+  window.clearTimeout(returningKeyboardTimer);
+  returningKeyboardTimer = null;
+}
+
+function clearKeyboardAlignTimer(): void {
+  if (keyboardAlignTimer == null) return;
+  window.clearTimeout(keyboardAlignTimer);
+  keyboardAlignTimer = null;
+}
+
+function clearReturningKeyboardShowHandler(): void {
+  if (!returningKeyboardShowHandler) return;
+  window.removeEventListener("keyboardWillShow", returningKeyboardShowHandler);
+  returningKeyboardShowHandler = null;
+}
+
+function readVisibleKeyboardHeight(): string | null {
+  const raw = getComputedStyle(activeDocument.documentElement)
+    .getPropertyValue("--keyboard-height")
+    .trim();
+  if (raw && raw !== "0px" && raw !== "0") return raw;
+  return null;
+}
+
+function heightToPx(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return `${Math.round(value)}px`;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return value.endsWith("px") ? value : `${Math.round(parsed)}px`;
+    }
+  }
+  return null;
+}
+
+function keyboardHeightFromEvent(ev: Event): string | null {
+  const anyEv = ev as unknown as {
+    keyboardHeight?: unknown;
+    detail?: { keyboardHeight?: unknown };
+  };
+  return (
+    heightToPx(anyEv.keyboardHeight) ??
+    heightToPx(anyEv.detail?.keyboardHeight)
+  );
+}
+
+function endToolbarForKeyboardReturn(): void {
+  clearKeyboardAlignTimer();
+  clearReturningKeyboardShowHandler();
+  activeDocument.body.classList.remove(RETURNING_KEYBOARD_CLASS);
+  activeDocument.body.classList.remove(RETURNING_KEYBOARD_LIVE_CLASS);
+  activeDocument.body.style.removeProperty(RETURN_KEYBOARD_HEIGHT_VAR);
+  if (activeDocument.body.querySelector(".butter-mobile-insert-drawer") === null) {
+    activeDocument.body.style.removeProperty(HEIGHT_VAR);
+  }
+  keyboardAlignTimer = window.setTimeout(() => {
+    keyboardAlignTimer = null;
+    activeDocument.body.classList.remove(KEYBOARD_ALIGNING_CLASS);
+  }, DRAWER_TRANSITION_MS);
+}
+
+function beginLiveKeyboardReturn(ev: Event): void {
+  const body = activeDocument.body;
+  if (!body.classList.contains(RETURNING_KEYBOARD_CLASS)) return;
+  const eventHeight = keyboardHeightFromEvent(ev);
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      if (!body.classList.contains(RETURNING_KEYBOARD_CLASS)) return;
+      const cssHeight = readVisibleKeyboardHeight();
+      const targetHeight = eventHeight ?? cssHeight;
+      if (!targetHeight) return;
+      body.style.setProperty(RETURN_KEYBOARD_HEIGHT_VAR, targetHeight);
+      body.classList.add(KEYBOARD_ALIGNING_CLASS);
+      body.classList.add(RETURNING_KEYBOARD_LIVE_CLASS);
+    });
+  });
+}
+
+function holdToolbarForKeyboardReturn(): void {
+  clearReturningKeyboardTimer();
+  clearKeyboardAlignTimer();
+  clearReturningKeyboardShowHandler();
+  activeDocument.body.classList.add(RETURNING_KEYBOARD_CLASS);
+  activeDocument.body.classList.remove(RETURNING_KEYBOARD_LIVE_CLASS);
+  activeDocument.body.classList.remove(KEYBOARD_ALIGNING_CLASS);
+  activeDocument.body.style.removeProperty(RETURN_KEYBOARD_HEIGHT_VAR);
+  returningKeyboardShowHandler = beginLiveKeyboardReturn;
+  window.addEventListener("keyboardWillShow", returningKeyboardShowHandler);
+  returningKeyboardTimer = window.setTimeout(() => {
+    returningKeyboardTimer = null;
+    endToolbarForKeyboardReturn();
+  }, RETURNING_KEYBOARD_MS);
+}
+
+function runActiveCleanup(): void {
+  if (!activeCleanup) return;
+  activeCleanup();
+  activeCleanup = null;
+}
+
+function removeDrawerBodyLockIfIdle(): void {
+  if (
+    activeDocument.body.querySelector(".butter-mobile-insert-drawer") === null
+  ) {
+    activeDocument.body.classList.remove(BODY_CLASS);
+    if (!activeDocument.body.classList.contains(RETURNING_KEYBOARD_CLASS)) {
+      activeDocument.body.style.removeProperty(HEIGHT_VAR);
+    }
+  }
+}
+
+/** Prepare to mount a drawer. If another Butter drawer is already open,
+ *  remove it without replaying the close/open animation so toolbar
+ *  actions feel like swapping sheet content instead of tearing down the
+ *  whole keyboard-replacement surface. */
+export function prepareMobileDrawerOpen(): DrawerPrepareResult {
+  clearPendingClose();
+  clearReturningKeyboardTimer();
+  clearKeyboardAlignTimer();
+  clearReturningKeyboardShowHandler();
+  activeDocument.body.classList.remove(RETURNING_KEYBOARD_CLASS);
+  activeDocument.body.classList.remove(RETURNING_KEYBOARD_LIVE_CLASS);
+  activeDocument.body.classList.remove(KEYBOARD_ALIGNING_CLASS);
+  activeDocument.body.style.removeProperty(RETURN_KEYBOARD_HEIGHT_VAR);
+  runActiveCleanup();
+  const existing = Array.from(
+    activeDocument.body.querySelectorAll<HTMLElement>(
+      ".butter-mobile-insert-drawer",
+    ),
+  );
+  const previousHeightPx = existing[0]?.getBoundingClientRect().height ?? null;
+  for (const drawer of existing) drawer.remove();
+  return { replacedDrawer: existing.length > 0, previousHeightPx };
+}
+
+export function animateDrawerHeightFromPrevious(
+  drawer: HTMLElement,
+  prepareResult: DrawerPrepareResult,
+): void {
+  if (!prepareResult.replacedDrawer || prepareResult.previousHeightPx === null) {
+    return;
+  }
+  drawer.style.height = `${prepareResult.previousHeightPx}px`;
+  window.requestAnimationFrame(() => drawer.style.removeProperty("height"));
+}
 
 /** Categories the drawer groups slash items into, in display
  *  order. Each category's `match` runs against the slash item's
@@ -145,8 +322,10 @@ export function openMobileDrawer(
   app: App,
   opts: DrawerOpenOptions,
 ): void {
-  // Don't open twice - close any existing drawer first.
-  closeMobileInsertDrawer();
+  // Replace any existing drawer in-place. This avoids a close/open
+  // animation replay when the user switches from one drawer action to
+  // another while the keyboard-replacement surface is already up.
+  const drawerPrepare = prepareMobileDrawerOpen();
 
   // Capture keyboard height BEFORE blurring, so the bar stays
   // anchored at the keyboard's old top edge while the keyboard
@@ -199,10 +378,6 @@ export function openMobileDrawer(
   drawer.className = "butter-mobile-insert-drawer";
   drawer.dataset.role = "drawer";
 
-  const handle = activeDocument.createElement("div");
-  handle.className = "butter-mobile-insert-drawer-handle";
-  drawer.appendChild(handle);
-
   // ── Body grid (rendered once per open) ────────────────────
   // The drawer's mode is fixed for the duration of the open. With
   // separate toolbar buttons (Insert / Turn into / Block actions)
@@ -224,8 +399,13 @@ export function openMobileDrawer(
 
   activeDocument.body.appendChild(drawer);
 
-  // Slide-in animation: append, then next frame add `is-open`.
-  window.requestAnimationFrame(() => drawer.classList.add("is-open"));
+  if (drawerPrepare.replacedDrawer) {
+    drawer.classList.add("is-open");
+  } else {
+    // Slide-in animation: append, then next frame add `is-open`.
+    window.requestAnimationFrame(() => drawer.classList.add("is-open"));
+  }
+  animateDrawerHeightFromPrevious(drawer, drawerPrepare);
 
   // Defer the editor blur until after the drawer is mounted so
   // the bar's bottom override is in effect when the keyboard
@@ -616,21 +796,160 @@ function renderBlockSubTile(
  *  keyboard return is desired (we don't refocus here because the
  *  trigger sites - close button, tile click, editor refocus
  *  have different refocus needs). */
-export function closeMobileInsertDrawer(): void {
-  activeDocument.body.classList.remove(BODY_CLASS);
-  activeDocument.body.style.removeProperty(HEIGHT_VAR);
+export function closeMobileInsertDrawer(options: { returningKeyboard?: boolean } = {}): number {
+  suppressNativeMobileToolbar();
+  if (options.returningKeyboard) holdToolbarForKeyboardReturn();
+  clearPendingClose();
   // Run open-time cleanup (removes fake cursor + focusin listener)
-  // BEFORE removing the drawer dom, so a synchronous focus event
+  // BEFORE starting the close animation, so a synchronous focus event
   // can't double-fire close.
-  if (activeCleanup) {
-    activeCleanup();
-    activeCleanup = null;
-  }
-  const existing = activeDocument.body.querySelector<HTMLElement>(
-    ".butter-mobile-insert-drawer",
+  runActiveCleanup();
+  const existing = Array.from(
+    activeDocument.body.querySelectorAll<HTMLElement>(
+      ".butter-mobile-insert-drawer",
+    ),
   );
-  if (!existing) return;
-  existing.classList.remove("is-open");
-  // Match the CSS slide-out duration before removing.
-  window.setTimeout(() => existing.remove(), 200);
+  if (existing.length === 0) {
+    removeDrawerBodyLockIfIdle();
+    return 0;
+  }
+  for (const drawer of existing) drawer.classList.remove("is-open");
+  // Keep BODY_CLASS until the slide-out finishes. It freezes Butter's
+  // toolbar at the old keyboard edge and keeps Obsidian's native toolbar
+  // suppressed while the drawer is still visible.
+  closeTimer = window.setTimeout(() => {
+    closeTimer = null;
+    for (const drawer of existing) drawer.remove();
+    removeDrawerBodyLockIfIdle();
+  }, DRAWER_TRANSITION_MS);
+  return DRAWER_TRANSITION_MS;
+}
+
+/** Bottom-sheet dismissal gestures for a mobile drawer.
+ *
+ *  Adds the two affordances a phone user expects from a bottom sheet
+ *  that neither the base insert drawer nor the color drawer wire on
+ *  their own:
+ *    • swipe DOWN on a grab surface (the handle or header strip) past
+ *      `DISMISS_PX`, or a quick downward flick, dismisses; a short
+ *      drag snaps back.
+ *    • tap OUTSIDE the drawer (anywhere that isn't the drawer or the
+ *      mobile toolbar) dismisses.
+ *
+ *  During the drag the drawer follows the finger by overriding its
+ *  `transform`; on release we either animate it the rest of the way
+ *  out (then let `onDismiss` tear it down - its removal timeout
+ *  matches the slide) or drop the inline overrides so the drawer's
+ *  own `.is-open` 220ms transition snaps it back open.
+ *
+ *  `onDismiss` is the caller's close routine - for the color drawer
+ *  that's Cancel semantics (restore the pre-open color + refocus).
+ *  Returns a cleanup that removes every listener; compose it into the
+ *  drawer's close path so nothing leaks. The cleanup deliberately
+ *  does NOT reset `transform`/`transition` so the dismiss branch's
+ *  slide-out survives teardown. */
+export function installDrawerDismissGestures(
+  drawer: HTMLElement,
+  grabEls: HTMLElement[],
+  onDismiss: () => void,
+): () => void {
+  const DISMISS_PX = 72; // drag distance that commits to a dismiss
+  const FLICK_VELOCITY = 0.6; // px/ms downward flick that dismisses early
+  let dragging = false;
+  let pointerId: number | null = null;
+  let startY = 0;
+  let lastY = 0;
+  let lastT = 0;
+  let velocity = 0;
+
+  const onPointerDown = (e: PointerEvent) => {
+    if (pointerId !== null || e.button > 0) return;
+    // Don't hijack taps on interactive controls living inside a grab
+    // surface (e.g. the header's back button) - let them get their tap.
+    if ((e.target as HTMLElement | null)?.closest("button, input, a, [role='slider']")) {
+      return;
+    }
+    dragging = true;
+    pointerId = e.pointerId;
+    startY = lastY = e.clientY;
+    lastT = e.timeStamp;
+    velocity = 0;
+    drawer.setCssStyles({ transition: "none" });
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* not capturable (already released) - drag still tracks */
+    }
+  };
+
+  const onPointerMove = (e: PointerEvent) => {
+    if (!dragging || e.pointerId !== pointerId) return;
+    const dt = e.timeStamp - lastT;
+    if (dt > 0) velocity = (e.clientY - lastY) / dt;
+    lastY = e.clientY;
+    lastT = e.timeStamp;
+    // Follow downward drags only; clamp upward travel to 0.
+    const offset = Math.max(0, e.clientY - startY);
+    drawer.setCssStyles({ transform: `translateY(${offset}px)` });
+  };
+
+  const finishDrag = (e: PointerEvent) => {
+    if (!dragging || e.pointerId !== pointerId) return;
+    dragging = false;
+    pointerId = null;
+    const dy = Math.max(0, e.clientY - startY);
+    if (dy > DISMISS_PX || velocity > FLICK_VELOCITY) {
+      // Animate the rest of the way out; onDismiss removes the node
+      // after its own timeout, which matches this transition.
+      drawer.setCssStyles({
+        transition: `transform ${DRAWER_TRANSITION_MS}ms cubic-bezier(0.2, 0.7, 0.2, 1)`,
+        transform: "translateY(100%)",
+      });
+      onDismiss();
+    } else {
+      // Snap back: drop the inline overrides so `.is-open`'s
+      // translateY(0) + the drawer's 220ms transition take over.
+      drawer.style.removeProperty("transition");
+      drawer.style.removeProperty("transform");
+    }
+  };
+
+  const grabCleanups = grabEls.map((el) => {
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", finishDrag);
+    el.addEventListener("pointercancel", finishDrag);
+    el.setCssStyles({ touchAction: "none" });
+    return () => {
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", finishDrag);
+      el.removeEventListener("pointercancel", finishDrag);
+    };
+  });
+
+  // Tap-away. Deferred one frame so the tap that OPENED the drawer
+  // doesn't immediately close it. Capture phase so it lands before
+  // in-note handlers. Taps inside the drawer or on the mobile toolbar
+  // are ignored (the toolbar runs its own open/close flow).
+  let outsideHandler: ((e: PointerEvent) => void) | null = null;
+  const rafId = window.requestAnimationFrame(() => {
+    outsideHandler = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (drawer.contains(target)) return;
+      if (target.closest(".butter-mobile-bar")) return;
+      onDismiss();
+    };
+    activeDocument.addEventListener("pointerdown", outsideHandler, true);
+  });
+
+  return () => {
+    window.cancelAnimationFrame(rafId);
+    if (outsideHandler) {
+      activeDocument.removeEventListener("pointerdown", outsideHandler, true);
+      outsideHandler = null;
+    }
+    for (const c of grabCleanups) c();
+  };
 }

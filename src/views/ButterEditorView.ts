@@ -6,7 +6,6 @@ import {
   MenuItem,
   Notice,
   Platform,
-  TFile,
   WorkspaceLeaf,
 } from "obsidian";
 import { EditorState, Plugin as PMPlugin, Selection } from "prosemirror-state";
@@ -16,17 +15,9 @@ import { keymap } from "prosemirror-keymap";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
 
-// Extensions MUST be registered before schema.ts or obsidian-md-bridge
-// evaluate their module bodies - those are where the registry is
-// read to build the live schema / token handlers / serializers.
-// The internal Extension API exists, but no example extensions are
-// activated in shipped builds. The dogfooded `:::spoiler` block +
-// `@username` inline atom previously imported from
-// `./integration/extensions-examples` are now developer reference
-// only (see that file's header). To turn them back on for local
-// dev / testing, re-add the side-effect import here ABOVE the
-// schema/parser/serializer imports below.
-
+// Extension registration must happen before schema.ts or obsidian-md-bridge
+// evaluate their module bodies. Example extensions are not activated in
+// shipped builds.
 import { schema } from "../core/schema";
 import { parser } from "../core/parser";
 import { serializer } from "../core/serializer";
@@ -88,6 +79,7 @@ import {
   RAW_BLOCK_SYNC_META,
 } from "../core/raw-block-safety";
 import { SaveScheduler } from "../ui/save-scheduler";
+import { suppressNativeMobileToolbar } from "../ui/mobile-native-toolbar";
 import { scrollHostTop, runClipboardCommand } from "../util/dom-utils";
 import { mountLicenseBanner, type LicenseBanner } from "../ui/license-banner";
 import {
@@ -424,6 +416,14 @@ export class ButterEditorView extends TextFileView {
       "keyboardWillHide" as keyof HTMLElementEventMap,
       (ev: Event) => {
         const anyEv = ev as unknown as { hasPhysicalKeyboard?: boolean };
+        if (
+          !anyEv.hasPhysicalKeyboard &&
+          (focusIsInEditorOrToolbar() ||
+            toolbarDom.classList.contains(VISIBLE_CLASS) ||
+            activeDocument.body.classList.contains("butter-mobile-drawer-open"))
+        ) {
+          suppressNativeMobileToolbar();
+        }
         if (!anyEv.hasPhysicalKeyboard) hasKeyboardVisible = false;
         // Skip the post-keyboard cleanup when the insert drawer
         // dismissed the keyboard. The drawer blurs the editor on
@@ -457,87 +457,20 @@ export class ButterEditorView extends TextFileView {
 
 
     this.registerDomEvent(editorDom, "focusin", schedule);
-    this.registerDomEvent(editorDom, "focusout", schedule);
+    this.registerDomEvent(editorDom, "focusout", () => {
+      suppressNativeMobileToolbar();
+      schedule();
+    });
     this.registerDomEvent(toolbarDom, "focusin", schedule);
-    this.registerDomEvent(toolbarDom, "focusout", schedule);
+    this.registerDomEvent(toolbarDom, "focusout", () => {
+      suppressNativeMobileToolbar();
+      schedule();
+    });
     this.registerDomEvent(window, "focusin", schedule);
     this.registerDomEvent(window, "focusout", schedule);
 
     updateState();
 
-    // ── DIAGNOSTIC: dump ALL elements in top 100px AND ALL
-    // pseudo-elements on those, with full computed background +
-    // background-image. Don't outline (confusing). Instead, show
-    // every element's bg even if the user can't see it directly.
-    window.setTimeout(() => {
-      try {
-        const cutoff = 100;
-        const all = activeDocument.body.querySelectorAll("*");
-        const lines: string[] = [];
-        lines.push("All elements in top 100px with non-empty bg or bg-image:");
-        for (const el of Array.from(all)) {
-          if (!(el.instanceOf(HTMLElement))) continue;
-          const r = el.getBoundingClientRect();
-          if (r.bottom < 0 || r.top > cutoff) continue;
-          if (r.width === 0 || r.height === 0) continue;
-          const cs = getComputedStyle(el);
-          const tag = el.tagName.toLowerCase();
-          const cls =
-            typeof el.className === "string" && el.className
-              ? "." + el.className.split(/\s+/).slice(0, 6).join(".")
-              : "";
-          const interesting =
-            (cs.backgroundImage && cs.backgroundImage !== "none") ||
-            (cs.backgroundColor && cs.backgroundColor !== "rgba(0, 0, 0, 0)" && cs.backgroundColor !== "transparent");
-          if (!interesting) continue;
-          lines.push(`${tag}${cls}`);
-          lines.push(`  rect: top=${Math.round(r.top)} h=${Math.round(r.height)} w=${Math.round(r.width)}`);
-          lines.push(`  bg-color: ${cs.backgroundColor}`);
-          lines.push(`  bg-image: ${cs.backgroundImage.slice(0, 200)}`);
-          lines.push(`  position: ${cs.position} z=${cs.zIndex}`);
-          lines.push("");
-        }
-        // Now pseudo-elements
-        lines.push("---PSEUDOS---");
-        for (const el of Array.from(all)) {
-          if (!(el.instanceOf(HTMLElement))) continue;
-          const r = el.getBoundingClientRect();
-          if (r.bottom < 0 || r.top > cutoff) continue;
-          if (r.width === 0 || r.height === 0) continue;
-          for (const pseudo of ["::before", "::after"]) {
-            const pcs = getComputedStyle(el, pseudo);
-            if (pcs.content === "none" || pcs.content === "normal") continue;
-            const bg = pcs.backgroundImage;
-            const bgc = pcs.backgroundColor;
-            const interesting =
-              (bg && bg !== "none") ||
-              (bgc && bgc !== "rgba(0, 0, 0, 0)" && bgc !== "transparent");
-            if (!interesting) continue;
-            const tag = el.tagName.toLowerCase();
-            const cls =
-              typeof el.className === "string" && el.className
-                ? "." + el.className.split(/\s+/).slice(0, 6).join(".")
-                : "";
-            lines.push(`${tag}${cls}${pseudo}`);
-            lines.push(`  bg-color: ${bgc}`);
-            lines.push(`  bg-image: ${bg.slice(0, 200)}`);
-            lines.push(`  pos: ${pcs.position}, top=${pcs.top} bot=${pcs.bottom} h=${pcs.height}`);
-            lines.push("");
-          }
-        }
-        const path = "_butter-top-outline.md";
-        const body = "```\n" + lines.join("\n") + "\n```\n";
-        const existing = this.app.vault.getAbstractFileByPath(path);
-        if (existing instanceof TFile) {
-          void this.app.vault.modify(existing, body);
-        } else {
-          void this.app.vault.create(path, body);
-        }
-      } catch (err) {
-        console.warn("butter-diag: outline failed", err);
-      }
-    }, 1500);
-    // ───────────────────────────────────────────────────────────
   }
 
   public applyToolbarPosition() {
@@ -2511,4 +2444,4 @@ export class ButterEditorView extends TextFileView {
       this.suppressChange = false;
     }
   }
-}
+}

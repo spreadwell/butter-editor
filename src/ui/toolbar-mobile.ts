@@ -37,6 +37,7 @@ import {
   openMobileDrawer,
   closeMobileInsertDrawer,
 } from "./insert-drawer";
+import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
 
 /** Same check as the desktop toolbar's `isHtmlFormattingEnabled`,
  *  reachable from the mobile renderer without duplicating exports
@@ -47,6 +48,123 @@ function isMobileHtmlFormattingEnabled(ctx: RenderCtx): boolean {
     | { settings?: { enableHtmlFormatting?: boolean } }
     | undefined;
   return plugin?.settings?.enableHtmlFormatting !== false;
+}
+
+const mobileOverflowCleanups = new WeakMap<HTMLElement, () => void>();
+
+export function cleanupMobileToolbarOverflowIndicators(root: HTMLElement): void {
+  mobileOverflowCleanups.get(root)?.();
+  mobileOverflowCleanups.delete(root);
+}
+
+export function installMobileToolbarOverflowIndicators(
+  root: HTMLElement,
+  scrollEl: HTMLElement,
+  hostEl: HTMLElement,
+): void {
+  cleanupMobileToolbarOverflowIndicators(root);
+
+  const leftInd = activeDocument.createElement("div");
+  leftInd.classList.add("butter-mobile-overflow-indicator", "is-left");
+  leftInd.setAttribute("role", "button");
+  leftInd.setAttribute("tabindex", "0");
+  leftInd.setAttribute("aria-label", "Scroll toolbar left");
+  setIcon(leftInd, "chevron-left");
+
+  const rightInd = activeDocument.createElement("div");
+  rightInd.classList.add("butter-mobile-overflow-indicator", "is-right");
+  rightInd.setAttribute("role", "button");
+  rightInd.setAttribute("tabindex", "0");
+  rightInd.setAttribute("aria-label", "Scroll toolbar right");
+  setIcon(rightInd, "chevron-right");
+
+  const getItems = () =>
+    Array.from(scrollEl.children).filter(
+      (el): el is HTMLElement =>
+        el.instanceOf(HTMLElement) &&
+        (el.classList.contains("mobile-toolbar-option") ||
+          el.classList.contains("mobile-toolbar-separator")) &&
+        el.offsetParent !== null,
+    );
+
+  const updateIndicators = () => {
+    const canLeft = scrollEl.scrollLeft > 1;
+    const canRight =
+      scrollEl.scrollLeft + scrollEl.clientWidth < scrollEl.scrollWidth - 1;
+    leftInd.toggleClass("is-visible", canLeft);
+    rightInd.toggleClass("is-visible", canRight);
+  };
+
+  const scrollByOneItem = (dir: -1 | 1) => {
+    const items = getItems();
+    if (dir === 1) {
+      const visibleRight = scrollEl.scrollLeft + scrollEl.clientWidth;
+      const next = items.find(
+        (item) => item.offsetLeft + item.offsetWidth > visibleRight + 1,
+      );
+      if (next) {
+        scrollEl.scrollTo({ left: next.offsetLeft - 4, behavior: "smooth" });
+        return;
+      }
+    } else {
+      const visibleLeft = scrollEl.scrollLeft;
+      let prev: HTMLElement | undefined;
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].offsetLeft < visibleLeft - 1) {
+          prev = items[i];
+          break;
+        }
+      }
+      if (prev) {
+        scrollEl.scrollTo({
+          left: Math.max(0, prev.offsetLeft - 4),
+          behavior: "smooth",
+        });
+        return;
+      }
+    }
+
+    scrollEl.scrollBy({
+      left: dir * Math.max(44, scrollEl.clientWidth * 0.5),
+      behavior: "smooth",
+    });
+  };
+
+  const wireIndicator = (el: HTMLElement, dir: -1 | 1) => {
+    const onClick = () => scrollByOneItem(dir);
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        scrollByOneItem(dir);
+      }
+    };
+    el.addEventListener("click", onClick);
+    el.addEventListener("keydown", onKeydown);
+    return () => {
+      el.removeEventListener("click", onClick);
+      el.removeEventListener("keydown", onKeydown);
+    };
+  };
+
+  const cleanupLeft = wireIndicator(leftInd, -1);
+  const cleanupRight = wireIndicator(rightInd, 1);
+  hostEl.appendChild(leftInd);
+  hostEl.appendChild(rightInd);
+  scrollEl.addEventListener("scroll", updateIndicators, { passive: true });
+
+  const resizeObserver = new ResizeObserver(updateIndicators);
+  resizeObserver.observe(scrollEl);
+  resizeObserver.observe(hostEl);
+  window.requestAnimationFrame(updateIndicators);
+
+  mobileOverflowCleanups.set(root, () => {
+    cleanupLeft();
+    cleanupRight();
+    scrollEl.removeEventListener("scroll", updateIndicators);
+    resizeObserver.disconnect();
+    leftInd.remove();
+    rightInd.remove();
+  });
 }
 
 // ── Insert-flow dialogs ──
@@ -268,7 +386,9 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   el.setAttribute("aria-label", def.label);
   el.dataset.btnId = def.id;
   setIcon(el, def.icon);
-  ctx.buttonMap.set(def.id, el);
+  const existing = ctx.buttonMap.get(def.id);
+  if (existing) existing.add(el);
+  else ctx.buttonMap.set(def.id, new Set([el]));
   el.addEventListener("click", (e) => {
     e.preventDefault();
     const view = ctx.getView();
@@ -564,6 +684,7 @@ export function renderMobile(
   getLayout: () => Layout,
 ): void {
   ctx.closePopover();
+  cleanupMobileToolbarOverflowIndicators(dom);
   dom.innerHTML = "";
   ctx.buttonMap.clear();
   // Use ONLY `.butter-mobile-toolbar`; intentionally drop the
@@ -615,7 +736,10 @@ function renderNativeMain(
 
   // Main pill - scrollable list of formatting buttons.
   const listWrap = activeDocument.createElement("div");
-  listWrap.classList.add("mobile-toolbar-options-list-container");
+  listWrap.classList.add(
+    "mobile-toolbar-options-list-container",
+    "butter-mobile-overflow-host",
+  );
   const list = activeDocument.createElement("div");
   list.classList.add("mobile-toolbar-options-list");
   listWrap.appendChild(list);
@@ -625,6 +749,7 @@ function renderNativeMain(
     renderMobileItem(item, ctx, list);
   }
   installOverscrollRubberBand(list);
+  installMobileToolbarOverflowIndicators(dom, list, listWrap);
 
   // Right chrome pill - holds (in order of priority): swap-to-
   // table toggle (when caret in cell + prefer-main), overflow
@@ -688,14 +813,21 @@ function renderButterMain(
 
   // Main button list - scrolls horizontally if too many for the
   // visible width.
+  const listWrap = activeDocument.createElement("div");
+  listWrap.classList.add(
+    "butter-mobile-bar-list-wrap",
+    "butter-mobile-overflow-host",
+  );
+  row.appendChild(listWrap);
   const list = activeDocument.createElement("div");
   list.classList.add("butter-mobile-bar-list", "mobile-toolbar-options-list");
-  row.appendChild(list);
+  listWrap.appendChild(list);
   const layout = getLayout();
   for (const item of layout) {
     renderMobileItem(item, ctx, list);
   }
   installOverscrollRubberBand(list);
+  installMobileToolbarOverflowIndicators(dom, list, listWrap);
   // Legacy auto-append: existing user layouts saved before the
   // `insert` button became a layout item don't have it explicitly.
   // Keep the trailing fallback so they still see a `+` until
@@ -748,13 +880,13 @@ function renderButterMain(
   const closeBtn = activeDocument.createElement("button");
   closeBtn.className =
     "mobile-toolbar-option clickable-icon butter-mobile-close-btn";
-  closeBtn.setAttribute("aria-label", "Close insert drawer");
+  closeBtn.setAttribute("aria-label", "Close drawer");
   setIcon(closeBtn, "x");
   closeBtn.addEventListener("click", (e) => {
     e.preventDefault();
-    closeMobileInsertDrawer();
+    const closeDelay = closeMobileInsertDrawer({ returningKeyboard: true });
     const view = ctx.getView();
-    if (view) window.setTimeout(() => view.focus(), 0);
+    if (view) window.setTimeout(() => view.focus(), closeDelay);
   });
   chrome.appendChild(closeBtn);
 
@@ -768,6 +900,7 @@ function renderButterMain(
   // element and the keyboard pops right back up.
   hideKbBtn.addEventListener("pointerdown", (e) => {
     e.preventDefault();
+    suppressNativeMobileToolbar();
     const active = activeDocument.activeElement;
     if (active instanceof HTMLElement) active.blur();
   });

@@ -135,7 +135,7 @@ export class SaveScheduler {
       // Save failures are reported by the caller's own logging;
       // the scheduler itself just logs + continues so subsequent
       // edits keep scheduling.
-       
+
       console.error("[butter] save-scheduler doSave threw:", err);
     }
   }
