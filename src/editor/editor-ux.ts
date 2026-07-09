@@ -425,15 +425,6 @@ export function buildKeymap(schema: Schema) {
   keys["Mod-Delete"] = chainCommands(deleteSelection, joinForward, selectNodeForward);
   keys["Mod-a"] = selectAll;
 
-  // NOTE: formatting shortcuts (Mod+B, Mod+I, Mod+E, Mod+Shift+S,
-  // Mod+Shift+H) are registered as Obsidian commands in main.ts with
-  // `checkCallback` gated on Butter being the active view. That routes
-  // through Obsidian's dispatcher so our commands win over Obsidian's
-  // default `editor:toggle-bold` / etc., which would otherwise fire
-  // against our editor shim in unwanted ways. We deliberately DO NOT
-  // bind these keys here to avoid double-firing when the Obsidian
-  // command dispatches and also the event bubbles to PM's keymap.
-
   // List keybindings - task-aware Enter is chained before the generic
   // flat-list split so empty tasks exit the list and non-empty tasks
   // produce a new unchecked task item without user retyping the marker.
@@ -495,7 +486,18 @@ export function buildKeymap(schema: Schema) {
 
 // ── Build input rules ──
 
-export function buildInputRules(schema: Schema) {
+export interface ButterInputRuleOptions {
+  enableMarkdownShortcuts?: boolean;
+}
+
+export function buildInputRules(
+  schema: Schema,
+  options: ButterInputRuleOptions = {},
+) {
+  if (options.enableMarkdownShortcuts === false) {
+    return inputRules({ rules: [] });
+  }
+
   const rules: InputRule[] = [];
 
   // Heading input rules: # → h1, ## → h2, etc.
@@ -743,13 +745,23 @@ export function buildInputRules(schema: Schema) {
   const wrapMark = (
     pattern: RegExp,
     mark: MarkType | undefined,
+    contentGroup = 1,
+    prefixGroup?: number,
   ): InputRule | null => {
     if (!mark) return null;
     return new InputRule(pattern, (state, match, start, end) => {
-      const content = match[1];
+      const content = match[contentGroup];
       if (!content) return null;
+      const prefix = prefixGroup === undefined ? "" : match[prefixGroup] ?? "";
       const tr = state.tr;
-      tr.replaceWith(start, end, state.schema.text(content, [mark.create()]));
+      const marked = state.schema.text(content, [mark.create()]);
+      tr.replaceWith(
+        start,
+        end,
+        prefix
+          ? Fragment.fromArray([state.schema.text(prefix), marked])
+          : marked,
+      );
       tr.removeStoredMark(mark);
       return tr;
     });
@@ -760,12 +772,12 @@ export function buildInputRules(schema: Schema) {
   };
 
   // Bold - `**text**` and `__text__`
-  add(wrapMark(/(?:^|\s)\*\*([^*\s](?:[^*]*[^*\s])?)\*\*$/, schema.marks.strong));
-  add(wrapMark(/(?:^|\s)__([^_\s](?:[^_]*[^_\s])?)__$/, schema.marks.strong));
+  add(wrapMark(/(^|\s)\*\*([^*\s](?:[^*]*[^*\s])?)\*\*$/, schema.marks.strong, 2, 1));
+  add(wrapMark(/(^|\s)__([^_\s](?:[^_]*[^_\s])?)__$/, schema.marks.strong, 2, 1));
 
   // Italic - `*text*` and `_text_` (but not inside **...**)
-  add(wrapMark(/(?:^|[^*])\*([^*\s](?:[^*]*[^*\s])?)\*$/, schema.marks.em));
-  add(wrapMark(/(?:^|[^_])_([^_\s](?:[^_]*[^_\s])?)_$/, schema.marks.em));
+  add(wrapMark(/(^|[^*])\*([^*\s](?:[^*]*[^*\s])?)\*$/, schema.marks.em, 2, 1));
+  add(wrapMark(/(^|[^_])_([^_\s](?:[^_]*[^_\s])?)_$/, schema.marks.em, 2, 1));
 
   // Strikethrough - `~~text~~`
   add(wrapMark(/~~([^~\s](?:[^~]*[^~\s])?)~~$/, schema.marks.strikethrough));

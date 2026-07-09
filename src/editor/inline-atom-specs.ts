@@ -10,6 +10,8 @@
 import type { Node as PMNode, Schema } from "prosemirror-model";
 import { isInlineMathSource } from "../core/inline-math-delimiters";
 
+type EditorSchema = Schema<string, string>;
+
 /** A single editable field on an atom - for atoms (like wikilink)
  *  whose attrs map naturally onto multiple labelled inputs rather
  *  than a single source pattern. The panel renders one row per
@@ -46,7 +48,7 @@ export interface AtomSpec {
   toSource: (node: PMNode) => string;
   /** Parse user-edited source back to a fresh node, or null if the
    *  input doesn't match this atom type's source pattern. */
-  fromSource: (src: string, schema: Schema) => PMNode | null;
+  fromSource: (src: string, schema: EditorSchema) => PMNode | null;
   /** Optional structured-form rendering. When present + `toFields`
    *  / `fromFields` are also set, the panel renders one input row
    *  per field. */
@@ -54,7 +56,7 @@ export interface AtomSpec {
   toFields?: (node: PMNode) => Record<string, string>;
   fromFields?: (
     values: Record<string, string>,
-    schema: Schema,
+    node: PMNode,
   ) => PMNode | null;
 }
 
@@ -89,6 +91,18 @@ function joinEmbedSrc(values: Record<string, string>): string | null {
   if (!w) return file;
   if (h) return `${file}|${w}x${h}`;
   return `${file}|${w}`;
+}
+
+function inlineFootnoteFromFields(
+  values: Record<string, string>,
+  node: PMNode,
+): PMNode | null {
+  // Allow empty footnote bodies - `^[]` is technically legal
+  // markdown though weird in practice. Trim trailing whitespace
+  // but preserve internal spacing.
+  return node.type.create({
+    content: values.content.replace(/\s+$/, ""),
+  });
 }
 
 export const SPECS: Record<string, AtomSpec> = {
@@ -153,7 +167,7 @@ export const SPECS: Record<string, AtomSpec> = {
         alias: a.alias ?? "",
       };
     },
-    fromFields(values, schema) {
+    fromFields(values, node) {
       const target = values.target.trim();
       if (!target) return null;
       let alias = values.alias.trim();
@@ -161,7 +175,7 @@ export const SPECS: Record<string, AtomSpec> = {
       // string as target, don't store an alias - the wikilink will
       // render its target as the visible text by default.
       if (!alias || alias === target) alias = "";
-      return schema.nodes.wikilink.create({ target, alias });
+      return node.type.create({ target, alias });
     },
   },
   obsidian_tag: {
@@ -186,13 +200,13 @@ export const SPECS: Record<string, AtomSpec> = {
     toFields(node) {
       return { tag: (node.attrs.tag as string) ?? "" };
     },
-    fromFields(values, schema) {
+    fromFields(values, node) {
       // Accept user-typed `#tag` OR plain `tag`; strip the leading
       // hash so the attr value stays clean and round-trips through
       // the existing toSource regex.
       const raw = values.tag.trim().replace(/^#/, "");
       if (!/^[A-Za-z0-9_\-/]+$/.test(raw)) return null;
-      return schema.nodes.obsidian_tag.create({ tag: raw });
+      return node.type.create({ tag: raw });
     },
   },
   obsidian_embed: {
@@ -225,10 +239,10 @@ export const SPECS: Record<string, AtomSpec> = {
     toFields(node) {
       return splitEmbedSrc((node.attrs.src as string) ?? "");
     },
-    fromFields(values, schema) {
+    fromFields(values, node) {
       const combined = joinEmbedSrc(values);
       if (!combined) return null;
-      return schema.nodes.obsidian_embed.create({ src: combined });
+      return node.type.create({ src: combined });
     },
   },
   obsidian_embed_inline: {
@@ -256,10 +270,10 @@ export const SPECS: Record<string, AtomSpec> = {
     toFields(node) {
       return splitEmbedSrc((node.attrs.src as string) ?? "");
     },
-    fromFields(values, schema) {
+    fromFields(values, node) {
       const combined = joinEmbedSrc(values);
       if (!combined) return null;
-      return schema.nodes.obsidian_embed_inline.create({ src: combined });
+      return node.type.create({ src: combined });
     },
   },
   inline_math: {
@@ -285,10 +299,10 @@ export const SPECS: Record<string, AtomSpec> = {
     toFields(node) {
       return { value: (node.attrs.value as string) ?? "" };
     },
-    fromFields(values, schema) {
+    fromFields(values, node) {
       const value = values.value.trim();
       if (!value) return null;
-      return schema.nodes.inline_math.create({ value });
+      return node.type.create({ value });
     },
   },
   footnote_ref: {
@@ -313,10 +327,10 @@ export const SPECS: Record<string, AtomSpec> = {
     toFields(node) {
       return { label: (node.attrs.label as string) ?? "" };
     },
-    fromFields(values, schema) {
+    fromFields(values, node) {
       const label = values.label.trim();
       if (!label) return null;
-      return schema.nodes.footnote_ref.create({ label });
+      return node.type.create({ label });
     },
   },
   inline_footnote: {
@@ -341,12 +355,6 @@ export const SPECS: Record<string, AtomSpec> = {
     toFields(node) {
       return { content: (node.attrs.content as string) ?? "" };
     },
-    fromFields(values, schema) {
-      // Allow empty footnote bodies — `^[]` is technically legal
-      // markdown though weird in practice. Trim trailing whitespace
-      // but preserve internal spacing.
-      const content = values.content.trimEnd();
-      return schema.nodes.inline_footnote.create({ content });
-    },
+    fromFields: inlineFootnoteFromFields,
   },
 };

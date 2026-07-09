@@ -1,16 +1,23 @@
 /**
  * Autocomplete for wikilinks ([[) and tags (#).
- * Pure ProseMirror plugin - uses Obsidian's vault API for suggestions
- * and Obsidian's suggestion-container CSS classes for native look.
+ * Pure ProseMirror plugin using the slash menu row structure for
+ * visual consistency with Butter's other insertion popups.
  */
-import { App } from "obsidian";
+import { App, setIcon } from "obsidian";
 import { Plugin, PluginKey } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { Fragment } from "prosemirror-model";
 import type { Schema } from "prosemirror-model";
 
-type SuggestItem = { text: string; secondary?: string };
-type Mode = "wikilink" | "tag" | null;
+import {
+  getAutocompleteQuery,
+  isTagAutocompleteQuery,
+  type AutocompleteMode,
+} from "./autocomplete-query";
+import { bindFloatingSurfaceReposition } from "../util/floating-surface";
+
+type SuggestItem = { text: string; secondary?: string; create?: boolean };
+type Mode = AutocompleteMode | null;
 
 export function autocompletePlugin(app: App, schema: Schema) {
   let popover: HTMLDivElement | null = null;
@@ -19,6 +26,7 @@ export function autocompletePlugin(app: App, schema: Schema) {
   let startPos = -1;
   let selectedIndex = 0;
   let items: SuggestItem[] = [];
+  let unbindReposition: (() => void) | null = null;
 
   // ── Query extraction ──
 
@@ -28,15 +36,7 @@ export function autocompletePlugin(app: App, schema: Schema) {
 
     const text = view.state.doc.textBetween(startPos, from);
 
-    if (mode === "wikilink") {
-      if (!text.startsWith("[[")) return null;
-      return text.slice(2);
-    }
-    if (mode === "tag") {
-      if (!text.startsWith("#")) return null;
-      return text.slice(1);
-    }
-    return null;
+    return mode ? getAutocompleteQuery(mode, text) : null;
   }
 
   // ── Suggestion sources ──
@@ -44,24 +44,30 @@ export function autocompletePlugin(app: App, schema: Schema) {
   function getWikilinkSuggestions(query: string): SuggestItem[] {
     const files = app.vault.getMarkdownFiles();
     const lower = query.toLowerCase();
-    return files
+    const suggestions: SuggestItem[] = files
       .filter((f) => !query || f.basename.toLowerCase().includes(lower))
       .slice(0, 20)
       .map((f) => ({
         text: f.basename,
         secondary: f.parent && f.parent.path !== "/" ? f.parent.path : undefined,
       }));
+    if (
+      query &&
+      !files.some((f) => f.basename.toLowerCase() === lower)
+    ) {
+      suggestions.unshift({ text: query, create: true });
+    }
+    return suggestions;
   }
 
   function getTagSuggestions(query: string): SuggestItem[] {
-    // Get all tags from the vault metadata cache
     const allTags = new Set<string>();
     const files = app.vault.getMarkdownFiles();
     for (const file of files) {
       const cache = app.metadataCache.getFileCache(file);
       if (cache?.tags) {
         for (const t of cache.tags) {
-          allTags.add(t.tag.slice(1)); // remove leading #
+          allTags.add(t.tag.slice(1));
         }
       }
       if (cache?.frontmatter?.tags) {
@@ -73,18 +79,36 @@ export function autocompletePlugin(app: App, schema: Schema) {
     }
 
     const lower = query.toLowerCase();
-    return Array.from(allTags)
+    const suggestions: SuggestItem[] = Array.from(allTags)
       .filter((t) => !query || t.toLowerCase().includes(lower))
       .sort()
       .slice(0, 20)
       .map((t) => ({ text: t }));
+    if (
+      query &&
+      isTagAutocompleteQuery(query) &&
+      !Array.from(allTags).some((t) => t.toLowerCase() === lower)
+    ) {
+      suggestions.unshift({ text: query, create: true });
+    }
+    return suggestions;
   }
 
   // ── Popover lifecycle ──
 
-  function createPopover(): HTMLDivElement {
+  function createPopover(newMode: Mode): HTMLDivElement {
     const el = activeDocument.createElement("div");
-    el.classList.add("suggestion-container", "butter-suggest");
+    el.classList.add(
+      "butter-surface",
+      "butter-surface--compact",
+      "butter-autocomplete-menu",
+    );
+    el.setAttribute("role", "listbox");
+    el.setAttribute(
+      "aria-label",
+      newMode === "tag" ? "Tag suggestions" : "Link suggestions",
+    );
+    el.id = `butter-autocomplete-${Math.random().toString(36).slice(2, 9)}`;
     activeDocument.body.appendChild(el);
     return el;
   }
@@ -98,6 +122,57 @@ export function autocompletePlugin(app: App, schema: Schema) {
       "--butter-pos-left": `${coords.left}px`,
       "--butter-pos-top": `${coords.bottom + 4}px`,
     });
+    window.requestAnimationFrame(() => {
+      if (!popover) return;
+      const rect = popover.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight - 12) {
+        popover.setCssProps({
+          "--butter-pos-top": `${coords.top - rect.height - 4}px`,
+        });
+      }
+    });
+  }
+
+  function itemIcon(): string {
+    return mode === "tag" ? "hash" : "file-text";
+  }
+
+  function itemLabel(item: SuggestItem): string {
+    if (item.create) {
+      return mode === "tag" ? `Create #${item.text}` : `Create link to "${item.text}"`;
+    }
+    return mode === "tag" ? `#${item.text}` : item.text;
+  }
+
+  function itemDesc(item: SuggestItem): string | null {
+    if (item.create) return "Press Enter";
+    if (item.secondary) return item.secondary;
+    return null;
+  }
+
+  function syncActiveDescendant() {
+    if (!popover) return;
+    const selected = popover.querySelector<HTMLElement>(
+      ".butter-surface-row.is-selected",
+    );
+    if (selected?.id) {
+      popover.setAttribute("aria-activedescendant", selected.id);
+    } else {
+      popover.removeAttribute("aria-activedescendant");
+    }
+  }
+
+  function syncSelection() {
+    if (!popover) return;
+    const rows = Array.from(
+      popover.querySelectorAll<HTMLElement>(".butter-surface-row"),
+    );
+    for (const [i, row] of rows.entries()) {
+      const selected = i === selectedIndex;
+      row.toggleClass("is-selected", selected);
+      row.setAttribute("aria-selected", selected ? "true" : "false");
+    }
+    syncActiveDescendant();
   }
 
   function renderSuggestions(view: EditorView) {
@@ -106,8 +181,8 @@ export function autocompletePlugin(app: App, schema: Schema) {
 
     if (items.length === 0) {
       const empty = activeDocument.createElement("div");
-      empty.classList.add("suggestion-empty");
-      empty.textContent = "No results";
+      empty.classList.add("butter-surface-empty");
+      empty.textContent = "No matches";
       popover.appendChild(empty);
       return;
     }
@@ -115,28 +190,49 @@ export function autocompletePlugin(app: App, schema: Schema) {
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const el = activeDocument.createElement("div");
-      el.classList.add("suggestion-item");
-      if (i === selectedIndex) el.classList.add("is-selected");
+      el.classList.add(
+        "butter-surface-row",
+        "butter-surface-row--compact",
+        "butter-autocomplete-item",
+      );
+      el.setAttribute("role", "option");
+      el.id = `${popover.id}-opt-${i}`;
+      const selected = i === selectedIndex;
+      el.toggleClass("is-selected", selected);
+      el.setAttribute("aria-selected", selected ? "true" : "false");
 
-      const title = activeDocument.createElement("span");
-      title.classList.add("suggestion-title");
-      title.textContent = item.text;
-      el.appendChild(title);
+      const iconEl = activeDocument.createElement("div");
+      iconEl.classList.add("butter-surface-icon");
+      setIcon(iconEl, itemIcon());
+      el.appendChild(iconEl);
 
-      if (item.secondary) {
-        const note = activeDocument.createElement("span");
-        note.classList.add("suggestion-note");
-        note.textContent = item.secondary;
-        el.appendChild(note);
+      const meta = activeDocument.createElement("div");
+      meta.classList.add("butter-surface-meta");
+      const title = activeDocument.createElement("div");
+      title.classList.add("butter-surface-label");
+      title.textContent = itemLabel(item);
+      meta.appendChild(title);
+      const desc = itemDesc(item);
+      if (desc) {
+        const note = activeDocument.createElement("div");
+        note.classList.add("butter-surface-detail");
+        note.textContent = desc;
+        meta.appendChild(note);
       }
+      el.appendChild(meta);
 
       el.addEventListener("mousedown", (e) => {
         e.preventDefault();
         selectItem(view, item);
       });
+      el.addEventListener("mouseenter", () => {
+        selectedIndex = i;
+        syncSelection();
+      });
 
       popover.appendChild(el);
     }
+    syncActiveDescendant();
   }
 
   // ── Selection ──
@@ -164,7 +260,10 @@ export function autocompletePlugin(app: App, schema: Schema) {
     mode = newMode;
     isOpen = true;
     selectedIndex = 0;
-    popover = createPopover();
+    popover = createPopover(newMode);
+    unbindReposition = bindFloatingSurfaceReposition(() => {
+      if (isOpen && popover) positionPopover(view);
+    });
     update(view);
   }
 
@@ -173,6 +272,8 @@ export function autocompletePlugin(app: App, schema: Schema) {
     mode = null;
     startPos = -1;
     selectedIndex = 0;
+    unbindReposition?.();
+    unbindReposition = null;
     if (popover) {
       popover.remove();
       popover = null;
@@ -206,14 +307,16 @@ export function autocompletePlugin(app: App, schema: Schema) {
         if (isOpen) {
           if (event.key === "ArrowDown") {
             event.preventDefault();
+            if (!items.length) return true;
             selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
-            renderSuggestions(view);
+            syncSelection();
             return true;
           }
           if (event.key === "ArrowUp") {
             event.preventDefault();
+            if (!items.length) return true;
             selectedIndex = Math.max(selectedIndex - 1, 0);
-            renderSuggestions(view);
+            syncSelection();
             return true;
           }
           if (event.key === "Enter" || event.key === "Tab") {
@@ -227,6 +330,10 @@ export function autocompletePlugin(app: App, schema: Schema) {
             event.preventDefault();
             close();
             return true;
+          }
+          if (mode === "tag" && event.key.length === 1 && !isTagAutocompleteQuery(event.key)) {
+            close();
+            return false;
           }
         }
 
@@ -244,7 +351,7 @@ export function autocompletePlugin(app: App, schema: Schema) {
           }
         }
 
-        // Tag: detect # being typed (preceded by space or start of block)
+        // Tag: detect # being typed at the start of a block or after whitespace.
         if (event.key === "#" && !isOpen) {
           const { from } = view.state.selection;
           const atStart = from === view.state.selection.$from.start();

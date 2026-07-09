@@ -1137,50 +1137,6 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   user-select: none;
 }
 
-/* ── Autocomplete popover ── */
-.butter-suggest {
-  min-width: 200px;
-  max-width: 400px;
-  max-height: 300px;
-  overflow-y: auto;
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m, 8px);
-  box-shadow: var(--shadow-s);
-  padding: 4px;
-}
-
-.butter-suggest .suggestion-item {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: var(--radius-s, 4px);
-  cursor: pointer;
-  font-size: var(--font-ui-small, 0.9em);
-}
-
-.butter-suggest .suggestion-item:hover,
-.butter-suggest .suggestion-item.is-selected {
-  background: var(--background-modifier-hover);
-}
-
-.butter-suggest .suggestion-title {
-  color: var(--text-normal);
-}
-
-.butter-suggest .suggestion-note {
-  color: var(--text-faint);
-  font-size: var(--font-smallest, 0.8em);
-}
-
-.butter-suggest .suggestion-empty {
-  padding: 8px;
-  color: var(--text-faint);
-  font-size: var(--font-ui-small, 0.9em);
-  text-align: center;
-}
-
 /* ── ProseMirror gapcursor ──
    Base styles inlined from prosemirror-gapcursor/style/gapcursor.css
    since we don't import node_modules CSS through esbuild. Without
@@ -1568,9 +1524,12 @@ body:not(.is-mobile) .butter-toolbar-stack {
 body:not(.is-mobile) .butter-toolbar-stack[data-toolbar-style="attached"] {
   flex: 0 0 auto;
 }
-/* Detached: sticky parent inside view-content. Body-width card. */
+/* Detached: sticky parent inside view-content. The card shrink-wraps
+   the visible toolbar buttons, while still capping to the readable
+   editor column / viewport. */
 body:not(.is-mobile) .butter-toolbar-stack[data-toolbar-style="detached"] {
-  max-width: var(--file-line-width);
+  width: fit-content;
+  max-width: min(100%, var(--file-line-width));
   margin-left: auto;
   margin-right: auto;
 }
@@ -1588,9 +1547,15 @@ body:not(.is-mobile) .butter-toolbar-stack[data-toolbar-style="detached"][data-t
 }
 
 body:not(.is-mobile) .butter-toolbar[data-toolbar-style="detached"] {
+  width: 100%;
+  max-width: 100%;
   border: var(--border-width, 1px) solid var(--background-modifier-border);
   border-radius: var(--radius-s, 4px);
   background: var(--background-primary);
+}
+body:not(.is-mobile) .butter-toolbar[data-toolbar-style="detached"] .butter-toolbar-scroll {
+  width: max-content;
+  max-width: 100%;
 }
 body:not(.is-mobile) .butter-toolbar[data-toolbar-style="detached"][data-toolbar-pos="top"] {
   /* Sticky lives on the stack now; flow child here. */
@@ -3926,67 +3891,141 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
 
 
 /* ══════════════════════════════════════════
-   Slash menu
+   Suggestion surfaces
    ══════════════════════════════════════════ */
 
-.butter-slash-menu {
+.butter-surface {
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m, 6px);
+  border-radius: var(--radius-m, 8px);
   box-shadow: var(--shadow-l, 0 12px 32px rgba(0, 0, 0, 0.12));
+  box-sizing: border-box;
+  overflow-y: auto;
+  z-index: var(--layer-popover);
+  font-family: var(--font-interface);
+  animation: butter-dropdown-in 120ms ease;
+}
+
+.butter-surface--command {
   padding: 4px;
   min-width: 280px;
   max-width: 360px;
   max-height: 340px;
-  overflow-y: auto;
-  z-index: var(--layer-popover);
-  font-family: var(--font-interface);
   font-size: 13px;
-  animation: butter-dropdown-in 140ms ease;
 }
 
-.butter-slash-item {
+.butter-surface--compact {
+  padding: 3px;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: 260px;
+  font-size: 13px;
+}
+
+.butter-surface--mini {
+  padding: 3px;
+  min-width: 180px;
+  max-width: min(280px, calc(100vw - 24px));
+  max-height: 220px;
+  font-size: 12px;
+}
+
+.butter-surface-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
   border-radius: var(--radius-s, 4px);
   color: var(--text-normal);
   cursor: pointer;
+  min-width: 0;
+  user-select: none;
 }
-.butter-slash-item.is-selected {
+
+.butter-surface-row--command {
+  gap: 10px;
+  min-height: 38px;
+  padding: 6px 8px;
+}
+
+.butter-surface-row--compact {
+  gap: 7px;
+  min-height: 28px;
+  padding: 4px 6px;
+}
+
+.butter-surface-row--mini {
+  gap: 6px;
+  min-height: 24px;
+  padding: 3px 6px;
+}
+
+.butter-surface-row.is-selected,
+.butter-surface-row:hover {
   background: hsla(var(--interactive-accent-hsl), 0.1);
   color: var(--interactive-accent);
 }
-.butter-slash-item .butter-slash-icon {
+
+.butter-surface-icon {
   display: grid;
   place-items: center;
   flex-shrink: 0;
   color: var(--text-muted);
 }
-.butter-slash-item.is-selected .butter-slash-icon {
+
+.butter-surface-row.is-selected .butter-surface-icon,
+.butter-surface-row:hover .butter-surface-icon {
   color: var(--interactive-accent);
 }
-.butter-slash-item .butter-slash-icon svg {
+
+.butter-surface-icon svg {
   width: 16px;
   height: 16px;
 }
-.butter-slash-item .butter-slash-meta {
+
+.butter-surface-row--compact .butter-surface-icon svg,
+.butter-surface-row--mini .butter-surface-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.butter-surface-meta {
   display: flex;
   flex-direction: column;
   gap: 1px;
   min-width: 0;
   flex: 1;
 }
-.butter-slash-item .butter-slash-label {
+
+.butter-surface-row--compact .butter-surface-meta,
+.butter-surface-row--mini .butter-surface-meta {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.butter-surface-label {
   font-weight: 500;
   color: inherit;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.butter-slash-item .butter-slash-desc {
+
+.butter-surface-detail {
   font-size: 11px;
   color: var(--text-faint);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.butter-slash-empty {
+
+.butter-surface-row--compact .butter-surface-detail,
+.butter-surface-row--mini .butter-surface-detail {
+  flex: 1;
+}
+
+.butter-surface-empty {
   padding: 12px;
   text-align: center;
   color: var(--text-faint);
@@ -3994,35 +4033,17 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
 }
 
 /* ══════════════════════════════════════════
-   External suggest bridge popover
+   External suggest bridge layout
    ══════════════════════════════════════════ */
 
-.butter-suggest-ext {
-  min-width: 220px;
-  max-width: 460px;
-  padding: 4px;
-  z-index: var(--layer-popover);
-}
-
-.butter-suggest-ext .suggestion-item {
-  padding: 5px 10px;
-  border-radius: var(--radius-s, 4px);
-  cursor: pointer;
-  color: var(--text-normal);
-}
-.butter-suggest-ext .suggestion-item.is-selected {
-  background: hsla(var(--interactive-accent-hsl), 0.1);
-  color: var(--interactive-accent);
-}
-.butter-suggest-ext .suggestion-empty {
-  padding: 10px;
-  color: var(--text-faint);
-  font-size: 12px;
-  text-align: center;
+.butter-suggest-ext .suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 /* ══════════════════════════════════════════
-   Dev-only build version indicator
+   Status version indicator
    ══════════════════════════════════════════ */
 
 .butter-status-devversion {
@@ -4116,9 +4137,8 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
 /* ══════════════════════════════════════════
    Settings: tabs
 
-   Visual style follows Better-Claude's pattern: small underline-on-
-   active, muted/normal/accent color states, native font sizes. Two
-   intentional differences:
+   Visual style: small underline-on-active, muted/normal/accent
+   color states, native font sizes. Two intentional details:
      1. NOT position: sticky - sticky fights the keyboard on mobile
         and rarely earns its keep at this scroll length.
      2. Horizontal scroll on overflow so the row of tabs never
@@ -6020,11 +6040,23 @@ body:not(.is-mobile) .butter-table-toolbar[data-toolbar-pos="bottom"] {
 body:not(.is-mobile) .butter-table-toolbar[data-toolbar-style="detached"] {
   /* Width + horizontal centering live on the .butter-toolbar-stack
      wrapper that owns both detached toolbars; this is a flow child. */
+  width: 100%;
+  max-width: 100%;
   margin-top: 0;
   border-left: var(--border-width, 1px) solid var(--background-modifier-border);
   border-right: var(--border-width, 1px) solid var(--background-modifier-border);
   border-bottom: var(--border-width, 1px) solid var(--background-modifier-border);
   border-radius: 0 0 var(--radius-s, 4px) var(--radius-s, 4px);
+}
+body:not(.is-mobile) .butter-table-toolbar[data-toolbar-style="detached"].is-hidden {
+  width: 0;
+  max-width: 0;
+  border-left-width: 0;
+  border-right-width: 0;
+}
+body:not(.is-mobile) .butter-table-toolbar[data-toolbar-style="detached"] .butter-table-toolbar-inner {
+  width: max-content;
+  max-width: 100%;
 }
 /* Mirror corner-rounding for bottom-docked detached: table toolbar
    sits ABOVE the main toolbar, so the rounded corners go on top

@@ -295,14 +295,6 @@ export class ButterSettingTab extends PluginSettingTab {
    *  fallback on network/auth failure. */
   public async fetchAndRenderDevices(listEl: HTMLElement) {
     const sessionToken = this.plugin.settings.sessionToken;
-    if (sessionToken === "dev-fake") {
-      listEl.empty();
-      this.renderCurrentDeviceFallback(
-        listEl,
-        "Dev mode: Devices list bypassed.",
-      );
-      return;
-    }
     if (!sessionToken) {
       listEl.empty();
       this.renderCurrentDeviceFallback(

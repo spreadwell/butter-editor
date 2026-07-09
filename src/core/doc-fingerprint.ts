@@ -88,6 +88,9 @@ function isEmptyTransient(node: PMNode): boolean {
 const isBreakNode = (n: PMNode) =>
   n.type.name === "softbreak" || n.type.name === "hard_break";
 
+const isWhitespaceTextNode = (n: PMNode) =>
+  n.isText && /^[ \t]*$/.test(n.text ?? "");
+
 // Leading/trailing softbreak/hardbreak atoms inside a textblock
 // don't round-trip: markdown-it strips trailing whitespace at
 // paragraph parse and treats leading whitespace as no-op.
@@ -96,6 +99,20 @@ function trimEdgeBreaks(children: PMNode[]): PMNode[] {
   let end = children.length;
   while (start < end && isBreakNode(children[start])) start++;
   while (end > start && isBreakNode(children[end - 1])) end--;
+  return start === 0 && end === children.length
+    ? children
+    : children.slice(start, end);
+}
+
+// Leading/trailing whitespace-only text nodes around inline atoms
+// don't round-trip either. Example: typing/selecting `#tag ` creates
+// `paragraph(obsidian_tag, text(" "))`, but markdown-it reparses the
+// serialized `#tag ` as just `paragraph(obsidian_tag)`.
+function trimEdgeWhitespaceText(children: PMNode[]): PMNode[] {
+  let start = 0;
+  let end = children.length;
+  while (start < end && isWhitespaceTextNode(children[start])) start++;
+  while (end > start && isWhitespaceTextNode(children[end - 1])) end--;
   return start === 0 && end === children.length
     ? children
     : children.slice(start, end);
@@ -170,7 +187,7 @@ function walk(node: PMNode): Shape {
     const filtered = node.type.name === "heading"
       ? stripAllBreaks(all)
       : node.isTextblock
-      ? hoistBlockIdsToEnd(trimEdgeBreaks(all))
+      ? hoistBlockIdsToEnd(trimEdgeWhitespaceText(trimEdgeBreaks(all)))
       : all;
     let textCount = 0;
     const nonTextChildren: Shape[] = [];

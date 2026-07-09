@@ -218,6 +218,21 @@ import type { SourcePurityMode } from "../welcome-modal";
 
     const formatting = this.createSettingGroup(root, "Formatting");
     new Setting(formatting)
+      .setName("Markdown typing shortcuts")
+      .setDesc(
+        "When this is on, typing things like *word*, # Heading, or - List turns them into formatting. Leave it off to keep those characters as text.",
+      )
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.enableMarkdownShortcuts)
+          .onChange(async (v) => {
+            this.plugin.settings.enableMarkdownShortcuts = v;
+            await this.plugin.saveSettings();
+            this.plugin.applyMarkdownShortcutSettingToAllViews();
+          }),
+      );
+
+    new Setting(formatting)
       .setName("HTML formatting")
       .setDesc(
         "Show toolbar buttons for text color, custom highlight color, underline, superscript, subscript, and keyboard key. These use HTML in your files. Turn off to keep your notes in standard Markdown only. Existing formatting is still displayed either way.",
@@ -335,7 +350,7 @@ import type { SourcePurityMode } from "../welcome-modal";
     const compat = this.createSettingGroup(root, "Compatibility");
     new Setting(compat)
       .setName("Plugin autocomplete pop-ups")
-      .setDesc("Show autocomplete pop-ups from other plugins as you type, like [[ for links, # for tags, and : for emoji. Press esc to dismiss.")
+      .setDesc("Show autocomplete pop-ups from other plugins as you type, like emoji, mentions, or dates. Press esc to dismiss.")
       .addToggle((t) =>
         t
           .setValue(this.plugin.settings.enableSuggestBridge)

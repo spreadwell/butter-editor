@@ -48,6 +48,11 @@ import { ShortcutHelpModal } from "./ui/shortcut-help";
 
 import { ButterOutlineView, VIEW_TYPE_BUTTER_OUTLINE } from "./ui/outline-view";
 import { scrollHost } from "./util/dom-utils";
+import {
+  markNameForFormattingHotkey,
+  patchNativeFormattingCommands,
+  type NativeFormattingCommandRecord,
+} from "./util/native-formatting-commands";
 import { ButterSettingTab } from "./ui/settings-tab";
 import { setPresetColorsProvider } from "./ui/toolbar";
 import { installWordCountBridge } from "./ui/wordcount-bridge";
@@ -318,6 +323,8 @@ export interface ButterSettings {
   enableSuggestBridge: boolean;
   /** Enable rich paste + file drop. */
   enablePasteDrop: boolean;
+  /** Turn typed Markdown patterns into formatting while editing. */
+  enableMarkdownShortcuts: boolean;
   /** Open .md files in Butter automatically. When ON, any markdown
    *  file opened (via Open Quickly, file explorer click, internal
    *  link, new-note creation, etc.) is switched to the Butter view
@@ -711,6 +718,7 @@ const DEFAULT_SETTINGS: ButterSettings = {
   presetHighlightColors: [...DEFAULT_PRESET_HIGHLIGHT_COLORS],
   enableSuggestBridge: true,
   enablePasteDrop: true,
+  enableMarkdownShortcuts: false,
   openNewFilesInButter: true,
   disableAnimations: false,
   toolbarActiveStyle: "soft",
@@ -816,6 +824,9 @@ export default class ButterEditorPlugin extends Plugin {
    *  right-click "Settings" item) can pre-select a sub-tab before
    *  opening the modal. */
   private settingTab: ButterSettingTab | null = null;
+  private nativeFormattingCommandRestorers: Array<() => void> = [];
+  private restoreHotkeyManagerFormattingBridge: (() => void) | null = null;
+  private handledFormattingHotkeyEvents = new WeakSet<object>();
 
   /** Worker client for licensing. Initialized in onload(). */
   licenseClient!: LicenseClient;
@@ -1268,7 +1279,11 @@ export default class ButterEditorPlugin extends Plugin {
     // Safely proxy activeEditor for widgets. We check the call stack
     // to ensure we return the real activeEditor (usually undefined for Butter)
     // during Obsidian's internal layout lifecycle, preventing crashes.
-    const wsEditor = this.app.workspace as import("obsidian").Workspace & { _butterActiveEditorProxied?: boolean, activeEditor?: unknown };
+    const wsEditor = this.app.workspace as import("obsidian").Workspace & {
+      _butterActiveEditorProxied?: boolean;
+      activeEditor?: unknown;
+      activeLeaf?: WorkspaceLeaf | null;
+    };
     if (!wsEditor._butterActiveEditorProxied) {
       wsEditor._butterActiveEditorProxied = true;
       const origDescriptor = Object.getOwnPropertyDescriptor(wsEditor, "activeEditor") || { value: wsEditor.activeEditor, writable: true, configurable: true };
@@ -1279,7 +1294,7 @@ export default class ButterEditorPlugin extends Plugin {
             if (origDescriptor.get) return origDescriptor.get.call(wsEditor) as unknown;
             return origDescriptor.value as unknown;
           }
-          const butterView = origGetActiveViewOfType(ButterEditorView);
+          const butterView = this.resolveButterEditor()?.view ?? null;
           if (butterView) {
             return butterView;
           }
@@ -1341,12 +1356,7 @@ export default class ButterEditorPlugin extends Plugin {
       void this.handleRecoveryDeepLink(params.key, params.customer);
     });
 
-    // Boot toast announcing the running plugin + version. Reads
-    // straight from the loaded manifest so dev builds (which inject
-    // a "(DEV)" suffix into the name and `-N` into the version)
-    // automatically show as `Butter Editor (DEV) v0.9.2-127`, while
-    // production builds show `Butter Editor v0.9.2`. The counter in
-    // the dev version tells you whether a rebuild actually loaded.
+    // Boot toast announcing the loaded plugin and version.
     new Notice(`${this.manifest.name} v${this.manifest.version}`, 3000);
 
     // Locked-file UX. When another process holds a vault file open
@@ -1539,7 +1549,8 @@ export default class ButterEditorPlugin extends Plugin {
     this.registerCommands();
     this.registerMenus();
     this.registerNewFileHook();
-    this.registerFormattingCaptureHandler();
+    this.registerNativeFormattingCommandBridge();
+    this.registerHotkeyManagerFormattingBridge();
     this.registerPolishCommands();
 
     // Bridge Butter's PM doc into Obsidian's built-in Word Count
@@ -1706,7 +1717,7 @@ export default class ButterEditorPlugin extends Plugin {
         }
 
         if (startIdx === -1) {
-          console.warn("[Butter Debug] Could not find block in serialized string.");
+          console.warn("[Butter] Could not find block in serialized string.");
           return null;
         }
 
@@ -1936,47 +1947,204 @@ export default class ButterEditorPlugin extends Plugin {
 
     // ── Formatting shortcuts ───────────────────────────────────
     //
-    // Registered at the Obsidian command level rather than as PM
-    // keymap bindings. Obsidian's global dispatcher fires the first
-    // command whose checkCallback returns true; since `ctx` for a
-    // Butter view is a ButterEditorView (not MarkdownView),
-    // Obsidian's own `editor:toggle-bold` etc. return false while
-    // ours return true, so our commands are the ones that run in
-    // Butter while the natives keep working in Source / Live Preview.
+    // Butter-scoped command ids for users who bind hotkeys directly
+    // to this plugin. Do not assign default hotkeys here: Obsidian's
+    // native `editor:toggle-*` ids own the stock formatting bindings
+    // and are patched below for Butter views. Duplicating those
+    // defaults can turn one physical keypress into two toggles.
     const butterMarkCommand = (
       id: string,
       name: string,
-      hotkey:
-        | { modifiers: ("Mod" | "Shift" | "Alt" | "Ctrl" | "Meta")[]; key: string }
-        | null,
       markName: string,
     ) => {
       this.addCommand({
         id,
         name,
-        ...(hotkey ? { hotkeys: [hotkey] } : {}),
         checkCallback: (checking) => {
-          const v = this.app.workspace.getActiveViewOfType(ButterEditorView);
-          const pm = v?.pmViewRef();
-          if (!pm) return false;
-          const mark = (pm.state.schema.marks as Record<string, MarkType>)[markName];
-          if (!mark) return false;
-          if (!checking) toggleMark(mark)(pm.state, pm.dispatch.bind(pm));
+          if (!this.canToggleButterMark(markName)) return false;
+          if (!checking) return this.toggleButterMark(markName);
           return true;
         },
       });
     };
 
-    butterMarkCommand("toggle-bold", "Toggle bold", null, "strong");
-    butterMarkCommand("toggle-italic", "Toggle italic", null, "em");
-    butterMarkCommand("toggle-inline-code", "Toggle inline code", null, "code");
-    butterMarkCommand(
-      "toggle-strikethrough",
-      "Toggle strikethrough",
-      null,
-      "strikethrough",
+    butterMarkCommand("toggle-bold", "Toggle bold", "strong");
+    butterMarkCommand("toggle-italic", "Toggle italic", "em");
+    butterMarkCommand("toggle-inline-code", "Toggle inline code", "code");
+    butterMarkCommand("toggle-strikethrough", "Toggle strikethrough", "strikethrough");
+    butterMarkCommand("toggle-highlight", "Toggle highlight", "highlight");
+  }
+
+  private resolveButterEditor(target?: EventTarget | null) {
+    const candidates: ButterEditorView[] = [];
+    const addCandidate = (view: unknown) => {
+      if (view instanceof ButterEditorView && !candidates.includes(view)) {
+        candidates.push(view);
+      }
+    };
+
+    const activeButterView =
+      this.app.workspace.getActiveViewOfType(ButterEditorView);
+    addCandidate(activeButterView);
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_BUTTER)) {
+      addCandidate(leaf.view);
+    }
+
+    const targetNode = target instanceof Node ? target : null;
+    const activeElement = activeDocument.activeElement;
+    for (const view of candidates) {
+      const pm = view.pmViewRef();
+      if (!pm) continue;
+      if (
+        view === activeButterView ||
+        pm.hasFocus() ||
+        (targetNode && view.containerEl.contains(targetNode)) ||
+        (activeElement && view.containerEl.contains(activeElement))
+      ) {
+        return { view, pm };
+      }
+    }
+
+    return null;
+  }
+
+  private canToggleButterMark(markName: string, target?: EventTarget | null): boolean {
+    const active = this.resolveButterEditor(target);
+    if (!active) return false;
+    return Boolean((active.pm.state.schema.marks as Record<string, MarkType | undefined>)[markName]);
+  }
+
+  private toggleButterMark(markName: string, target?: EventTarget | null): boolean {
+    const active = this.resolveButterEditor(target);
+    if (!active) return false;
+    const mark = (active.pm.state.schema.marks as Record<string, MarkType | undefined>)[markName];
+    if (!mark) return false;
+    const handled = toggleMark(mark)(
+      active.pm.state,
+      active.pm.dispatch.bind(active.pm),
+      active.pm,
     );
-    butterMarkCommand("toggle-highlight", "Toggle highlight", null, "highlight");
+    if (handled) {
+      active.view.editor?.refresh();
+      active.pm.focus();
+    }
+    return handled;
+  }
+
+  /**
+   * Obsidian's default Ctrl/Cmd+B and Ctrl/Cmd+I hotkeys are bound to
+   * core command ids (`editor:toggle-bold`, `editor:toggle-italics`).
+   * Those commands call `workspace.activeEditor.editor
+   * .toggleMarkdownFormatting(...)`. Butter exposes that shim too,
+   * but wrapping the core command ids gives us a stricter guarantee:
+   * if Butter is the active view, the native ids toggle Butter's PM
+   * marks directly; otherwise Obsidian's original Source/Live Preview
+   * behavior is left untouched.
+   */
+  private registerNativeFormattingCommandBridge() {
+    const commandManager = this.app.commands as
+      | {
+          addCommand?: (command: unknown) => unknown;
+          commands?: Record<string, NativeFormattingCommandRecord | undefined>;
+        }
+      | undefined;
+
+    if (commandManager?.addCommand) {
+      const originalAddCommand = commandManager.addCommand;
+      const wrappedAddCommand = (command: unknown) => {
+        const result = originalAddCommand.call(commandManager, command);
+        this.refreshNativeFormattingCommandBridge();
+        return result;
+      };
+      commandManager.addCommand = wrappedAddCommand;
+      this.register(() => {
+        if (commandManager.addCommand === wrappedAddCommand) {
+          commandManager.addCommand = originalAddCommand;
+        }
+      });
+    }
+
+    this.refreshNativeFormattingCommandBridge();
+    this.app.workspace.onLayoutReady(() => this.refreshNativeFormattingCommandBridge());
+    for (const delayMs of [0, 100, 500, 1500, 3000]) {
+      const timer = window.setTimeout(
+        () => this.refreshNativeFormattingCommandBridge(),
+        delayMs,
+      );
+      this.register(() => window.clearTimeout(timer));
+    }
+    this.register(() => this.restoreNativeFormattingCommandBridge());
+  }
+
+  private refreshNativeFormattingCommandBridge() {
+    this.restoreNativeFormattingCommandBridge();
+    const commands = this.app.commands?.commands as
+      | Record<string, NativeFormattingCommandRecord | undefined>
+      | undefined;
+    this.nativeFormattingCommandRestorers = patchNativeFormattingCommands(
+      commands,
+      (markName) => this.canToggleButterMark(markName),
+      (markName) => this.toggleButterMark(markName),
+    );
+  }
+
+  private restoreNativeFormattingCommandBridge() {
+    for (const restore of this.nativeFormattingCommandRestorers) restore();
+    this.nativeFormattingCommandRestorers = [];
+  }
+
+  /**
+   * Formatting shortcut bridge at Obsidian's hotkey dispatcher boundary.
+   * Keep keyboard formatting single-owned here. Lower-level DOM capture
+   * and ProseMirror mark keymaps can see the same physical keypress and
+   * turn one shortcut into two toggle transactions.
+   */
+  private registerHotkeyManagerFormattingBridge() {
+    const hotkeyManager = this.app.hotkeyManager as
+      | {
+          onTrigger?: (evt: unknown, hotkey: unknown) => unknown;
+        }
+      | undefined;
+    if (!hotkeyManager?.onTrigger || this.restoreHotkeyManagerFormattingBridge) return;
+
+    const originalOnTrigger = hotkeyManager.onTrigger;
+    const wrappedOnTrigger = (evt: unknown, hotkey: unknown) => {
+      const markName = markNameForFormattingHotkey(
+        evt as Parameters<typeof markNameForFormattingHotkey>[0],
+        hotkey as Parameters<typeof markNameForFormattingHotkey>[1],
+      );
+      if (markName && this.canToggleButterMark(markName, (evt as { target?: EventTarget | null } | null)?.target)) {
+        const eventLike = evt as
+          | {
+              preventDefault?: () => void;
+              stopImmediatePropagation?: () => void;
+              target?: EventTarget | null;
+            }
+          | null;
+        const eventObject =
+          evt && (typeof evt === "object" || typeof evt === "function")
+            ? evt
+            : null;
+        eventLike?.preventDefault?.();
+        eventLike?.stopImmediatePropagation?.();
+        if (eventObject) {
+          if (this.handledFormattingHotkeyEvents.has(eventObject)) return false;
+          this.handledFormattingHotkeyEvents.add(eventObject);
+        }
+        this.toggleButterMark(markName, eventLike?.target);
+        return false;
+      }
+      return originalOnTrigger.call(hotkeyManager, evt, hotkey);
+    };
+
+    hotkeyManager.onTrigger = wrappedOnTrigger;
+    this.restoreHotkeyManagerFormattingBridge = () => {
+      if (hotkeyManager.onTrigger === wrappedOnTrigger) {
+        hotkeyManager.onTrigger = originalOnTrigger;
+      }
+      this.restoreHotkeyManagerFormattingBridge = null;
+    };
+    this.register(() => this.restoreHotkeyManagerFormattingBridge?.());
   }
 
   /**
@@ -2374,6 +2542,18 @@ export default class ButterEditorPlugin extends Plugin {
     }
   }
 
+  /** Push the markdown-typing-shortcuts preference to every active
+   *  Butter view so users do not need to reload Obsidian or reopen
+   *  notes after changing the setting. */
+  public applyMarkdownShortcutSettingToAllViews() {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_BUTTER)) {
+      const v = leaf.view as unknown as ButterEditorView;
+      if (typeof v?.applyMarkdownShortcutSetting === "function") {
+        v.applyMarkdownShortcutSetting();
+      }
+    }
+  }
+
   /** Push the toolbar-position preference to every active Butter view.
    *  Updates the data-toolbar-pos attribute (CSS swaps sticky-top vs
    *  sticky-bottom rules) AND moves the toolbar DOM node to the end /
@@ -2442,62 +2622,6 @@ export default class ButterEditorPlugin extends Plugin {
         });
       }),
     );
-  }
-
-  /**
-   * Install a document-level keydown listener in CAPTURE phase so
-   * Butter's formatting hotkeys intercept before Obsidian's own
-   * command dispatcher (which would otherwise route Ctrl+B through
-   * `editor:toggle-bold` against our editor shim and eat the event).
-   *
-   * Only fires when the active view is a ButterEditorView with an
-   * active PM editor; otherwise the event is left alone so Obsidian's
-   * native hotkeys keep working in Source / Live Preview / every
-   * other view type.
-   */
-  private registerFormattingCaptureHandler() {
-    const isMod = (e: KeyboardEvent) => e.ctrlKey || e.metaKey;
-
-    const handler = (evt: KeyboardEvent) => {
-      if (!isMod(evt)) return;
-
-      const key = evt.key.toLowerCase();
-      const shift = evt.shiftKey;
-      let markName: string | null = null;
-      if (!shift) {
-        if (key === "b") markName = "strong";
-        else if (key === "i") markName = "em";
-        else if (key === "e") markName = "code";
-      } else {
-        if (key === "s") markName = "strikethrough";
-        else if (key === "h") markName = "highlight";
-      }
-      if (!markName) return;
-
-      const v = this.app.workspace.getActiveViewOfType(ButterEditorView);
-      const pm = v?.pmViewRef();
-      if (!pm) return;
-
-      const target = evt.target as Node | null;
-      if (!target || !v!.containerEl.contains(target)) return;
-
-      const mark = pm.state.schema.marks[markName];
-      if (!mark) return;
-
-      evt.preventDefault();
-      evt.stopImmediatePropagation();
-      toggleMark(mark)(pm.state, pm.dispatch.bind(pm));
-    };
-
-    // Window capture phase is the earliest listener slot in the DOM
-    // event chain - earlier than any document-level handler Obsidian
-    // or another plugin could register. Whichever one Obsidian's own
-    // hotkey dispatcher uses, ours fires first and claims the event
-    // (via stopImmediatePropagation) when Butter is the target. For
-    // all other views, the handler early-returns and the event
-    // continues to native hotkey processing.
-    this.registerDomEvent(window, "keydown", handler, { capture: true });
-    this.registerDomEvent(activeDocument, "keydown", handler, { capture: true });
   }
 
   /**

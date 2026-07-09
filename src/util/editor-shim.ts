@@ -11,6 +11,7 @@
  */
 import type { EditorView } from "prosemirror-view";
 import { Selection } from "prosemirror-state";
+import { toggleMark } from "prosemirror-commands";
 import type { Serializer } from "../core/serializer-types";
 
 export interface EditorPosition {
@@ -156,6 +157,45 @@ export class PMEditorShim {
 
   somethingSelected(): boolean {
     return !this.pm.state.selection.empty;
+  }
+
+  toggleMarkdownFormatting(format?: unknown, ...rest: unknown[]): void {
+    const normalized = [format, ...rest]
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object") {
+          const record = part as Record<string, unknown>;
+          return [
+            record.type,
+            record.mark,
+            record.name,
+            record.format,
+            record.syntax,
+            record.token,
+          ]
+            .filter((value) => typeof value === "string")
+            .join(" ");
+        }
+        return "";
+      })
+      .join(" ")
+      .toLowerCase();
+    const markName =
+      /\b(bold|strong)\b|\*\*|__/.test(normalized)
+        ? "strong"
+        : /\b(italic|italics|em)\b|(^|\s)[*_](\s|$)/.test(normalized)
+          ? "em"
+          : /\b(strikethrough|strike)\b|~~/.test(normalized)
+            ? "strikethrough"
+            : /\b(inline-code|code)\b|`/.test(normalized)
+              ? "code"
+              : /\bhighlight\b|==/.test(normalized)
+                ? "highlight"
+                : "";
+    const mark = markName ? this.pm.state.schema.marks[markName] : null;
+    if (!mark) return;
+    toggleMark(mark)(this.pm.state, this.pm.dispatch.bind(this.pm));
+    this.refresh();
   }
 
   getRange(from: EditorPosition, to: EditorPosition): string {

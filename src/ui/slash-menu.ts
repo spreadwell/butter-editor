@@ -11,6 +11,8 @@ import type { EditorView } from "prosemirror-view";
 import { setBlockType, wrapIn } from "prosemirror-commands";
 import type { Schema } from "prosemirror-model";
 
+import { bindFloatingSurfaceReposition } from "../util/floating-surface";
+
 // ═══════════════════════════════════════════
 //  Items
 // ═══════════════════════════════════════════
@@ -419,6 +421,7 @@ class SlashMenuPopover {
   private items: SlashItem[] = [];
   private selected = 0;
   private itemEls: HTMLElement[] = [];
+  private unbindReposition: (() => void) | null = null;
 
   constructor(
     private view: EditorView,
@@ -428,7 +431,8 @@ class SlashMenuPopover {
     private onDismiss: () => void,
   ) {
     this.dom = activeDocument.createElement("div");
-    this.dom.className = "butter-slash-menu";
+    this.dom.className =
+      "butter-surface butter-surface--command butter-slash-menu";
     // ARIA listbox pattern. Editor focus stays in the document so
     // typing keeps flowing through to the slash query; the menu
     // tracks its highlighted item via aria-activedescendant on the
@@ -437,9 +441,12 @@ class SlashMenuPopover {
     this.dom.setAttribute("role", "listbox");
     this.dom.setAttribute("aria-label", "Slash menu");
     this.dom.id = `butter-slash-${Math.random().toString(36).slice(2, 9)}`;
+    this.dom.addEventListener("butter-dismiss", () => this.onDismiss());
     activeDocument.body.appendChild(this.dom);
+    this.unbindReposition = bindFloatingSurfaceReposition(() => {
+      this.position();
+    });
     this.filter("");
-    this.position();
   }
 
   private position() {
@@ -472,18 +479,23 @@ class SlashMenuPopover {
       : SLASH_ITEMS.slice();
     this.selected = 0;
     this.render();
+    this.position();
   }
 
   private render() {
     this.dom.empty();
     this.itemEls = [];
     if (!this.items.length) {
-      const empty = this.dom.createDiv({ cls: "butter-slash-empty" });
+      const empty = this.dom.createDiv({
+        cls: "butter-surface-empty butter-slash-empty",
+      });
       empty.textContent = "No matches";
       return;
     }
     for (const [i, item] of this.items.entries()) {
-      const el = this.dom.createDiv({ cls: "butter-slash-item" });
+      const el = this.dom.createDiv({
+        cls: "butter-surface-row butter-surface-row--command butter-slash-item",
+      });
       el.setAttribute("role", "option");
       el.id = `${this.dom.id}-opt-${i}`;
       if (i === this.selected) {
@@ -492,11 +504,21 @@ class SlashMenuPopover {
       } else {
         el.setAttribute("aria-selected", "false");
       }
-      const iconEl = el.createDiv({ cls: "butter-slash-icon" });
+      const iconEl = el.createDiv({
+        cls: "butter-surface-icon butter-slash-icon",
+      });
       setIcon(iconEl, item.icon);
-      const meta = el.createDiv({ cls: "butter-slash-meta" });
-      meta.createDiv({ cls: "butter-slash-label", text: item.label });
-      meta.createDiv({ cls: "butter-slash-desc", text: item.desc });
+      const meta = el.createDiv({
+        cls: "butter-surface-meta butter-slash-meta",
+      });
+      meta.createDiv({
+        cls: "butter-surface-label butter-slash-label",
+        text: item.label,
+      });
+      meta.createDiv({
+        cls: "butter-surface-detail butter-slash-desc",
+        text: item.desc,
+      });
       el.addEventListener("mousedown", (e) => {
         e.preventDefault();
         this.choose(i);
@@ -551,6 +573,8 @@ class SlashMenuPopover {
   }
 
   destroy() {
+    this.unbindReposition?.();
+    this.unbindReposition = null;
     this.dom.remove();
   }
 }
@@ -646,7 +670,7 @@ export function slashMenuPlugin(app: App, schema: Schema) {
         }
         if (event.key === "Escape") {
           event.preventDefault();
-          pop.remove();
+          pop.dispatchEvent(new Event("butter-dismiss"));
           return true;
         }
         return false;

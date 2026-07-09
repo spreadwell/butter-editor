@@ -18,6 +18,7 @@ import { Plugin as PMPlugin, PluginKey } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 
 import { PMEditorShim } from "./editor-shim";
+import { bindFloatingSurfaceReposition } from "./floating-surface";
 import type { Serializer } from "../core/serializer-types";
 
 interface SuggestLike {
@@ -49,6 +50,7 @@ export function suggestBridgePlugin(
     view(view) {
       const shim = new PMEditorShim(view, serialize);
       let open: OpenedContext | null = null;
+      let unbindReposition: (() => void) | null = null;
 
       const getRegisteredSuggests = (): SuggestLike[] => {
         try {
@@ -70,6 +72,8 @@ export function suggestBridgePlugin(
         }
         open.popover.remove();
         open = null;
+        unbindReposition?.();
+        unbindReposition = null;
       };
 
       const runSelection = async (
@@ -91,13 +95,17 @@ export function suggestBridgePlugin(
         ctx.popover.empty();
         ctx.itemEls = [];
         if (!ctx.items.length) {
-          const empty = ctx.popover.createDiv({ cls: "suggestion-empty" });
+          const empty = ctx.popover.createDiv({
+            cls: "butter-surface-empty suggestion-empty",
+          });
           empty.textContent = "No suggestions";
           return;
         }
         const container = ctx.popover.createDiv({ cls: "suggestion" });
         for (let i = 0; i < ctx.items.length; i++) {
-          const el = container.createDiv({ cls: "suggestion-item" });
+          const el = container.createDiv({
+            cls: "butter-surface-row butter-surface-row--compact suggestion-item",
+          });
           if (i === ctx.selectedIndex) el.addClass("is-selected");
           try {
             ctx.suggest.renderSuggestion(ctx.items[i], el);
@@ -126,6 +134,14 @@ export function suggestBridgePlugin(
         el.setCssProps({
           "--butter-pos-left": `${coords.left}px`,
           "--butter-pos-top": `${coords.bottom + 4}px`,
+        });
+        window.requestAnimationFrame(() => {
+          const rect = el.getBoundingClientRect();
+          if (rect.bottom > window.innerHeight - 12) {
+            el.setCssProps({
+              "--butter-pos-top": `${coords.top - rect.height - 4}px`,
+            });
+          }
         });
       };
 
@@ -156,7 +172,9 @@ export function suggestBridgePlugin(
             const arr = Array.isArray(items) ? items.slice(0, 50) : [];
             if (!arr.length) continue;
             const popover = activeDocument.createElement("div");
-            popover.className = "suggestion-container butter-suggest-ext";
+            popover.className =
+              "butter-surface butter-surface--compact suggestion-container butter-suggest-ext";
+            popover.addEventListener("butter-dismiss", close);
             activeDocument.body.appendChild(popover);
             open = {
               suggest,
@@ -166,6 +184,9 @@ export function suggestBridgePlugin(
               selectedIndex: 0,
               itemEls: [],
             };
+            unbindReposition = bindFloatingSurfaceReposition(() => {
+              if (open) positionPopover(open.popover, view);
+            });
             renderPopover(open);
             positionPopover(popover, v);
             break;
@@ -191,7 +212,6 @@ export function suggestBridgePlugin(
         "]",
         "@",
         ":",
-        "#",
         "$",
         "!",
       ]);
@@ -293,7 +313,7 @@ export function suggestBridgePlugin(
         }
         if (event.key === "Escape") {
           event.preventDefault();
-          pop.remove();
+          pop.dispatchEvent(new Event("butter-dismiss"));
           return true;
         }
         return false;

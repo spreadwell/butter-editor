@@ -28,6 +28,21 @@ import { scrollHost } from "../../util/dom-utils";
 import { BLOCK_ANIMATOR_SKIP_IDS } from "../block-animator";
 import { EXPLICIT_SELECTION_META } from "../selection-overlay";
 
+const INLINE_TAP_TARGET_SELECTOR = [
+  ".butter-external-link",
+  ".butter-wikilink",
+  ".butter-tag",
+  ".butter-obsidian-embed",
+  ".butter-inline-math-view",
+  ".butter-footnote-ref",
+].join(", ");
+
+function eventTargetElement(target: EventTarget | null): Element | null {
+  if (target instanceof Element) return target;
+  if (target instanceof Node) return target.parentElement;
+  return null;
+}
+
 function findScrollAnchor(view: EditorView, drag: LiveDragState): HTMLElement | null {
   const draggedSet = new Set(drag.draggedPositions);
   const vp = view.dom.closest(".butter-editor-view");
@@ -607,7 +622,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
       const onEditorTouchDown = (e: PointerEvent): void => {
         if (e.pointerType !== "touch") return;
         if (phase.kind !== "idle") return;
-        const targetEl = e.target as Element | null;
+        const targetEl = eventTargetElement(e.target);
         // Callout header / title is the natural "grab here" zone for
         // dragging a callout. Allow long-press arming there even when
         // the editor is focused — the alternative is "callouts are
@@ -625,6 +640,10 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         // Skip clicks on the handle itself — handle has its own
         // pointerdown listener.
         if (targetEl?.closest?.(".butter-drag-handle")) return;
+        // Inline links/atoms own their mobile tap. Do not let the
+        // generic "first tap focuses editor" path unlock editable
+        // mode and briefly summon the Android keyboard.
+        if (targetEl?.closest?.(INLINE_TAP_TARGET_SELECTOR)) return;
 
         // For callout-header touches, target the CALLOUT NODE itself
         // (not a child block inside it). Without this, findBlockUnder-
@@ -1926,4 +1945,3 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
     },
   });
 }
-

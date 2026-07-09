@@ -48,6 +48,7 @@ import {
   prepareMobileDrawerOpen,
   setMobileDrawerCleanup,
 } from "./insert-drawer";
+import { bindFixedPopoverToAnchor } from "../util/floating-surface";
 
 // ── Button definitions ──
 
@@ -488,11 +489,11 @@ export function setHeading(schema: Schema, view: EditorView, level: number) {
  *
  *  Returns `{ kind, target, alias? }`. `target` is the note path or
  *  full URL; `alias` (wikilink only) is the explicit pipe-after text. */
-type LinkTarget =
+export type LinkTarget =
   | { kind: "external"; target: string }
   | { kind: "wikilink"; target: string; alias?: string };
 
-function classifyLinkInput(raw: string): LinkTarget | null {
+export function classifyLinkInput(raw: string): LinkTarget | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   // Explicit wikilink brackets - strip and parse the alias split.
@@ -526,7 +527,7 @@ function classifyLinkInput(raw: string): LinkTarget | null {
  *  wikilink → insert a `wikilink` atom node with target + alias.
  *  When selection has text, that text becomes the alias / linked
  *  span; when empty, `displayText` becomes the visible label.  */
-function applyLink(
+export function applyLink(
   schema: Schema,
   view: EditorView,
   detected: LinkTarget,
@@ -2350,7 +2351,7 @@ function openToolbarLinkMenu(
  *  Matches the same shapes `classifyLinkInput` would route external,
  *  used to suppress vault-file suggestions on the toolbar's
  *  dual-purpose Link field. */
-function looksLikeExternalUrl(raw: string): boolean {
+export function looksLikeExternalUrl(raw: string): boolean {
   const trimmed = raw.trim();
   if (!trimmed) return false;
   if (/^([a-z][a-z0-9+.-]*:\/\/|mailto:|tel:|sms:|obsidian:)/i.test(trimmed)) {
@@ -2969,17 +2970,13 @@ export function createToolbar(
     anchor: HTMLElement,
     options: { closeOnLeave?: boolean } = {},
   ) => {
-    if (!popup.style.position && !popup.classList.contains("butter-pos-fixed")
+    const shouldPlace = !popup.style.position && !popup.classList.contains("butter-pos-fixed")
       && !popup.classList.contains("butter-pos-fixed-popover")
-      && !popup.classList.contains("butter-mobile-popup-placed")) {
-      const rect = anchor.getBoundingClientRect();
-      popup.addClass("butter-pos-fixed");
-      popup.setCssProps({
-        "--butter-pos-top": `${rect.bottom + 6}px`,
-        "--butter-pos-left": `${rect.left}px`,
-      });
-    }
+      && !popup.classList.contains("butter-mobile-popup-placed");
     activeDocument.body.appendChild(popup);
+    const positionCleanup = shouldPlace
+      ? bindFixedPopoverToAnchor(popup, anchor)
+      : null;
     activePopover = popup;
     activePopoverAnchor = anchor;
 
@@ -3019,6 +3016,7 @@ export function createToolbar(
     }
 
     popoverCleanup = () => {
+      if (positionCleanup) positionCleanup();
       activeDocument.removeEventListener("mousedown", downHandler);
       if (moveHandler) activeDocument.removeEventListener("mousemove", moveHandler);
     };

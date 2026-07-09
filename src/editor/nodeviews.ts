@@ -1365,6 +1365,7 @@ export function wikilinkView(app: App, getSourcePath: () => string) {
     const alias = attrStr(node, "alias");
     const dom = activeDocument.createElement("a");
     dom.classList.add("butter-wikilink", "internal-link");
+    dom.contentEditable = "false";
     dom.textContent = alias || target;
     dom.href = target;
     dom.dataset.href = target;
@@ -1402,6 +1403,7 @@ export function tagView(app: App) {
     const tag = attrStr(node, "tag");
     const dom = activeDocument.createElement("a");
     dom.classList.add("butter-tag", "tag");
+    dom.contentEditable = "false";
     dom.textContent = `#${tag}`;
     dom.href = "#";
 
@@ -1549,4 +1551,3 @@ export function blockIdView() {
     return { dom, stopEvent: () => true };
   };
 }
-

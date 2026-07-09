@@ -27,6 +27,7 @@ import {
 import type { EditorView } from "prosemirror-view";
 import { Fragment, type Node as PMNode, type Schema } from "prosemirror-model";
 import type { Layout, LayoutItem } from "../ui/toolbar-layout";
+import { bindFixedPopoverToAnchor } from "../util/floating-surface";
 import {
   addColumnAfter,
   addColumnBefore,
@@ -681,13 +682,8 @@ export function tableToolbarPlugin(
         anchor: HTMLElement,
         options: { closeOnLeave?: boolean } = {},
       ) => {
-        const rect = anchor.getBoundingClientRect();
-        popup.addClass("butter-pos-fixed");
-        popup.setCssProps({
-          "--butter-pos-top": `${rect.bottom + 6}px`,
-          "--butter-pos-left": `${rect.left}px`,
-        });
         activeDocument.body.appendChild(popup);
+        const positionCleanup = bindFixedPopoverToAnchor(popup, anchor);
         activePopover = popup;
         const downHandler = (ev: MouseEvent) => {
           if (!popup.contains(ev.target as Node) && ev.target !== anchor) {
@@ -719,6 +715,7 @@ export function tableToolbarPlugin(
         }
 
         popoverCleanup = () => {
+          positionCleanup();
           activeDocument.removeEventListener("mousedown", downHandler);
           if (moveHandler) {
             activeDocument.removeEventListener("mousemove", moveHandler);

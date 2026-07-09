@@ -195,6 +195,23 @@ export class ButterEditorView extends TextFileView {
     return this.pmView;
   }
 
+  /** Rebuild only Butter's input-rules plugin when the markdown
+   *  shortcut preference changes. Existing editor state, selection,
+   *  history, and every other plugin instance stay in place. */
+  public applyMarkdownShortcutSetting() {
+    if (!this.pmView) return;
+    const plugins = this.pmView.state.plugins.map((plugin) =>
+      (plugin.spec as { isInputRules?: boolean }).isInputRules
+        ? buildInputRules(schema, {
+            enableMarkdownShortcuts: this.settings.enableMarkdownShortcuts,
+          })
+        : plugin,
+    );
+    this.suppressChange = true;
+    this.pmView.updateState(this.pmView.state.reconfigure({ plugins }));
+    this.suppressChange = false;
+  }
+
   /** Apply the experimental "max theme compatibility" mode: toggles
    *  Obsidian's Reading-mode scope classes on the PM element. When
    *  on, theme CSS scoped to any of those classes cascades in.
@@ -720,9 +737,18 @@ export class ButterEditorView extends TextFileView {
     return "source";
   }
 
+  toggleMode(): void {
+    cycleView(this.leaf, this.settings.viewCycleModes);
+  }
+
   get currentMode(): unknown {
     return { type: "source" };
   }
+
+  toggleMarkdownFormatting(format?: unknown, ...rest: unknown[]): void {
+    this.editor?.toggleMarkdownFormatting(format, ...rest);
+  }
+
   getDisplayText(): string {
     return this.file?.basename ?? "Butter Editor";
   }
@@ -1492,7 +1518,9 @@ export class ButterEditorView extends TextFileView {
       toolbarPlugin,
       autocompletePlugin(this.app, schema),
       slashMenuPlugin(this.app, schema),
-      buildInputRules(schema),
+      buildInputRules(schema, {
+        enableMarkdownShortcuts: this.settings.enableMarkdownShortcuts,
+      }),
       buildKeymap(schema),
       blockIdStamperPlugin(),
       blockSpacingPlugin(),
@@ -1548,7 +1576,12 @@ export class ButterEditorView extends TextFileView {
       ),
       tableRowColDragPlugin(),
       clickToSpawnPlugin(() => this.mobileSetEditable?.(true)),
-      inlineAtomEditPlugin(this.app),
+      inlineAtomEditPlugin(this.app, {
+        canEdit: () => {
+          const s = this.plugin.licenseStatus;
+          return s === "valid" || s === "trial";
+        },
+      }),
       autoSplitImagesPlugin(schema, () => this.settings.splitFullWidthImages),
       // Safety net: once a raw_block enters the doc (parse failure
       // fallback), block any transaction that would remove it

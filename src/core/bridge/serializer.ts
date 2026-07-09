@@ -133,12 +133,27 @@ function escapeTildeRuns(str: string): string {
   return str.replace(/~{2,}/g, (run) => run.replace(/~/g, "\\~"));
 }
 
-function esc(str: string, startOfLine = false): string {
+function escapeTagLikeHashes(str: string, boundaryAtStart: boolean): string {
+  return str.replace(
+    /(^|[ \t\r\n])#(?=[A-Za-z0-9_/-]*[A-Za-z_/-][A-Za-z0-9_/-]*)/g,
+    (match, prefix: string, offset: number) => {
+      if (offset === 0 && prefix === "" && !boundaryAtStart) return match;
+      return `${prefix}\\#`;
+    },
+  );
+}
+
+function isHashTagBoundary(out: string): boolean {
+  return out.length === 0 || /[ \t\r\n]$/.test(out);
+}
+
+function esc(str: string, startOfLine = false, tagBoundaryAtStart = startOfLine): string {
   str = str.replace(/[`*\\[\]_]/g, "\\$&");
   str = escapeTildeRuns(str);
   str = str.replace(/\u00a0/g, "&nbsp;");
   if (startOfLine)
     str = str.replace(/^[#\-*+>]/, "\\$&").replace(/^(\s*\d+)\./, "$1\\.");
+  str = escapeTagLikeHashes(str, tagBoundaryAtStart);
   return str;
 }
 
@@ -521,7 +536,8 @@ export class SerState {
       } else if (this.delim && this.atBlank()) {
         this.out += this.delim;
       }
-      this.out += escape ? esc(lines[i], sol) : lines[i];
+      const tagBoundaryAtStart = sol || isHashTagBoundary(this.out);
+      this.out += escape ? esc(lines[i], sol, tagBoundaryAtStart) : lines[i];
     }
   }
 

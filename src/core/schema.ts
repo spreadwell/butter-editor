@@ -438,6 +438,7 @@ const basicNodes: Record<string, NodeSpec> = {
         "data-wikilink": "",
         "data-target": a.target,
         class: "butter-wikilink internal-link",
+        contenteditable: "false",
         href: sanitizeHref(a.target),
       }, display];
     },
@@ -460,6 +461,7 @@ const basicNodes: Record<string, NodeSpec> = {
         "data-obsidian-tag": "",
         "data-tag": a.tag,
         class: "butter-tag tag",
+        contenteditable: "false",
         href: `#${a.tag}`,
       }, `#${a.tag}`];
     },

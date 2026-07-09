@@ -72,25 +72,21 @@ export interface OpenMobileAtomDrawerOptions {
   actions: MobileSheetAction[];
 }
 
-/** Open the mobile bottom-drawer for an inline atom. Renders a
- *  plain Obsidian `Menu` with zero chrome customization — that's
- *  the trick. Obsidian's native mobile CSS keys off the standard
- *  menu DOM (`.menu`, `.menu-grabber`, `.menu-scroll`,
- *  `.menu-group`, `.menu-item.tappable`); the moment you add a
- *  custom class or inject a non-standard header div, you lose the
- *  slide-up drawer styling and get a desktop-style floating
- *  popover positioned at the bottom of the screen. So: no custom
- *  classes, no header injection, just native items via `addItem`.
- *
- *  Group actions via `data-section` (the same way Obsidian's own
- *  menus organize nav / edit / destructive sections — visible as
- *  subtle dividers in both desktop and mobile chrome). */
-export function openMobileAtomDrawer(opts: OpenMobileAtomDrawerOptions): void {
+export interface OpenMobileActionDrawerOptions {
+  anchor: HTMLElement;
+  chrome: {
+    icon: string;
+    title: string;
+    sub: string;
+  };
+  actions: MobileSheetAction[];
+  editLabel?: string;
+  onEdit?: () => void;
+}
+
+export function openMobileActionDrawer(opts: OpenMobileActionDrawerOptions): void {
   const menu = new Menu();
 
-  // Split actions into nav (non-destructive) and danger (warning:
-  // true). Edit always lands between them so the destructive items
-  // are the LAST things in the drawer.
   const navActions = opts.actions.filter((a) => !a.warning);
   const dangerActions = opts.actions.filter((a) => a.warning);
 
@@ -110,27 +106,33 @@ export function openMobileAtomDrawer(opts: OpenMobileAtomDrawerOptions): void {
 
   for (const a of navActions) addAction(a, "nav");
 
-  menu.addItem((item) => {
-    item.setTitle("Edit…");
-    item.setIcon("pencil");
-    (item as unknown as { setSection?: (s: string) => unknown })
-      .setSection?.("edit");
-    item.onClick(() => {
-      new MobileAtomEditModal(opts).open();
+  if (opts.onEdit) {
+    menu.addItem((item) => {
+      item.setTitle(opts.editLabel ?? "Edit...");
+      item.setIcon("pencil");
+      (item as unknown as { setSection?: (s: string) => unknown })
+        .setSection?.("edit");
+      item.onClick(() => opts.onEdit?.());
     });
-  });
+  }
 
   for (const a of dangerActions) addAction(a, "danger");
 
   const rect = opts.anchor.getBoundingClientRect();
   menu.showAtPosition({ x: rect.left + rect.width / 2, y: rect.bottom + 4 });
-
-  // Inject the header AFTER show so the menu's internal DOM
-  // (.menu-grabber + .menu-scroll) is fully created. Placing the
-  // header INSIDE .menu-scroll (above the items) keeps the native
-  // .menu-grabber at the very top — required for the mobile
-  // slide-up affordance.
   injectDrawerHeader(menu, opts.chrome);
+}
+
+/** Open the mobile bottom-drawer for an inline atom using the same
+ *  native Obsidian `Menu` shell as other mobile link actions. */
+export function openMobileAtomDrawer(opts: OpenMobileAtomDrawerOptions): void {
+  openMobileActionDrawer({
+    anchor: opts.anchor,
+    chrome: opts.chrome,
+    actions: opts.actions,
+    editLabel: "Edit...",
+    onEdit: () => new MobileAtomEditModal(opts).open(),
+  });
 }
 
 function injectDrawerHeader(
@@ -285,7 +287,7 @@ export class MobileAtomEditModal extends Modal {
     for (const [k, input] of Object.entries(this.inputs)) {
       values[k] = input.value;
     }
-    const next = spec.fromFields(values, editorView.state.schema);
+    const next = spec.fromFields(values, node);
     if (!next) {
       // Parse failed — flash the inputs red briefly so the user
       // knows the input wasn't accepted, but keep the modal open
@@ -304,10 +306,6 @@ export class MobileAtomEditModal extends Modal {
     editorView.dispatch(tr);
     editorView.focus();
     this.close();
-    // Suppress the implicit dep so the linter doesn't grumble about
-    // `node` being unused — it's captured for the type-name check
-    // above via `live.type.name !== spec.typeName`.
-    void node;
   }
 
   private flashError(): void {
@@ -324,4 +322,3 @@ export class MobileAtomEditModal extends Modal {
     this.contentEl.empty();
   }
 }
-

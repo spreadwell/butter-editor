@@ -30,11 +30,12 @@
 
 import { Plugin } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import type { Node as PMNode } from "prosemirror-model";
-import { App, Platform } from "obsidian";
+import type { MarkType, Node as PMNode } from "prosemirror-model";
+import { App, Modal, Platform } from "obsidian";
 import { SPECS, type AtomSpec, type AtomField } from "./inline-atom-specs";
 import { openRichContextMenu } from "../ui/link-context-menu";
 import {
+  openMobileActionDrawer,
   openMobileAtomDrawer,
   type MobileSheetAction,
 } from "./mobile-atom-sheet";
@@ -58,6 +59,8 @@ const ATOM_DOM_SELECTOR = [
   // node type from doc.nodeAt(pos) and picks the right SPEC.
   ".butter-footnote-ref",
 ].join(", ");
+
+type ClientPoint = { clientX: number; clientY: number };
 
 /** Convert a MouseEvent or TouchEvent into the `{clientX, clientY}`
  *  shape the rich-context-menu's positioner expects. For a touch
@@ -154,10 +157,10 @@ function openWikilinkContextMenu(
     ) {
       return false;
     }
-    const next = spec.fromFields!(values, editorView.state.schema);
-    if (!next) return false;
     const live = editorView.state.doc.nodeAt(pos);
     if (!live || live.type.name !== "wikilink") return false;
+    const next = spec.fromFields!(values, live);
+    if (!next) return false;
     const tr = editorView.state.tr.replaceWith(pos, pos + live.nodeSize, next);
     editorView.dispatch(tr);
     return true;
@@ -273,10 +276,10 @@ function openGenericAtomContextMenu(
       if ((initial[k] ?? "") !== values[k]) { changed = true; break; }
     }
     if (!changed) return false;
-    const next = spec.fromFields!(values, editorView.state.schema);
-    if (!next) return false;
     const live = editorView.state.doc.nodeAt(pos);
     if (!live || live.type.name !== spec.typeName) return false;
+    const next = spec.fromFields!(values, live);
+    if (!next) return false;
     const tr = editorView.state.tr.replaceWith(pos, pos + live.nodeSize, next);
     editorView.dispatch(tr);
     return true;
@@ -424,39 +427,198 @@ function findLinkMarkRange(
   };
 }
 
+type LinkMarkRange = NonNullable<ReturnType<typeof findLinkMarkRange>>;
+
+function commitExternalLinkValues(
+  view: EditorView,
+  linkType: MarkType,
+  range: LinkMarkRange,
+  values: Record<string, string>,
+): boolean {
+  const newUrl = (values.url || "").trim();
+  if (!newUrl) return false;
+  const newText = values.text || newUrl;
+  if (newUrl === range.href && newText === range.text) return false;
+  const fresh = findLinkMarkRange(view, range.from);
+  if (!fresh) return false;
+  const replacement = view.state.schema.text(newText, [
+    linkType.create({ href: newUrl }),
+  ]);
+  view.dispatch(view.state.tr.replaceWith(fresh.from, fresh.to, replacement));
+  return true;
+}
+
+class MobileExternalLinkEditModal extends Modal {
+  private readonly view: EditorView;
+  private readonly linkType: MarkType;
+  private readonly range: LinkMarkRange;
+  private inputs: Record<string, HTMLInputElement> = {};
+
+  constructor(
+    app: App,
+    view: EditorView,
+    linkType: MarkType,
+    range: LinkMarkRange,
+  ) {
+    super(app);
+    this.view = view;
+    this.linkType = linkType;
+    this.range = range;
+  }
+
+  onOpen(): void {
+    this.titleEl.setText("Edit external link");
+    const form = this.contentEl.createDiv({ cls: "butter-mobile-edit-form" });
+    this.renderField(form, "url", "URL", this.range.href, "https://...");
+    this.renderField(form, "text", "Display text", this.range.text, this.range.href);
+
+    const btnRow = this.contentEl.createDiv({ cls: "modal-button-container" });
+    const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
+    cancelBtn.addEventListener("click", () => this.close());
+    const saveBtn = btnRow.createEl("button", { text: "Save", cls: "mod-cta" });
+    saveBtn.addEventListener("click", () => this.commit());
+
+    window.setTimeout(() => this.inputs.url?.focus(), 0);
+  }
+
+  private renderField(
+    parent: HTMLElement,
+    name: string,
+    label: string,
+    value: string,
+    placeholder: string,
+  ): void {
+    const fieldEl = parent.createDiv({ cls: "butter-mobile-edit-field" });
+    fieldEl.createDiv({ cls: "butter-mobile-edit-field-label", text: label });
+    const input = fieldEl.createEl("input", {
+      cls: "butter-mobile-edit-input",
+      attr: { type: "text", placeholder },
+    });
+    input.value = value;
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        this.commit();
+      }
+    });
+    this.inputs[name] = input;
+  }
+
+  private commit(): void {
+    const url = (this.inputs.url?.value ?? "").trim();
+    if (!url) {
+      this.flashError();
+      return;
+    }
+    const text = this.inputs.text?.value ?? "";
+    if (url === this.range.href && text === this.range.text) {
+      this.view.focus();
+      this.close();
+      return;
+    }
+    const ok = commitExternalLinkValues(this.view, this.linkType, this.range, {
+      url,
+      text,
+    });
+    if (!ok) {
+      this.flashError();
+      return;
+    }
+    this.view.focus();
+    this.close();
+  }
+
+  private flashError(): void {
+    for (const input of Object.values(this.inputs)) {
+      input.addClass("butter-mobile-edit-input-error");
+      window.setTimeout(
+        () => input.removeClass("butter-mobile-edit-input-error"),
+        400,
+      );
+    }
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 
 function showExternalLinkMenu(
   app: App,
   view: EditorView,
-  event: MouseEvent,
+  point: ClientPoint,
   anchor: HTMLAnchorElement,
+  event?: MouseEvent,
 ): void {
   const linkType = view.state.schema.marks.link;
   if (!linkType) return;
   const posInfo = view.posAtCoords({
-    left: event.clientX,
-    top: event.clientY,
+    left: point.clientX,
+    top: point.clientY,
   });
   if (!posInfo) return;
   const range = findLinkMarkRange(view, posInfo.pos);
   if (!range) return;
+
+  if (Platform.isMobile) {
+    openMobileActionDrawer({
+      anchor,
+      chrome: {
+        icon: "link",
+        title: "External link",
+        sub: truncateForHeader(range.href),
+      },
+      actions: [
+        {
+          label: "Open in default browser",
+          icon: "external-link",
+          onClick: () => {
+            const raw = range.href.trim();
+            if (!raw) return;
+            const safe = sanitizeHref(raw);
+            if (safe === "#") return;
+            const win = window as unknown as { open: typeof window.open };
+            win.open(safe, "_blank");
+          },
+        },
+        {
+          label: "Copy URL",
+          icon: "copy",
+          onClick: () => {
+            const url = range.href.trim();
+            if (!url) return;
+            void navigator.clipboard.writeText(url).catch(() => {
+              /* clipboard may be unavailable; silently no-op */
+            });
+          },
+        },
+        {
+          label: "Clear link",
+          icon: "eraser",
+          warning: true,
+          separatorBefore: true,
+          onClick: () => {
+            const fresh = findLinkMarkRange(view, range.from);
+            if (!fresh) return;
+            const tr = view.state.tr.removeMark(fresh.from, fresh.to, linkType);
+            view.dispatch(tr);
+            view.focus();
+          },
+        },
+      ],
+      editLabel: "Edit...",
+      onEdit: () => new MobileExternalLinkEditModal(app, view, linkType, range).open(),
+    });
+    return;
+  }
 
   // Commit the URL + Display-text edits as a single tr - replaces the
   // marked range with new text + new mark when changed, no-ops when
   // unchanged. Re-resolves the range against the live doc each call
   // so a stale capture doesn't blow up.
   const commit = (values: Record<string, string>): boolean => {
-    const newUrl = (values.url || "").trim();
-    if (!newUrl) return false;
-    const newText = values.text || newUrl;
-    if (newUrl === range.href && newText === range.text) return false;
-    const fresh = findLinkMarkRange(view, range.from);
-    if (!fresh) return false;
-    const replacement = view.state.schema.text(newText, [
-      linkType.create({ href: newUrl }),
-    ]);
-    view.dispatch(view.state.tr.replaceWith(fresh.from, fresh.to, replacement));
-    return true;
+    return commitExternalLinkValues(view, linkType, range, values);
   };
 
   openRichContextMenu({
@@ -536,9 +698,14 @@ function showExternalLinkMenu(
 
 
 
-export function inlineAtomEditPlugin(app: App): Plugin<void> {
+export function inlineAtomEditPlugin(
+  app: App,
+  options: { canEdit?: () => boolean } = {},
+): Plugin<void> {
   return new Plugin<void>({
     view(editorView) {
+      const ownerDocument = editorView.dom.ownerDocument;
+
       // Attach the contextmenu listener at the editor-DOM level in
       // CAPTURE phase rather than through PM's `handleDOMEvents.
       // contextmenu`. Why: each atom NodeView (wikilink, tag, embed,
@@ -552,10 +719,15 @@ export function inlineAtomEditPlugin(app: App): Plugin<void> {
       // A capture-phase DOM listener runs before any bubble-phase
       // handlers (including PM's internal dispatch) and sees every
       // contextmenu event in the editor, regardless of stopEvent.
+      const canMutateAtoms = (): boolean =>
+        options.canEdit ? options.canEdit() : editorView.editable;
+
       const onContextMenu = (event: MouseEvent) => {
         // Read-only license gate: inline-atom edit panels mutate the
-        // doc, so they're disabled when PM is non-editable.
-        if (!editorView.editable) return;
+        // doc, so they're disabled when the license gate is read-only.
+        // On Android, PM can also be temporarily non-editable while
+        // the keyboard is down; that must not block link/atom taps.
+        if (!canMutateAtoms()) return;
         const target = event.target;
         if (!(target instanceof Element)) return;
         // Mobile long-press fires `contextmenu` mid-selection. We
@@ -582,7 +754,7 @@ export function inlineAtomEditPlugin(app: App): Plugin<void> {
           event.preventDefault();
           event.stopPropagation();
           event.stopImmediatePropagation();
-          showExternalLinkMenu(app, editorView, event, linkAnchor);
+          showExternalLinkMenu(app, editorView, event, linkAnchor, event);
           return;
         }
 
@@ -668,12 +840,11 @@ export function inlineAtomEditPlugin(app: App): Plugin<void> {
       // "Rename" → modal) so editor surfaces speak the same
       // muscle-memory language as the rest of the app.
       //
-      // Why click instead of touchstart/touchend: browsers fire a
-      // synthetic `click` after a touch sequence that meets tap
-      // thresholds (no significant movement, no long-press). Using
-      // click means we get the platform's tap detection for free
-      // — no double-firing on mouse-like devices, no accidental
-      // fire during scroll, no conflict with drag.
+      // Android opens the soft keyboard as soon as a contenteditable
+      // tap reaches the editor focus path. Inline links are intercepted
+      // at touchstart/pointerdown, then activated on release if the
+      // press stayed within a normal tap tolerance. Click remains as a
+      // fallback.
       const buildMobileActions = (node: PMNode): MobileSheetAction[] => {
         const actions: MobileSheetAction[] = [];
         if (node.type.name === "wikilink") {
@@ -767,33 +938,132 @@ export function inlineAtomEditPlugin(app: App): Plugin<void> {
         return actions;
       };
 
-      const onMobileTap = (event: MouseEvent) => {
-        if (!Platform.isMobile) return;
-        if (!editorView.editable) return;
-        const target = event.target;
-        if (!(target instanceof Element)) return;
+      const eventTargetElement = (
+        target: EventTarget | null,
+      ): Element | null => {
+        if (target instanceof Element) return target;
+        if (target instanceof Node) return target.parentElement;
+        return null;
+      };
 
-        // External link uses its own native-mobile-friendly menu
-        // (existing showExternalLinkMenu also uses Obsidian Menu).
-        const linkAnchor = target.closest<HTMLAnchorElement>(
+      const mobileInlineTarget = (target: EventTarget | null): Element | null => {
+        const el = eventTargetElement(target);
+        if (!el) return null;
+        return (
+          el.closest<HTMLAnchorElement>(".butter-external-link") ??
+          el.closest(ATOM_DOM_SELECTOR)
+        );
+      };
+
+      const eventClientPoint = (event: Event): ClientPoint | null => {
+        if (
+          event instanceof MouseEvent ||
+          (typeof PointerEvent !== "undefined" && event instanceof PointerEvent)
+        ) {
+          return event;
+        }
+        if (typeof TouchEvent !== "undefined" && event instanceof TouchEvent) {
+          const touch =
+            event.changedTouches.item(0) ??
+            event.touches.item(0);
+          return touch ?? null;
+        }
+        return null;
+      };
+
+      const mobileInlineTargetFromEvent = (event: Event): Element | null => {
+        const direct = mobileInlineTarget(event.target);
+        if (direct) return direct;
+        const point = eventClientPoint(event);
+        if (!point) return null;
+        const hit = ownerDocument.elementFromPoint(point.clientX, point.clientY);
+        return mobileInlineTarget(hit);
+      };
+
+      const stopMobileInlineEvent = (event: Event): void => {
+        if (event.cancelable) event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      };
+
+      const blurEditorIfFocused = (): void => {
+        const active = ownerDocument.activeElement;
+        if (active instanceof HTMLElement && editorView.dom.contains(active)) {
+          active.blur();
+        }
+      };
+
+      let restoreEditableTimer: number | null = null;
+      let savedEditorContentEditable: string | null | undefined;
+
+      const restoreEditorContentEditable = (): void => {
+        if (restoreEditableTimer !== null) {
+          window.clearTimeout(restoreEditableTimer);
+          restoreEditableTimer = null;
+        }
+        if (savedEditorContentEditable === undefined) return;
+        if (savedEditorContentEditable === null) {
+          editorView.dom.removeAttribute("contenteditable");
+        } else {
+          editorView.dom.setAttribute(
+            "contenteditable",
+            savedEditorContentEditable,
+          );
+        }
+        savedEditorContentEditable = undefined;
+      };
+
+      const suppressEditorFocusForInlineTap = (): void => {
+        if (savedEditorContentEditable === undefined) {
+          savedEditorContentEditable =
+            editorView.dom.getAttribute("contenteditable");
+        }
+        editorView.dom.setAttribute("contenteditable", "false");
+        if (restoreEditableTimer !== null) {
+          window.clearTimeout(restoreEditableTimer);
+        }
+        restoreEditableTimer = window.setTimeout(
+          restoreEditorContentEditable,
+          900,
+        );
+      };
+
+      const openMobileInlineTarget = (
+        event: Event,
+        point: ClientPoint,
+        eventTarget: EventTarget | null = event.target,
+      ): boolean => {
+        if (!Platform.isMobile) return false;
+        if (!canMutateAtoms()) return false;
+        const targetEl = eventTargetElement(eventTarget);
+        if (!targetEl) return false;
+
+        // External links are marks, not inline atoms, but on mobile
+        // they use the same native drawer shell as wikilinks.
+        const linkAnchor = targetEl.closest<HTMLAnchorElement>(
           ".butter-external-link",
         );
         if (linkAnchor) {
-          event.preventDefault();
-          event.stopPropagation();
-          event.stopImmediatePropagation();
-          showExternalLinkMenu(app, editorView, event, linkAnchor);
-          return;
+          stopMobileInlineEvent(event);
+          blurEditorIfFocused();
+          showExternalLinkMenu(
+            app,
+            editorView,
+            point,
+            linkAnchor,
+            event instanceof MouseEvent ? event : undefined,
+          );
+          return true;
         }
 
-        const atomDOM = target.closest(ATOM_DOM_SELECTOR);
-        if (!atomDOM) return;
+        const atomDOM = targetEl.closest(ATOM_DOM_SELECTOR);
+        if (!atomDOM) return false;
 
         const posInfo = editorView.posAtCoords({
-          left: event.clientX,
-          top: event.clientY,
+          left: point.clientX,
+          top: point.clientY,
         });
-        if (!posInfo) return;
+        if (!posInfo) return false;
         let pos = posInfo.pos;
         let node = editorView.state.doc.nodeAt(pos);
         if (!node || !(node.type.name in SPECS)) {
@@ -807,12 +1077,11 @@ export function inlineAtomEditPlugin(app: App): Plugin<void> {
             node = after;
           }
         }
-        if (!node || !(node.type.name in SPECS)) return;
+        if (!node || !(node.type.name in SPECS)) return false;
 
         const spec = SPECS[node.type.name];
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
+        stopMobileInlineEvent(event);
+        blurEditorIfFocused();
 
         openMobileAtomDrawer({
           app,
@@ -828,8 +1097,278 @@ export function inlineAtomEditPlugin(app: App): Plugin<void> {
           },
           actions: buildMobileActions(node),
         });
+        return true;
       };
 
+      const MOBILE_INLINE_TAP_SLOP_PX = 12;
+      let pendingMobileTap:
+        | {
+            target: Element;
+            pointerId: number;
+            startX: number;
+            startY: number;
+            moved: boolean;
+          }
+        | null = null;
+      let pendingMobileTouch:
+        | {
+            target: Element;
+            identifier: number;
+            startX: number;
+            startY: number;
+            moved: boolean;
+          }
+        | null = null;
+      let suppressMobileClickUntil = 0;
+      let lastMobileInlineOpenAt = 0;
+      let suppressEditorFocusUntil = 0;
+
+      const findTouch = (
+        touches: TouchList,
+        identifier: number,
+      ): Touch | null => {
+        for (let i = 0; i < touches.length; i += 1) {
+          const touch = touches.item(i);
+          if (touch && touch.identifier === identifier) return touch;
+        }
+        return null;
+      };
+
+      const openMobileInlineTargetOnce = (
+        event: Event,
+        point: ClientPoint,
+        eventTarget: EventTarget | null = event.target,
+      ): boolean => {
+        if (Date.now() - lastMobileInlineOpenAt < 350) {
+          if (mobileInlineTarget(eventTarget)) stopMobileInlineEvent(event);
+          return true;
+        }
+        const opened = openMobileInlineTarget(event, point, eventTarget);
+        if (opened) {
+          lastMobileInlineOpenAt = Date.now();
+          suppressMobileClickUntil = lastMobileInlineOpenAt + 750;
+        }
+        return opened;
+      };
+
+      const onMobilePreFocusDown = (event: Event) => {
+        if (!Platform.isMobile) return;
+        if (!canMutateAtoms()) return;
+        const target = mobileInlineTargetFromEvent(event);
+        if (!target || !editorView.dom.contains(target)) return;
+        if (event.cancelable) event.preventDefault();
+        suppressEditorFocusUntil = Date.now() + 900;
+        suppressEditorFocusForInlineTap();
+        blurEditorIfFocused();
+      };
+
+      const onMobilePreFocusRelease = (event: Event) => {
+        if (!Platform.isMobile) return;
+        if (Date.now() > suppressEditorFocusUntil) return;
+        const target = mobileInlineTargetFromEvent(event);
+        if (!target || !editorView.dom.contains(target)) return;
+        if (event.cancelable) event.preventDefault();
+        blurEditorIfFocused();
+      };
+
+      const onMobileFocusIn = (event: FocusEvent) => {
+        if (!Platform.isMobile) return;
+        if (Date.now() > suppressEditorFocusUntil) return;
+        const target = event.target;
+        if (target instanceof Node && editorView.dom.contains(target)) {
+          blurEditorIfFocused();
+        }
+      };
+
+      const onMobilePointerDown = (event: PointerEvent) => {
+        if (!Platform.isMobile) return;
+        if (!canMutateAtoms()) return;
+        if (!event.isPrimary || event.button !== 0) return;
+        const target = mobileInlineTargetFromEvent(event);
+        if (!target) return;
+        suppressEditorFocusForInlineTap();
+        suppressEditorFocusUntil = Date.now() + 900;
+        pendingMobileTap = {
+          target,
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          moved: false,
+        };
+        stopMobileInlineEvent(event);
+        blurEditorIfFocused();
+      };
+
+      const onMobileTouchStart = (event: TouchEvent) => {
+        if (!Platform.isMobile) return;
+        if (!canMutateAtoms()) return;
+        const touch = event.changedTouches.item(0) ?? event.touches.item(0);
+        if (!touch) return;
+        const target = mobileInlineTargetFromEvent(event);
+        if (!target) return;
+        suppressEditorFocusForInlineTap();
+        suppressEditorFocusUntil = Date.now() + 900;
+        pendingMobileTouch = {
+          target,
+          identifier: touch.identifier,
+          startX: touch.clientX,
+          startY: touch.clientY,
+          moved: false,
+        };
+        stopMobileInlineEvent(event);
+        blurEditorIfFocused();
+      };
+
+      const onMobilePointerMove = (event: PointerEvent) => {
+        const pending = pendingMobileTap;
+        if (!pending || pending.pointerId !== event.pointerId) return;
+        const dx = event.clientX - pending.startX;
+        const dy = event.clientY - pending.startY;
+        if (Math.hypot(dx, dy) > MOBILE_INLINE_TAP_SLOP_PX) {
+          pending.moved = true;
+          restoreEditorContentEditable();
+        }
+      };
+
+      const onMobileTouchMove = (event: TouchEvent) => {
+        const pending = pendingMobileTouch;
+        if (!pending) return;
+        const touch =
+          findTouch(event.touches, pending.identifier) ??
+          findTouch(event.changedTouches, pending.identifier);
+        if (!touch) return;
+        const dx = touch.clientX - pending.startX;
+        const dy = touch.clientY - pending.startY;
+        if (Math.hypot(dx, dy) > MOBILE_INLINE_TAP_SLOP_PX) {
+          pending.moved = true;
+          restoreEditorContentEditable();
+        }
+      };
+
+      const onMobilePointerUp = (event: PointerEvent) => {
+        const pending = pendingMobileTap;
+        if (!pending || pending.pointerId !== event.pointerId) return;
+        pendingMobileTap = null;
+        suppressMobileClickUntil = Date.now() + 750;
+        if (pending.moved) {
+          restoreEditorContentEditable();
+          return;
+        }
+        openMobileInlineTargetOnce(event, event, pending.target);
+      };
+
+      const onMobileTouchEnd = (event: TouchEvent) => {
+        const pending = pendingMobileTouch;
+        if (!pending) return;
+        const touch = findTouch(event.changedTouches, pending.identifier);
+        pendingMobileTouch = null;
+        suppressMobileClickUntil = Date.now() + 750;
+        if (!touch || pending.moved) {
+          restoreEditorContentEditable();
+          return;
+        }
+        openMobileInlineTargetOnce(event, touch, pending.target);
+      };
+
+      const onMobilePointerCancel = (event: PointerEvent) => {
+        if (
+          pendingMobileTap &&
+          pendingMobileTap.pointerId === event.pointerId
+        ) {
+          pendingMobileTap = null;
+          suppressMobileClickUntil = Date.now() + 750;
+          restoreEditorContentEditable();
+        }
+      };
+
+      const onMobileTouchCancel = (event: TouchEvent) => {
+        const pending = pendingMobileTouch;
+        if (!pending) return;
+        if (!findTouch(event.changedTouches, pending.identifier)) return;
+        pendingMobileTouch = null;
+        suppressMobileClickUntil = Date.now() + 750;
+        restoreEditorContentEditable();
+      };
+
+      const onMobileTap = (event: MouseEvent) => {
+        if (
+          Date.now() < suppressMobileClickUntil &&
+          mobileInlineTargetFromEvent(event)
+        ) {
+          stopMobileInlineEvent(event);
+          return;
+        }
+        openMobileInlineTargetOnce(event, event);
+      };
+
+      const activeCaptureOptions: AddEventListenerOptions = {
+        capture: true,
+        passive: false,
+      };
+      ownerDocument.addEventListener(
+        "pointerdown",
+        onMobilePreFocusDown,
+        true,
+      );
+      ownerDocument.addEventListener(
+        "mousedown",
+        onMobilePreFocusDown,
+        true,
+      );
+      ownerDocument.addEventListener(
+        "touchstart",
+        onMobilePreFocusDown,
+        activeCaptureOptions,
+      );
+      ownerDocument.addEventListener("focusin", onMobileFocusIn, true);
+      ownerDocument.addEventListener(
+        "pointerup",
+        onMobilePreFocusRelease,
+        true,
+      );
+      ownerDocument.addEventListener(
+        "mouseup",
+        onMobilePreFocusRelease,
+        true,
+      );
+      ownerDocument.addEventListener(
+        "touchend",
+        onMobilePreFocusRelease,
+        activeCaptureOptions,
+      );
+      ownerDocument.addEventListener(
+        "click",
+        onMobilePreFocusRelease,
+        true,
+      );
+      editorView.dom.addEventListener("pointerdown", onMobilePointerDown, true);
+      editorView.dom.addEventListener("pointermove", onMobilePointerMove, true);
+      editorView.dom.addEventListener("pointerup", onMobilePointerUp, true);
+      editorView.dom.addEventListener(
+        "pointercancel",
+        onMobilePointerCancel,
+        true,
+      );
+      editorView.dom.addEventListener(
+        "touchstart",
+        onMobileTouchStart,
+        activeCaptureOptions,
+      );
+      editorView.dom.addEventListener(
+        "touchmove",
+        onMobileTouchMove,
+        activeCaptureOptions,
+      );
+      editorView.dom.addEventListener(
+        "touchend",
+        onMobileTouchEnd,
+        activeCaptureOptions,
+      );
+      editorView.dom.addEventListener(
+        "touchcancel",
+        onMobileTouchCancel,
+        activeCaptureOptions,
+      );
       editorView.dom.addEventListener("click", onMobileTap, true);
 
       return {
@@ -839,9 +1378,86 @@ export function inlineAtomEditPlugin(app: App): Plugin<void> {
             onContextMenu,
             true,
           );
+          ownerDocument.removeEventListener(
+            "pointerdown",
+            onMobilePreFocusDown,
+            true,
+          );
+          ownerDocument.removeEventListener(
+            "mousedown",
+            onMobilePreFocusDown,
+            true,
+          );
+          ownerDocument.removeEventListener(
+            "touchstart",
+            onMobilePreFocusDown,
+            activeCaptureOptions,
+          );
+          ownerDocument.removeEventListener("focusin", onMobileFocusIn, true);
+          ownerDocument.removeEventListener(
+            "pointerup",
+            onMobilePreFocusRelease,
+            true,
+          );
+          ownerDocument.removeEventListener(
+            "mouseup",
+            onMobilePreFocusRelease,
+            true,
+          );
+          ownerDocument.removeEventListener(
+            "touchend",
+            onMobilePreFocusRelease,
+            activeCaptureOptions,
+          );
+          ownerDocument.removeEventListener(
+            "click",
+            onMobilePreFocusRelease,
+            true,
+          );
+          editorView.dom.removeEventListener(
+            "pointerdown",
+            onMobilePointerDown,
+            true,
+          );
+          editorView.dom.removeEventListener(
+            "pointermove",
+            onMobilePointerMove,
+            true,
+          );
+          editorView.dom.removeEventListener(
+            "pointerup",
+            onMobilePointerUp,
+            true,
+          );
+          editorView.dom.removeEventListener(
+            "pointercancel",
+            onMobilePointerCancel,
+            true,
+          );
+          editorView.dom.removeEventListener(
+            "touchstart",
+            onMobileTouchStart,
+            activeCaptureOptions,
+          );
+          editorView.dom.removeEventListener(
+            "touchmove",
+            onMobileTouchMove,
+            activeCaptureOptions,
+          );
+          editorView.dom.removeEventListener(
+            "touchend",
+            onMobileTouchEnd,
+            activeCaptureOptions,
+          );
+          editorView.dom.removeEventListener(
+            "touchcancel",
+            onMobileTouchCancel,
+            activeCaptureOptions,
+          );
           editorView.dom.removeEventListener("click", onMobileTap, true);
+          restoreEditorContentEditable();
           // Belt-and-braces: yank any orphan DOM as well.
-          activeDocument.querySelectorAll(".butter-inline-atom-edit").forEach((el) => {
+          ownerDocument.querySelectorAll(".butter-inline-atom-edit").forEach((el) => {
             if (el.instanceOf(HTMLElement)) el.remove();
           });
         },

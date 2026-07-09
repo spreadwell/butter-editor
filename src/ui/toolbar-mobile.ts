@@ -22,6 +22,8 @@ import {
   type BtnDef,
   type RenderCtx,
   clearFormatting,
+  applyLink,
+  classifyLinkInput,
   execBlockCmd,
   execHistoryCmd,
   execInsertCmd,
@@ -29,6 +31,7 @@ import {
   execMarkCmd,
   insertTable,
   isMarkActive,
+  looksLikeExternalUrl,
   setHeading,
   openMobileColorSheet,
 } from "./toolbar";
@@ -38,6 +41,7 @@ import {
   closeMobileInsertDrawer,
 } from "./insert-drawer";
 import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
+import { applyVaultFilesSuggest } from "./vault-files-suggest";
 
 /** Same check as the desktop toolbar's `isHtmlFormattingEnabled`,
  *  reachable from the mobile renderer without duplicating exports
@@ -210,6 +214,89 @@ function openMobileInsertTableModal(app: App, schema: Schema, view: EditorView) 
         insertTable(schema, view, this.rows, this.cols);
         view.focus();
       });
+    }
+  })(app);
+  modal.open();
+}
+
+function openMobileAddLinkModal(app: App, schema: Schema, view: EditorView) {
+  const modal = new (class extends Modal {
+    private inputs: Record<string, HTMLInputElement> = {};
+
+    onOpen() {
+      const sel = view.state.selection;
+      const selectedText = sel.empty ? "" : view.state.doc.textBetween(sel.from, sel.to);
+      this.titleEl.setText("Add link");
+      const form = this.contentEl.createDiv({ cls: "butter-mobile-edit-form" });
+      this.renderField(form, "target", "Link", "", "Note name or URL", true);
+      this.renderField(form, "text", "Display text", selectedText, "Optional", false);
+
+      const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
+      const cancel = actions.createEl("button", { text: "Cancel" });
+      cancel.addEventListener("click", () => this.close());
+      const insert = actions.createEl("button", { cls: "mod-cta", text: "Insert" });
+      insert.addEventListener("click", () => this.commit());
+
+      window.setTimeout(() => this.inputs.target?.focus(), 0);
+    }
+
+    private renderField(
+      parent: HTMLElement,
+      name: string,
+      label: string,
+      value: string,
+      placeholder: string,
+      suggestNotes: boolean,
+    ): void {
+      const fieldEl = parent.createDiv({ cls: "butter-mobile-edit-field" });
+      fieldEl.createDiv({ cls: "butter-mobile-edit-field-label", text: label });
+      const input = fieldEl.createEl("input", {
+        cls: "butter-mobile-edit-input",
+        attr: { type: "text", placeholder },
+      });
+      input.value = value;
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          this.commit();
+        }
+      });
+      if (suggestNotes) {
+        applyVaultFilesSuggest(app, input, {
+          skipWhen: looksLikeExternalUrl,
+          onSelect: (file) => {
+            input.value = file.basename;
+            input.dispatchEvent(new Event("input"));
+            input.focus();
+          },
+        });
+      }
+      this.inputs[name] = input;
+    }
+
+    private commit(): void {
+      const detected = classifyLinkInput(this.inputs.target?.value ?? "");
+      if (!detected) {
+        this.flashError();
+        return;
+      }
+      applyLink(schema, view, detected, this.inputs.text?.value || undefined);
+      view.focus();
+      this.close();
+    }
+
+    private flashError(): void {
+      for (const input of Object.values(this.inputs)) {
+        input.addClass("butter-mobile-edit-input-error");
+        window.setTimeout(
+          () => input.removeClass("butter-mobile-edit-input-error"),
+          400,
+        );
+      }
+    }
+
+    onClose(): void {
+      this.contentEl.empty();
     }
   })(app);
   modal.open();
@@ -395,6 +482,10 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
     if (!view) return;
     // Mobile-specific insert flows replace the desktop hover-grid /
     // prompt-dialog UI with thumb-friendly modals.
+    if (def.id === "link" || def.id === "insert-link-md") {
+      openMobileAddLinkModal(ctx.app, ctx.schema, view);
+      return;
+    }
     if (def.id === "table") {
       openMobileInsertTableModal(ctx.app, ctx.schema, view);
       return;
@@ -531,7 +622,9 @@ function openMobileVariantsPopover(
       ctx.closePopover();
       const view = ctx.getView();
       if (!view) return;
-      if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
+      if (def.id === "link" || def.id === "insert-link-md") {
+        openMobileAddLinkModal(ctx.app, ctx.schema, view);
+      } else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
       else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
       else if (def.kind === "list") execListCmd(def, ctx.schema, view);
       else if (def.kind === "insert") execInsertCmd(def, ctx.schema, view, ctx.app);
@@ -611,7 +704,9 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
   const dispatchDef = (def: BtnDef) => {
     const view = ctx.getView();
     if (!view) return;
-    if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
+    if (def.id === "link" || def.id === "insert-link-md") {
+      openMobileAddLinkModal(ctx.app, ctx.schema, view);
+    } else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
     else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
     else if (def.kind === "list") execListCmd(def, ctx.schema, view);
     else if (def.kind === "insert") execInsertCmd(def, ctx.schema, view, ctx.app);
