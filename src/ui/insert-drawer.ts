@@ -44,6 +44,7 @@ import {
   type BlockSubItem,
 } from "../editor/block-menu-spec";
 import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
+import { tx, txKnown, tv } from "../i18n";
 
 const BODY_CLASS = "butter-mobile-drawer-open";
 const RETURNING_KEYBOARD_CLASS = "butter-mobile-drawer-returning-keyboard";
@@ -440,7 +441,7 @@ function renderInsertView(
   for (const group of groupSlashItems()) {
     const header = activeDocument.createElement("div");
     header.className = "butter-mobile-insert-drawer-category";
-    header.textContent = group.name;
+    header.textContent = txKnown(group.name);
     grid.appendChild(header);
     for (const item of group.items) {
       renderInsertTile(grid, item, view, schema, app);
@@ -467,7 +468,7 @@ function renderTurnIntoView(
   if (!validTurnIntoTargets(blockCtx.node)) {
     renderEmptyState(
       grid,
-      `Can't transform ${blockCtx.node.type.name} blocks`,
+      tv("Can't transform {type} blocks", { type: blockCtx.node.type.name }),
     );
     return;
   }
@@ -509,7 +510,7 @@ function renderTurnIntoView(
     if (bucket.items.length === 0) continue;
     const header = activeDocument.createElement("div");
     header.className = "butter-mobile-insert-drawer-category";
-    header.textContent = bucket.name;
+    header.textContent = txKnown(bucket.name);
     grid.appendChild(header);
     for (const sub of bucket.items) {
       renderBlockSubTile(grid, sub, view, blockCtx);
@@ -568,7 +569,7 @@ function renderBlockActionsView(
     if (item.submenu) {
       const header = activeDocument.createElement("div");
       header.className = "butter-mobile-insert-drawer-category";
-      header.textContent = item.title;
+      header.textContent = txKnown(item.title);
       grid.appendChild(header);
       for (const group of item.submenu) {
         for (const sub of group) {
@@ -584,7 +585,7 @@ function renderBlockActionsView(
   // as `BlockMenuItem`s so the renderer treats them identically.
   const headerUniversal = activeDocument.createElement("div");
   headerUniversal.className = "butter-mobile-insert-drawer-category";
-  headerUniversal.textContent = "Block";
+  headerUniversal.textContent = tx("Block");
   grid.appendChild(headerUniversal);
   if (blockCtx.serializeNode) {
     const serialize = blockCtx.serializeNode;
@@ -597,8 +598,8 @@ function renderBlockActionsView(
         sideEffect: (_v, _p, n) => {
           const md = serialize(n);
           void navigator.clipboard.writeText(md.replace(/\n+$/, "")).then(
-            () => new Notice("Copied block"),
-            () => new Notice("Clipboard write failed"),
+            () => new Notice(tx("Copied block")),
+            () => new Notice(tx("Clipboard write failed")),
           );
         },
       },
@@ -640,7 +641,7 @@ function renderBlockActionsView(
 function renderEmptyState(grid: HTMLElement, message: string): void {
   const empty = activeDocument.createElement("div");
   empty.className = "butter-mobile-insert-drawer-empty";
-  empty.textContent = message;
+  empty.textContent = txKnown(message);
   grid.appendChild(empty);
 }
 
@@ -653,13 +654,13 @@ function renderInsertTile(
 ): void {
   const tile = activeDocument.createElement("button");
   tile.className = "butter-mobile-insert-drawer-tile clickable-icon";
-  tile.setAttribute("aria-label", item.label);
+  tile.setAttribute("aria-label", txKnown(item.label));
   const iconEl = activeDocument.createElement("span");
   iconEl.className = "butter-mobile-insert-drawer-tile-icon";
   setIcon(iconEl, item.icon);
   const labelEl = activeDocument.createElement("span");
   labelEl.className = "butter-mobile-insert-drawer-tile-label";
-  labelEl.textContent = item.label;
+  labelEl.textContent = txKnown(item.label);
   tile.appendChild(iconEl);
   tile.appendChild(labelEl);
   tile.addEventListener("click", (e) => {
@@ -725,14 +726,14 @@ function renderBlockTile(
 ): void {
   const tile = activeDocument.createElement("button");
   tile.className = "butter-mobile-insert-drawer-tile clickable-icon";
-  tile.setAttribute("aria-label", item.title);
+  tile.setAttribute("aria-label", txKnown(item.title));
   if (item.warning) tile.dataset.warning = "true";
   const iconEl = activeDocument.createElement("span");
   iconEl.className = "butter-mobile-insert-drawer-tile-icon";
   setIcon(iconEl, item.icon);
   const labelEl = activeDocument.createElement("span");
   labelEl.className = "butter-mobile-insert-drawer-tile-label";
-  labelEl.textContent = item.title;
+  labelEl.textContent = txKnown(item.title);
   tile.appendChild(iconEl);
   tile.appendChild(labelEl);
   tile.addEventListener("click", (e) => {
@@ -762,14 +763,14 @@ function renderBlockSubTile(
 ): void {
   const tile = activeDocument.createElement("button");
   tile.className = "butter-mobile-insert-drawer-tile clickable-icon";
-  tile.setAttribute("aria-label", sub.title);
+  tile.setAttribute("aria-label", txKnown(sub.title));
   if (sub.isCurrent) tile.dataset.current = "true";
   const iconEl = activeDocument.createElement("span");
   iconEl.className = "butter-mobile-insert-drawer-tile-icon";
   if (sub.icon) setIcon(iconEl, sub.icon);
   const labelEl = activeDocument.createElement("span");
   labelEl.className = "butter-mobile-insert-drawer-tile-label";
-  labelEl.textContent = sub.title;
+  labelEl.textContent = txKnown(sub.title);
   tile.appendChild(iconEl);
   tile.appendChild(labelEl);
   tile.addEventListener("click", (e) => {

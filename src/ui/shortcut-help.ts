@@ -7,14 +7,15 @@
  * and friends without reading a README.
  */
 import { App, Modal, Platform } from "obsidian";
+import { tx, type MessageKey } from "../i18n";
 
 interface ShortcutRow {
-  label: string;
+  label: MessageKey;
   keys: string;
 }
 
 interface ShortcutSection {
-  title: string;
+  title: MessageKey;
   rows: ShortcutRow[];
 }
 
@@ -102,22 +103,22 @@ export class ShortcutHelpModal extends Modal {
     this.modalEl.addClass("butter-shortcut-modal");
     if (Platform.isMobile) this.modalEl.addClass("mod-lg");
 
-    titleEl.setText("Butter editor keyboard shortcuts");
+    titleEl.setText(tx("Butter editor keyboard shortcuts"));
     contentEl.empty();
 
     const intro = contentEl.createDiv({ cls: "butter-shortcut-intro" });
     intro.textContent =
-      "Most shortcuts work only while editing in a Butter view. Obsidian's own hotkeys still apply in source / live preview.";
+      tx("Most shortcuts work only while editing in a Butter view. Obsidian's own hotkeys still apply in source / live preview.");
 
     const grid = contentEl.createDiv({ cls: "butter-shortcut-grid" });
 
     for (const section of SECTIONS) {
       const col = grid.createDiv({ cls: "butter-shortcut-section" });
-      col.createDiv({ cls: "butter-shortcut-section-title", text: section.title });
+      col.createDiv({ cls: "butter-shortcut-section-title", text: tx(section.title) });
       const list = col.createDiv({ cls: "butter-shortcut-list" });
       for (const row of section.rows) {
         const rowEl = list.createDiv({ cls: "butter-shortcut-row" });
-        rowEl.createSpan({ cls: "butter-shortcut-label", text: row.label });
+        rowEl.createSpan({ cls: "butter-shortcut-label", text: tx(row.label) });
         const keysEl = rowEl.createSpan({ cls: "butter-shortcut-keys" });
         const parts = formatKey(row.keys).split(/\s*(\+|·|…|,|\/| or )\s*/);
         for (const part of parts) {

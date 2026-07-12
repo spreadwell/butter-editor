@@ -30,6 +30,7 @@ export type { ToolbarLayoutItem };
 export const VIEW_TYPE_BUTTER = "butter-editor";
 export const VIEW_TYPE_BUTTER_LOCKED = "butter-locked-file";
 import type ButterEditorPlugin from "../main";
+import { tx } from "../i18n";
 
 export /**
  * Replacement view for a leaf whose file failed to load with a
@@ -54,7 +55,7 @@ class ButterLockedFileView extends ItemView {
   }
 
   getDisplayText(): string {
-    return this.lockedName || "Locked file";
+    return this.lockedName || tx("Locked file");
   }
 
   getIcon(): string {
@@ -100,7 +101,7 @@ class ButterLockedFileView extends ItemView {
     setIcon(iconEl, "file-lock-2");
 
     container.createEl("h1", {
-      text: "Another app is using this file",
+      text: tx("Another app is using this file"),
       cls: "empty-state-title",
     });
 
@@ -110,14 +111,14 @@ class ButterLockedFileView extends ItemView {
       cls: "butter-locked-filename",
     });
     desc.appendText(
-      " can't be opened because another app is using it. Common causes: VS Code with the file open, antivirus scanning, or another Obsidian window.",
+      tx(" can't be opened because another app is using it. Common causes: VS Code with the file open, antivirus scanning, or another Obsidian window."),
     );
 
     const actions = container.createDiv({ cls: "empty-state-action-list" });
 
     const retryBtn = actions.createDiv({
       cls: "empty-state-action",
-      text: "Try again",
+      text: tx("Try again"),
     });
     retryBtn.addEventListener("click", () => {
       void (async () => {
@@ -125,14 +126,14 @@ class ButterLockedFileView extends ItemView {
         if (file instanceof TFile) {
           await this.leaf.openFile(file);
         } else {
-          new Notice("File no longer exists in vault.");
+          new Notice(tx("File no longer exists in vault."));
         }
       })();
     });
 
     const switcherBtn = actions.createDiv({
       cls: "empty-state-action",
-      text: "Open another note",
+      text: tx("Open another note"),
     });
     switcherBtn.addEventListener("click", () => {
       this.app.commands?.executeCommandById("switcher:open");
@@ -140,7 +141,7 @@ class ButterLockedFileView extends ItemView {
 
     const newBtn = actions.createDiv({
       cls: "empty-state-action",
-      text: "New note",
+      text: tx("New note"),
     });
     newBtn.addEventListener("click", () => {
       this.app.commands?.executeCommandById("file-explorer:new-file");

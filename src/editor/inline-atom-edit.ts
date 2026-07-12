@@ -41,6 +41,7 @@ import {
 } from "./mobile-atom-sheet";
 
 import { sanitizeHref } from "../util/safe-url";
+import { tx, txKnown } from "../i18n";
 
 /** Class selector matching every editable atom's root DOM. Used by
  *  the DOM-event handler to quickly reject clicks outside editable
@@ -184,39 +185,39 @@ function openWikilinkContextMenu(
     autoFocusFirstField: false,
     chrome: {
       icon: "link",
-      title: "Wikilink",
+      title: tx("Wikilink"),
       sub: subText,
     },
     fields: spec.fields.map((f: AtomField) => ({
       id: f.name,
-      label: f.label,
+      label: tx(f.label),
       icon: f.icon,
       initial: initial[f.name] || "",
       placeholder:
         typeof f.placeholder === "function"
           ? f.placeholder(initial)
-          : f.placeholder,
+          : f.placeholder ? txKnown(f.placeholder) : "",
       autocomplete: f.autocomplete,
     })),
     actions: [
       ...(primaryAction ? [primaryAction] : []),
       {
-        label: "Open in new tab",
+        label: tx("Open in new tab"),
         icon: "file-plus",
         onClick: (v) => openIn(v, "tab"),
       },
       {
-        label: "Open in new window",
+        label: tx("Open in new window"),
         icon: "monitor",
         onClick: (v) => openIn(v, "window"),
       },
       {
-        label: "Open to the right",
+        label: tx("Open to the right"),
         icon: "separator-vertical",
         onClick: (v) => openIn(v, "split"),
       },
       {
-        label: "Clear link",
+        label: tx("Clear link"),
         icon: "eraser",
         warning: true,
         separatorBefore: true,
@@ -292,18 +293,18 @@ function openGenericAtomContextMenu(
     autoFocusFirstField: false,
     chrome: {
       icon: ATOM_ICONS[spec.typeName] || "type",
-      title: spec.label,
+      title: tx(spec.label),
       sub: atomHeaderSub(node, spec),
     },
     fields: spec.fields.map((f: AtomField) => ({
       id: f.name,
-      label: f.label,
+      label: tx(f.label),
       icon: f.icon,
       initial: initial[f.name] ?? "",
       placeholder:
         typeof f.placeholder === "function"
           ? f.placeholder(initial)
-          : f.placeholder,
+          : f.placeholder ? txKnown(f.placeholder) : "",
       autocomplete: f.autocomplete,
     })),
     actions: primaryAction ? [primaryAction] : [],
@@ -467,15 +468,15 @@ class MobileExternalLinkEditModal extends Modal {
   }
 
   onOpen(): void {
-    this.titleEl.setText("Edit external link");
+    this.titleEl.setText(tx("Edit external link"));
     const form = this.contentEl.createDiv({ cls: "butter-mobile-edit-form" });
     this.renderField(form, "url", "URL", this.range.href, "https://...");
     this.renderField(form, "text", "Display text", this.range.text, this.range.href);
 
     const btnRow = this.contentEl.createDiv({ cls: "modal-button-container" });
-    const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
+    const cancelBtn = btnRow.createEl("button", { text: tx("Cancel") });
     cancelBtn.addEventListener("click", () => this.close());
-    const saveBtn = btnRow.createEl("button", { text: "Save", cls: "mod-cta" });
+    const saveBtn = btnRow.createEl("button", { text: tx("Save"), cls: "mod-cta" });
     saveBtn.addEventListener("click", () => this.commit());
 
     window.setTimeout(() => this.inputs.url?.focus(), 0);
@@ -489,10 +490,10 @@ class MobileExternalLinkEditModal extends Modal {
     placeholder: string,
   ): void {
     const fieldEl = parent.createDiv({ cls: "butter-mobile-edit-field" });
-    fieldEl.createDiv({ cls: "butter-mobile-edit-field-label", text: label });
+    fieldEl.createDiv({ cls: "butter-mobile-edit-field-label", text: txKnown(label) });
     const input = fieldEl.createEl("input", {
       cls: "butter-mobile-edit-input",
-      attr: { type: "text", placeholder },
+      attr: { type: "text", placeholder: txKnown(placeholder) },
     });
     input.value = value;
     input.addEventListener("keydown", (ev) => {
@@ -566,12 +567,12 @@ function showExternalLinkMenu(
       anchor,
       chrome: {
         icon: "link",
-        title: "External link",
+        title: tx("External link"),
         sub: truncateForHeader(range.href),
       },
       actions: [
         {
-          label: "Open in default browser",
+          label: tx("Open in default browser"),
           icon: "external-link",
           onClick: () => {
             const raw = range.href.trim();
@@ -583,7 +584,7 @@ function showExternalLinkMenu(
           },
         },
         {
-          label: "Copy URL",
+          label: tx("Copy URL"),
           icon: "copy",
           onClick: () => {
             const url = range.href.trim();
@@ -594,7 +595,7 @@ function showExternalLinkMenu(
           },
         },
         {
-          label: "Clear link",
+          label: tx("Clear link"),
           icon: "eraser",
           warning: true,
           separatorBefore: true,
@@ -607,7 +608,7 @@ function showExternalLinkMenu(
           },
         },
       ],
-      editLabel: "Edit...",
+      editLabel: tx("Edit..."),
       onEdit: () => new MobileExternalLinkEditModal(app, view, linkType, range).open(),
     });
     return;
@@ -628,28 +629,28 @@ function showExternalLinkMenu(
     autoFocusFirstField: false,
     chrome: {
       icon: "link",
-      title: "External link",
+      title: tx("External link"),
       sub: truncateForHeader(range.href),
     },
     fields: [
       {
         id: "url",
-        label: "URL",
+        label: tx("URL"),
         icon: "globe",
         initial: range.href,
-        placeholder: "https://…",
+        placeholder: "https://...",
       },
       {
         id: "text",
-        label: "Display text",
+        label: tx("Display text"),
         icon: "type",
         initial: range.text,
-        placeholder: range.href || "Display text",
+        placeholder: range.href || tx("Display text"),
       },
     ],
     actions: [
       {
-        label: "Open in default browser",
+        label: tx("Open in default browser"),
         icon: "external-link",
         onClick: (v) => {
           commit(v);
@@ -662,7 +663,7 @@ function showExternalLinkMenu(
         },
       },
       {
-        label: "Copy URL",
+        label: tx("Copy URL"),
         icon: "copy",
         onClick: (v) => {
           const url = (v.url || range.href).trim();
@@ -673,7 +674,7 @@ function showExternalLinkMenu(
         },
       },
       {
-        label: "Clear link",
+        label: tx("Clear link"),
         icon: "eraser",
         warning: true,
         separatorBefore: true,

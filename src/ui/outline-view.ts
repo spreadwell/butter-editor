@@ -29,6 +29,7 @@ import type { Node as PMNode } from "prosemirror-model";
 import { Selection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { EditorView as CMEditorView } from "@codemirror/view";
+import { tx } from "../i18n";
 
 /** Duck-typed Butter view interface — what outline-view actually
  *  reads from a leaf.view to decide if it's a Butter view. Avoids
@@ -81,7 +82,7 @@ export class ButterOutlineView extends ItemView {
     return VIEW_TYPE_BUTTER_OUTLINE;
   }
   getDisplayText() {
-    return "Butter outline";
+    return tx("Butter outline");
   }
   getIcon() {
     return "list-tree";
@@ -95,12 +96,12 @@ export class ButterOutlineView extends ItemView {
     const header = root.createDiv({ cls: "butter-outline-header" });
     const headerIcon = header.createSpan({ cls: "butter-outline-header-icon" });
     setIcon(headerIcon, "list-tree");
-    header.createSpan({ cls: "butter-outline-header-title", text: "Outline" });
+    header.createSpan({ cls: "butter-outline-header-title", text: tx("Outline") });
 
     this.listEl = root.createDiv({ cls: "butter-outline-list" });
     this.emptyEl = root.createDiv({
       cls: "butter-outline-empty",
-      text: "No headings in this note.",
+      text: tx("No headings in this note."),
     });
     this.emptyEl.addClass("butter-hidden");
 
@@ -168,6 +169,15 @@ export class ButterOutlineView extends ItemView {
     });
 
     this.render();
+  }
+
+  public refreshLocalization(): void {
+    const title = this.contentEl.querySelector<HTMLElement>(
+      ".butter-outline-header-title",
+    );
+    if (title) title.textContent = tx("Outline");
+    if (this.emptyEl) this.emptyEl.textContent = tx("No headings in this note.");
+    (this.leaf as unknown as { updateHeader?: () => void }).updateHeader?.();
   }
 
   async onClose() {

@@ -16,6 +16,10 @@
  * a real expiry yet. */
 export const TRIAL_LENGTH_DAYS = 15;
 
+/** Customer-facing lifetime-license price shown in onboarding. Keep
+ * this in sync with the Butter Editor site and Polar checkout. */
+export const LIFETIME_LICENSE_PRICE = "$16";
+
 /** Maximum active devices per customer. Enforced server-side at
  * `/session` and `/trial/poll-ready` by the Worker - the plugin
  * surfaces this in copy ("up to 5 devices") and handles the

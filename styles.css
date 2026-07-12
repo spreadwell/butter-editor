@@ -2937,10 +2937,9 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
   height: 15px;
 }
 
-/* `.butter-setting-group` is a scope marker, intentionally without
-   any rules of its own. Markup-only class so future Butter-specific
-   tweaks (or temporary overrides) have a hook that won't conflict
-   with Obsidian native or other plugins' `.setting-group` styling. */
+/* `.butter-setting-group` is a scope marker. Obsidian owns the
+   spacing of native setting groups and rows so Butter follows the
+   density of the installed Obsidian version and active theme. */
 
 /* Icon prefix on the "Customize buttons" intro row. The icon shares
    the row's text color and sits inline with the title, separated by
@@ -2960,10 +2959,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
 }
 
 /* Dimmed-italic platform tag rendered next to a setting-group
-   heading (e.g. "Layout [monitor] Desktop"). Mirrors the existing
-   .butter-preset-tag treatment for "Experimental" so segment-aware
-   sections read with the same visual rhythm as the rest of the
-   settings UI. */
+   heading (e.g. "Layout [monitor] Desktop"). */
 .butter-platform-tag {
   display: inline-flex;
   align-items: center;
@@ -4532,8 +4528,8 @@ body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner-act
   align-items: center;
   gap: 6px;
   padding: 5px 6px 5px 12px;
-  background: rgba(var(--callout-error), 0.06);
-  border: 1px solid rgba(var(--callout-error), 0.2);
+  background: color-mix(in srgb, var(--text-error) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-error) 24%, transparent);
   border-radius: 20px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
   backdrop-filter: blur(12px);
@@ -4546,7 +4542,7 @@ body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner-act
 .butter-license-banner-icon {
   display: flex;
   align-items: center;
-  color: rgba(var(--callout-error), 0.7);
+  color: color-mix(in srgb, var(--text-error) 78%, transparent);
   flex-shrink: 0;
   margin-right: 2px;
 }
@@ -4557,15 +4553,15 @@ body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner-act
 .butter-license-banner-state {
   font-size: var(--font-ui-small);
   font-weight: 600;
-  color: rgba(var(--callout-error), 0.85);
+  color: var(--text-error);
 }
 .butter-license-banner-separator {
-  color: rgba(var(--callout-error), 0.4);
+  color: color-mix(in srgb, var(--text-error) 48%, transparent);
   font-size: var(--font-ui-small);
 }
 .butter-license-banner-readonly {
   font-size: var(--font-ui-small);
-  color: rgba(var(--callout-error), 0.55);
+  color: color-mix(in srgb, var(--text-error) 65%, transparent);
   font-style: italic;
   margin-right: 2px;
 }
@@ -4580,30 +4576,30 @@ body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner-act
   font-weight: 500;
   padding: 3px 10px;
   border-radius: 12px;
-  border: 1px solid rgba(var(--callout-error), 0.25);
+  border: 1px solid color-mix(in srgb, var(--text-error) 30%, transparent);
   background: transparent;
-  color: rgba(var(--callout-error), 0.85);
+  color: var(--text-error);
   cursor: pointer;
   transition: background 120ms ease;
   box-shadow: none;
 }
 .butter-license-banner button:hover {
-  background: rgba(var(--callout-error), 0.1);
+  background: color-mix(in srgb, var(--text-error) 12%, transparent);
 }
 .butter-license-banner button:active {
-  background: rgba(var(--callout-error), 0.18);
+  background: color-mix(in srgb, var(--text-error) 20%, transparent);
 }
 .butter-license-banner button.mod-cta {
-  background: rgba(var(--callout-error), 0.12);
-  color: rgba(var(--callout-error), 0.9);
-  border-color: rgba(var(--callout-error), 0.3);
+  background: color-mix(in srgb, var(--text-error) 14%, transparent);
+  color: var(--text-error);
+  border-color: color-mix(in srgb, var(--text-error) 35%, transparent);
   font-weight: 600;
 }
 .butter-license-banner button.mod-cta:hover {
-  background: rgba(var(--callout-error), 0.2);
+  background: color-mix(in srgb, var(--text-error) 22%, transparent);
 }
 .butter-license-banner button.mod-cta:active {
-  background: rgba(var(--callout-error), 0.28);
+  background: color-mix(in srgb, var(--text-error) 30%, transparent);
 }
 
 /* --- ACTION SHEET MODAL --- */
@@ -6948,7 +6944,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 }
 
 /* ─── Welcome / onboarding modal ────────────────────────────────
-   Two-page first-launch walkthrough. Width is fixed on the modal
+   Three-page first-launch walkthrough. Width is fixed on the modal
    element itself (Obsidian's defaults can leave non-settings modals
    uncomfortably narrow); content uses Obsidian's standard chrome
    (modal-button-container, native heading sizes, setting-item-
@@ -6956,10 +6952,16 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
    surface rather than a custom widget. */
 
 .butter-welcome-modal {
-  width: min(560px, 92vw);
+  width: min(600px, 92vw);
+  height: min(540px, calc(100vh - 48px));
 }
 .butter-welcome-modal .modal-content {
-  padding-top: 8px;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding-top: 6px;
+  overflow-y: auto;
 }
 
 /* Native Obsidian full-screen modals on mobile (like Settings and Login) use
@@ -6969,19 +6971,134 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
    native full-screen shell. */
 .is-phone .butter-welcome-modal.mod-sidebar-layout .modal-content > * {
   position: relative !important;
+  inset: auto !important;
+  height: auto !important;
 }
 
 /* --- Welcome Modal --- */
 
 .butter-welcome-title-icon {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   vertical-align: text-bottom;
   margin-right: 8px;
   color: var(--interactive-accent);
+  width: 24px;
+  height: 24px;
 }
 .butter-welcome-title-icon svg {
-  width: 1.15em;
-  height: 1.15em;
+  width: 22px;
+  height: 22px;
+}
+.butter-welcome-modal .modal-title.is-brand {
+  color: var(--interactive-accent);
+}
+
+.butter-welcome-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 2px 0 24px;
+}
+.butter-welcome-progress-count {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.butter-welcome-progress-track {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+.butter-welcome-progress-step {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  transition: background-color 120ms ease;
+}
+.butter-welcome-progress-step.is-complete {
+  background: color-mix(in srgb, var(--interactive-accent) 55%, var(--background-modifier-border));
+}
+.butter-welcome-progress-step.is-current {
+  background: var(--interactive-accent);
+}
+
+.butter-welcome-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.butter-welcome-body.is-intro,
+.butter-welcome-body.is-preferences {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding-bottom: 24px;
+}
+.butter-welcome-body.is-license {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding-bottom: 20px;
+}
+
+.butter-welcome-hero {
+  margin-bottom: 18px;
+}
+.butter-welcome-hero p {
+  margin: 0;
+  max-width: 46ch;
+  color: var(--text-normal);
+  font-size: var(--font-ui-large);
+  line-height: 1.45;
+}
+
+.butter-welcome-features {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.butter-welcome-feature {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+.butter-welcome-feature-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--interactive-accent);
+}
+.butter-welcome-feature-icon .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+.butter-welcome-feature-icon .butter-obsidian-wireframe {
+  width: 16px;
+  height: 20px;
+}
+.butter-welcome-feature-title {
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+  line-height: 1.25;
+}
+.butter-welcome-feature-description {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.3;
 }
 
 .butter-welcome-intro {
@@ -6997,159 +7114,162 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   margin-bottom: 0;
 }
 
-.butter-welcome-section-heading {
-  font-size: var(--font-ui-medium);
-  font-weight: var(--font-semibold);
-  color: var(--text-normal);
-  margin: 8px 0 12px;
+.butter-welcome-formatting {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
 }
 
-.butter-visual-choices {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
+.butter-welcome-preference {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  align-items: start;
+  min-height: 0;
+  padding: 14px 12px;
 }
-.butter-visual-card {
+.butter-welcome-preference .butter-welcome-feature-description,
+.butter-welcome-preference .butter-inline-notice {
+  grid-column: 1 / -1;
+}
+.butter-welcome-preference .butter-welcome-feature-description {
+  margin-top: 9px;
+}
+.butter-welcome-preference-control {
+  grid-column: 3;
+  grid-row: 1;
+  padding-top: 1px;
+}
+
+.butter-inline-notice {
   display: flex;
-  flex-direction: column;
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  cursor: pointer;
-  overflow: hidden;
-  transition: box-shadow 150ms ease, border-color 150ms ease, transform 150ms ease;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 6px;
+  color: var(--interactive-accent);
+  font-size: var(--font-ui-smaller);
+  font-style: italic;
+  line-height: 1.45;
 }
-.butter-visual-card:hover {
-  border-color: var(--interactive-accent);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  transform: translateY(-2px);
+
+.butter-inline-notice-dot {
+  display: block;
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-top: 0.5em;
+  border-radius: 50%;
+  background: currentColor;
 }
-.butter-visual-graphic {
-  display: flex;
-  border-bottom: 1px solid var(--background-modifier-border);
-  min-height: 120px;
-}
-.butter-visual-col {
-  flex: 1;
-  padding: 12px;
-  line-height: 1.6;
-}
-.butter-visual-col.is-rendered {
-  background: var(--background-primary);
-  font-family: var(--font-text);
-  color: var(--text-normal);
-  font-size: 13px;
-}
-.butter-visual-col.is-source {
-  background: var(--background-secondary-alt);
-  border-left: 1px solid var(--background-modifier-border);
-  font-family: var(--font-monospace);
-  font-size: 11px;
-  color: var(--text-faint);
-}
-.butter-visual-col-label {
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--text-muted);
-  letter-spacing: 0.1em;
-  margin-bottom: 8px;
-  user-select: none;
-}
-.butter-mock-line-source {
-  margin-bottom: 2px;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-.butter-mock-line {
-  margin-bottom: 2px;
-}
-.butter-mock-line.is-h2 {
-  font-size: 16px;
-  font-weight: 600;
-  margin-bottom: 6px;
-  color: var(--text-normal);
-}
-.butter-mock-bold {
-  font-weight: 600;
-  color: var(--text-normal);
-}
-.butter-mock-highlight {
-  background: var(--text-highlight-bg, hsla(var(--interactive-accent-hsl), 0.3));
-  border-radius: 4px;
-  padding: 0 4px;
-}
-.butter-mock-color {
+
+.butter-inline-notice.is-warning {
   color: var(--color-red);
-  font-weight: 600;
 }
-.butter-mock-list {
-  margin: 4px 0 0 0;
-  padding-left: 16px;
-  list-style-type: none;
-}
-.is-mode-rich .butter-mock-list {
-  list-style-type: disc;
-}
-.is-mode-strict .butter-mock-list {
-  padding-left: 0;
-}
-.butter-visual-info {
-  padding: 14px 16px;
-}
-.butter-visual-title {
+
+
+.butter-welcome-footer {
   display: flex;
   align-items: center;
-  font-size: var(--font-ui-medium);
-  font-weight: var(--font-semibold);
-  color: var(--text-normal);
-  margin-bottom: 4px;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 16px;
 }
-.butter-visual-icon {
-  display: inline-flex;
-  margin-right: 6px;
-  color: var(--text-muted);
-}
-.butter-visual-icon svg {
-  width: 1em;
-  height: 1em;
-}
-.butter-visual-tag {
-  margin-left: 8px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  padding: 2px 6px;
-  border-radius: 12px;
-}
-.butter-visual-desc {
-  font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-.butter-welcome-footnote {
-  font-size: var(--font-ui-smaller);
-  color: var(--text-faint);
-  text-align: center;
-  margin-top: 4px;
-}
-
-
-/* Page 2 - the modal-button-container handles spacing + button
-   chrome. We just nudge the row down a bit and align the back-link
-   to the left so it reads as secondary navigation. */
-.butter-welcome-button-row {
-  margin-top: 18px;
+.butter-welcome-footer.is-end {
   justify-content: flex-end;
 }
-
-.butter-welcome-back-row {
+.butter-welcome-footer-actions {
   display: flex;
-  margin-top: 10px;
+  align-items: center;
+  gap: 8px;
+}
+.butter-welcome-continue {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.butter-welcome-continue-icon {
+  display: inline-flex;
+}
+.butter-welcome-continue-icon .svg-icon {
+  width: 15px;
+  height: 15px;
+}
+.butter-welcome-license-card {
+  width: 100%;
+  padding: 18px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+.butter-welcome-license-header {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+.butter-welcome-license-header > button {
+  white-space: nowrap;
+}
+.butter-welcome-license-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary));
+}
+.butter-welcome-license-icon .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+.butter-welcome-license-title {
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold);
+  line-height: 1.35;
+}
+.butter-welcome-license-description,
+.butter-welcome-license-existing-desc,
+.butter-welcome-license-price-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.4;
+}
+.butter-welcome-license-offer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--background-modifier-border);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.butter-welcome-license-price-value {
+  color: var(--text-normal);
+  font-size: 24px;
+  font-weight: var(--font-semibold);
+  line-height: 1.1;
+}
+.butter-welcome-license-existing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 0 0;
+  padding: 0 18px;
+}
+.butter-welcome-license-existing-title {
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
 }
 .butter-welcome-modal .butter-welcome-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: transparent;
   border: none;
   box-shadow: none;
@@ -7159,10 +7279,12 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   height: auto;
   cursor: pointer;
 }
-/* Decorative back arrow. Kept in CSS rather than the button label so the
-   label text stays sentence-case ("Back"). */
-.butter-welcome-modal .butter-welcome-back::before {
-  content: "← ";
+.butter-welcome-back-icon {
+  display: inline-flex;
+}
+.butter-welcome-back-icon .svg-icon {
+  width: 15px;
+  height: 15px;
 }
 .butter-welcome-modal .butter-welcome-back:hover {
   color: var(--text-normal);
@@ -7173,6 +7295,59 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
    group description. */
 .butter-welcome-tab-blurb {
   margin: 8px 0 0;
+}
+
+@media (max-width: 520px) {
+  .butter-welcome-modal {
+    width: 100vw;
+    height: 100vh;
+  }
+  .is-mobile .butter-welcome-modal .modal-content {
+    padding-bottom: max(16px, var(--safe-area-inset-bottom, 16px));
+  }
+  .butter-welcome-body {
+    overflow-y: auto;
+  }
+  .butter-welcome-feature {
+    min-height: 56px;
+    padding: 10px;
+  }
+  .butter-welcome-formatting {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .butter-welcome-preference .butter-welcome-feature-icon,
+  .butter-welcome-preference .butter-welcome-feature-title,
+  .butter-welcome-preference-control {
+    align-self: center;
+  }
+  .butter-welcome-preference-control {
+    display: flex;
+    align-items: center;
+    padding-top: 0;
+  }
+  .butter-welcome-features {
+    grid-template-columns: 1fr;
+  }
+  .butter-welcome-license-header.has-action {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+  .butter-welcome-license-header.has-action > button {
+    grid-column: 1 / -1;
+    justify-self: center;
+    margin-top: 4px;
+  }
+}
+
+@media (max-width: 420px) {
+  .butter-welcome-license-header.has-action {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+  .butter-welcome-license-header.has-action > button {
+    grid-column: 1;
+  }
 }
 
 
@@ -7279,57 +7454,6 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 .workspace-tab-header[data-type="butter-editor"] .workspace-tab-header-inner-icon {
   display: none;
 }
-
-/* Lead sentence on each Settings Presets row. Painted in the theme
- * accent so the "best for ..." copy stands out from the secondary
- * detail that follows it. Inherits the surrounding description font
- * size so it reads as the same row, just emphasized. */
-.butter-preset-best-for {
-  color: var(--text-accent);
-}
-
-/* Icon prefix on a settings-preset row. Same chrome as the
-   "Customize buttons" icon: inline-flex, muted color, sized to
-   match the row's text height. Sits inline at the start of the
-   `.setting-item-name` div, before the title text. */
-.butter-preset-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: 8px;
-  vertical-align: -3px;
-  color: var(--text-muted);
-}
-.butter-preset-icon .svg-icon {
-  width: 16px;
-  height: 16px;
-}
-
-/* Annotation tag next to a preset name (Default, Experimental, etc.).
- * Dimmed italic so it reads as a label note rather than part of the
- * title proper. */
-.butter-preset-tag {
-  color: var(--text-muted);
-  font-style: italic;
-  font-weight: normal;
-  margin-left: 0.5em;
-}
-/* Experimental variant - dim red so the tag visually flags "may
- * misbehave" without shouting. */
-.butter-preset-tag.is-experimental {
-  color: var(--color-red);
-  opacity: 0.75;
-}
-
-/* Custom-state indicator on Settings Presets. Renders only when no
- * preset's bundle matches the user's current settings. Dimmed italic
- * so it reads as a status note rather than its own UI element. */
-.butter-preset-custom-indicator {
-  font-style: italic;
-  color: var(--text-muted);
-  margin: 4px 0 8px;
-}
-
 
 /* Master animation kill-switch. The "Disable animations" setting in
  * Butter toggles `body.butter-no-anim`; the rule below nukes CSS

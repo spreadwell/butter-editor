@@ -4,6 +4,7 @@ import {
   Notice,
   Platform,
 } from "obsidian";
+import { tx, tv } from "../../i18n";
 
 export class ErrorLogModal extends Modal {
   constructor(
@@ -16,11 +17,11 @@ export class ErrorLogModal extends Modal {
   onOpen() {
     const { contentEl, titleEl } = this;
     if (Platform.isMobile) this.modalEl.addClass("mod-lg");
-    titleEl.setText(`Butter - recent errors (${this.entries.length})`);
+    titleEl.setText(tv("Butter - recent errors ({count})", { count: this.entries.length }));
 
     if (this.entries.length === 0) {
       contentEl.createEl("p", {
-        text: "No errors recorded since plugin load. Things look good.",
+        text: tx("No errors recorded since plugin load. Things look good."),
       });
       return;
     }
@@ -29,9 +30,7 @@ export class ErrorLogModal extends Modal {
       cls: "setting-item-description",
     });
     desc.setText(
-      "Most recent error first. Long-press to copy for a bug " +
-        "report. The log keeps the last 50 entries; older ones are " +
-        "discarded.",
+      tx("Most recent error first. Long-press to copy for a bug report. The log keeps the last 50 entries; older ones are discarded."),
     );
 
     const list = contentEl.createDiv({ cls: "butter-error-log-list" });
@@ -55,16 +54,16 @@ export class ErrorLogModal extends Modal {
     }
 
     const btnRow = contentEl.createDiv({ cls: "modal-button-container" });
-    const closeBtn = btnRow.createEl("button", { text: "Close" });
+    const closeBtn = btnRow.createEl("button", { text: tx("Close") });
     closeBtn.addEventListener("click", () => this.close());
     const clearBtn = btnRow.createEl("button", {
-      text: "Clear log",
+      text: tx("Clear log"),
       cls: "mod-warning",
     });
     clearBtn.addEventListener("click", () => {
       this.onClear();
       this.close();
-      new Notice("Butter error log cleared.");
+      new Notice(tx("Butter error log cleared."));
     });
   }
   onClose() {

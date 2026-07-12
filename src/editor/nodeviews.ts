@@ -7,6 +7,7 @@ import type { EditorView, NodeView } from "prosemirror-view";
 import { Selection } from "prosemirror-state";
 import { MathEditModal } from "./math-edit-modal";
 import { recordError } from "../integration/debug";
+import { tx, tv } from "../i18n";
 
 interface WidgetInfoHost extends HTMLElement {
   __butterWidgetInfo?: unknown;
@@ -247,7 +248,7 @@ export function showLangPopover(
 
   const input = activeDocument.createElement("input");
   input.type = "text";
-  input.placeholder = "Search languages\u2026";
+  input.placeholder = tx("Search languages...");
   input.className = "butter-code-lang-search";
   popover.appendChild(input);
 
@@ -295,7 +296,7 @@ export function showLangPopover(
       if (opt.isCustom) {
         const hint = activeDocument.createElement("span");
         hint.className = "butter-code-lang-hint";
-        hint.textContent = "Custom";
+        hint.textContent = tx("Custom");
         row.appendChild(hint);
       }
       row.addEventListener("mousedown", (ev) => {
@@ -413,7 +414,7 @@ export function codeBlockView(
       editToolbar.className = "butter-code-edit-toolbar";
       editToolbar.contentEditable = "false";
       editToolbar.setAttribute("role", "toolbar");
-      editToolbar.setAttribute("aria-label", "Code edit controls");
+      editToolbar.setAttribute("aria-label", tx("Code edit controls"));
 
       // Language label - identifies what kind of block you're editing
       // ("mermaid", "dataviewjs", "chart", etc.). Positioned first in
@@ -429,15 +430,15 @@ export function codeBlockView(
       const cancelBtn = activeDocument.createElement("button");
       cancelBtn.type = "button";
       cancelBtn.className = "butter-code-edit-toolbar-btn clickable-icon";
-      cancelBtn.setAttribute("aria-label", "Cancel (discard edits)");
-      cancelBtn.title = "Cancel";
+      cancelBtn.setAttribute("aria-label", tx("Cancel (discard edits)"));
+      cancelBtn.title = tx("Cancel");
       setIcon(cancelBtn, "x");
 
       const saveBtn = activeDocument.createElement("button");
       saveBtn.type = "button";
       saveBtn.className = "butter-code-edit-toolbar-btn clickable-icon";
-      saveBtn.setAttribute("aria-label", "Save edits");
-      saveBtn.title = "Save";
+      saveBtn.setAttribute("aria-label", tx("Save edits"));
+      saveBtn.title = tx("Save");
       setIcon(saveBtn, "check");
 
       editToolbar.appendChild(langLabel);
@@ -492,8 +493,8 @@ export function codeBlockView(
       langTag.textContent = language;
       langTag.contentEditable = "false";
       langTag.setAttribute("role", "button");
-      langTag.setAttribute("aria-label", `Copy ${language} code`);
-      langTag.title = "Copy";
+      langTag.setAttribute("aria-label", tv("Copy {language} code", { language }));
+      langTag.title = tx("Copy");
       // mousedown preventDefault stops PM from moving selection to
       // "near" the tag when the user presses it. Click still fires.
       langTag.addEventListener("mousedown", (e) => {
@@ -504,8 +505,8 @@ export function codeBlockView(
         e.preventDefault();
         e.stopPropagation();
         void navigator.clipboard.writeText(currentSource).then(
-          () => new Notice("Copied code"),
-          () => new Notice("Clipboard write failed"),
+          () => new Notice(tx("Copied code")),
+          () => new Notice(tx("Clipboard write failed")),
         );
       });
       dom.appendChild(langTag);

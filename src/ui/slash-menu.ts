@@ -12,6 +12,7 @@ import { setBlockType, wrapIn } from "prosemirror-commands";
 import type { Schema } from "prosemirror-model";
 
 import { bindFloatingSurfaceReposition } from "../util/floating-surface";
+import { tx, type MessageKey } from "../i18n";
 
 // ═══════════════════════════════════════════
 //  Items
@@ -19,8 +20,8 @@ import { bindFloatingSurfaceReposition } from "../util/floating-surface";
 
 export interface SlashItem {
   id: string;
-  label: string;
-  desc: string;
+  label: MessageKey;
+  desc: MessageKey;
   icon: string;
   keywords: string[];
   run: (view: EditorView, schema: Schema, app: App) => void;
@@ -439,7 +440,7 @@ class SlashMenuPopover {
     // listbox container, which screen readers announce as the
     // "virtual focus" without our needing to actually move DOM focus.
     this.dom.setAttribute("role", "listbox");
-    this.dom.setAttribute("aria-label", "Slash menu");
+    this.dom.setAttribute("aria-label", tx("Slash menu"));
     this.dom.id = `butter-slash-${Math.random().toString(36).slice(2, 9)}`;
     this.dom.addEventListener("butter-dismiss", () => this.onDismiss());
     activeDocument.body.appendChild(this.dom);
@@ -489,7 +490,7 @@ class SlashMenuPopover {
       const empty = this.dom.createDiv({
         cls: "butter-surface-empty butter-slash-empty",
       });
-      empty.textContent = "No matches";
+      empty.textContent = tx("No matches");
       return;
     }
     for (const [i, item] of this.items.entries()) {
@@ -513,11 +514,11 @@ class SlashMenuPopover {
       });
       meta.createDiv({
         cls: "butter-surface-label butter-slash-label",
-        text: item.label,
+        text: tx(item.label),
       });
       meta.createDiv({
         cls: "butter-surface-detail butter-slash-desc",
-        text: item.desc,
+        text: tx(item.desc),
       });
       el.addEventListener("mousedown", (e) => {
         e.preventDefault();

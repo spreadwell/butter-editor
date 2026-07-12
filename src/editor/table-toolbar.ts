@@ -28,6 +28,7 @@ import type { EditorView } from "prosemirror-view";
 import { Fragment, type Node as PMNode, type Schema } from "prosemirror-model";
 import type { Layout, LayoutItem } from "../ui/toolbar-layout";
 import { bindFixedPopoverToAnchor } from "../util/floating-surface";
+import { tx, txKnown, type MessageKey } from "../i18n";
 import {
   addColumnAfter,
   addColumnBefore,
@@ -261,7 +262,7 @@ function cycleColumnAlignment(view: EditorView) {
 interface Btn {
   id: string;
   icon: string;
-  label: string;
+  label: MessageKey;
   run: (view: EditorView) => void;
 }
 
@@ -272,7 +273,7 @@ interface Btn {
  */
 export const TABLE_TOOLBAR_BUTTON_DEFS: Array<{
   id: string;
-  label: string;
+  label: MessageKey;
   group: string;
   icon: string;
 }> = [
@@ -349,17 +350,17 @@ function runDeleteTable(view: EditorView) {
   }
   const modal = new (class extends Modal {
     onOpen() {
-      this.titleEl.setText("Delete this table?");
+      this.titleEl.setText(tx("Delete this table?"));
       this.contentEl.createDiv({
         cls: "butter-mobile-confirm-message",
-        text: "This will remove the entire table. You can undo this with Ctrl+Z.",
+        text: tx("This will remove the entire table. You can undo this with Ctrl+Z."),
       });
       const actions = this.contentEl.createDiv({ cls: "butter-mobile-modal-actions" });
-      const cancel = actions.createEl("button", { text: "Cancel" });
+      const cancel = actions.createEl("button", { text: tx("Cancel") });
       cancel.addEventListener("click", () => this.close());
       const del = actions.createEl("button", {
         cls: "mod-warning",
-        text: "Delete",
+        text: tx("Delete"),
       });
       del.addEventListener("click", () => {
         this.close();
@@ -424,7 +425,7 @@ function renderTableButton(
   el.className = isMobile
     ? "mobile-toolbar-option clickable-icon"
     : "butter-table-toolbar-btn clickable-icon";
-  el.setAttribute("aria-label", def.label);
+  el.setAttribute("aria-label", tx(def.label));
   el.dataset.btnId = def.id;
   setIcon(el, def.icon);
   el.addEventListener("click", (e) => {
@@ -453,7 +454,7 @@ function renderTableSubmenu(
   el.className = isMobile
     ? "mobile-toolbar-option clickable-icon butter-btn-submenu"
     : "butter-table-toolbar-btn clickable-icon butter-btn-submenu";
-  el.setAttribute("aria-label", item.label || "Submenu");
+  el.setAttribute("aria-label", item.label ? txKnown(item.label) : tx("Submenu"));
   el.dataset.submenuId = item.id;
   setIcon(el, item.icon || "more-horizontal");
   const dot = activeDocument.createElement("span");
@@ -472,7 +473,7 @@ function renderTableSubmenu(
     if (popup.children.length === 0) {
       const empty = activeDocument.createElement("div");
       empty.classList.add("butter-toolbar-submenu-empty");
-      empty.textContent = "Empty";
+      empty.textContent = tx("Empty");
       popup.appendChild(empty);
     }
     ctx.setPopover(popup, el, { closeOnLeave: true });
@@ -590,7 +591,7 @@ export function tableToolbarPlugin(
         const swap = activeDocument.createElement("button");
         swap.className =
           "mobile-toolbar-option clickable-icon butter-mobile-swap-btn";
-        swap.setAttribute("aria-label", "Switch to main toolbar");
+        swap.setAttribute("aria-label", tx("Switch to main toolbar"));
         setIcon(swap, "type");
         swap.addEventListener("click", (e) => {
           e.preventDefault();
@@ -599,7 +600,7 @@ export function tableToolbarPlugin(
         const closeBtn = activeDocument.createElement("button");
         closeBtn.className =
           "mobile-toolbar-option clickable-icon butter-mobile-close-btn";
-        closeBtn.setAttribute("aria-label", "Close insert drawer");
+        closeBtn.setAttribute("aria-label", tx("Close insert drawer"));
         setIcon(closeBtn, "x");
         closeBtn.addEventListener("click", (e) => {
           e.preventDefault();

@@ -1,16 +1,17 @@
 import { Setting } from "obsidian";
 import { ButterSettingTab } from "../settings-tab";
+import { tx } from "../../i18n";
 
 export function renderDragSection(this: ButterSettingTab, root: HTMLElement) {
     new Setting(root)
-      .setName("Motion")
-      .setDesc("Drag animation feel. Springy bounces; Snappy is direct; Smooth is steady.")
+      .setName(tx("Motion"))
+      .setDesc(tx("Drag animation feel. Springy bounces; Snappy is direct; Smooth is steady."))
       .addDropdown((d) =>
         d
           .addOptions({
-            springy: "Springy",
-            snappy: "Snappy",
-            smooth: "Smooth",
+            springy: tx("Springy"),
+            snappy: tx("Snappy"),
+            smooth: tx("Smooth"),
           })
           .setValue(this.plugin.settings.dragMotion)
           .onChange(async (v) => {
@@ -20,13 +21,13 @@ export function renderDragSection(this: ButterSettingTab, root: HTMLElement) {
       );
 
     new Setting(root)
-      .setName("Handle visibility")
-      .setDesc("When the gutter drag handle appears. Hover: only on the pointed-at block. Always: stays on the nearest block.")
+      .setName(tx("Handle visibility"))
+      .setDesc(tx("When the gutter drag handle appears. Hover: only on the pointed-at block. Always: stays on the nearest block."))
       .addDropdown((d) =>
         d
           .addOptions({
-            hover: "On hover",
-            always: "Always",
+            hover: tx("On hover"),
+            always: tx("Always"),
           })
           .setValue(this.plugin.settings.dragHandleVisibility)
           .onChange(async (v) => {
@@ -36,8 +37,8 @@ export function renderDragSection(this: ButterSettingTab, root: HTMLElement) {
       );
 
     new Setting(root)
-      .setName("Drag sensitivity")
-      .setDesc("How early a block swaps places while you drag. Higher swaps sooner, with less travel. Zero means the block must fully clear its neighbor first.")
+      .setName(tx("Drag sensitivity"))
+      .setDesc(tx("How early a block swaps places while you drag. Higher swaps sooner, with less travel. Zero means the block must fully clear its neighbor first."))
       .addSlider((s) =>
         s
           .setLimits(0, 16, 1)

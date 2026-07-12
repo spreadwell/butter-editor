@@ -1,14 +1,14 @@
 import { Setting } from "obsidian";
 import { ButterSettingTab, NormalizeWarningModal } from "../settings-tab";
-import { PresetDriftConfirmModal } from "../welcome-modal";
-import type { SourcePurityMode } from "../welcome-modal";
+import { appendInlineNotice } from "../inline-notice";
+import { tx } from "../../i18n";
 
 export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
-    const formSection = this.createSettingGroup(root, "Formatting style");
+    const formSection = this.createSettingGroup(root, tx("Formatting style"));
 
     new Setting(formSection)
-      .setName("Bullet marker")
-      .setDesc("Character used for unordered list items.")
+      .setName(tx("Bullet marker"))
+      .setDesc(tx("Character used for unordered list items."))
       .addDropdown((d) =>
         d
           .addOptions({
@@ -18,20 +18,14 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
           })
           .setValue(this.plugin.settings.canonicalBullet)
           .onChange(async (v) => {
-            if (!(await this.gateBundledChoice(
-              d,
-              "canonicalBullet",
-              v,
-              "Bullet marker",
-            ))) return;
             this.plugin.settings.canonicalBullet = v as "*" | "-" | "+";
             await this.plugin.saveSettings();
           }),
       );
 
     new Setting(formSection)
-      .setName("Italic marker")
-      .setDesc("Character used to italicize text.")
+      .setName(tx("Italic marker"))
+      .setDesc(tx("Character used to italicize text."))
       .addDropdown((d) =>
         d
           .addOptions({
@@ -40,20 +34,14 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
           })
           .setValue(this.plugin.settings.canonicalItalic)
           .onChange(async (v) => {
-            if (!(await this.gateBundledChoice(
-              d,
-              "canonicalItalic",
-              v,
-              "Italic marker",
-            ))) return;
             this.plugin.settings.canonicalItalic = v as "*" | "_";
             await this.plugin.saveSettings();
           }),
       );
 
     new Setting(formSection)
-      .setName("Bold marker")
-      .setDesc("Character used to bold text.")
+      .setName(tx("Bold marker"))
+      .setDesc(tx("Character used to bold text."))
       .addDropdown((d) =>
         d
           .addOptions({
@@ -62,20 +50,14 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
           })
           .setValue(this.plugin.settings.canonicalBold)
           .onChange(async (v) => {
-            if (!(await this.gateBundledChoice(
-              d,
-              "canonicalBold",
-              v,
-              "Bold marker",
-            ))) return;
             this.plugin.settings.canonicalBold = v as "**" | "__";
             await this.plugin.saveSettings();
           }),
       );
 
     new Setting(formSection)
-      .setName("Code fence character")
-      .setDesc("Triple-backtick is the standard; tildes are an alternative.")
+      .setName(tx("Code fence character"))
+      .setDesc(tx("Triple-backtick is the standard; tildes are an alternative."))
       .addDropdown((d) =>
         d
           .addOptions({
@@ -84,20 +66,14 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
           })
           .setValue(this.plugin.settings.canonicalCodeFence)
           .onChange(async (v) => {
-            if (!(await this.gateBundledChoice(
-              d,
-              "canonicalCodeFence",
-              v,
-              "Code fence character",
-            ))) return;
             this.plugin.settings.canonicalCodeFence = v as "```" | "~~~";
             await this.plugin.saveSettings();
           }),
       );
 
     new Setting(formSection)
-      .setName("Horizontal rule")
-      .setDesc("Character used for horizontal divider lines.")
+      .setName(tx("Horizontal rule"))
+      .setDesc(tx("Character used for horizontal divider lines."))
       .addDropdown((d) =>
         d
           .addOptions({
@@ -107,56 +83,35 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
           })
           .setValue(this.plugin.settings.canonicalHorizontalRule)
           .onChange(async (v) => {
-            if (!(await this.gateBundledChoice(
-              d,
-              "canonicalHorizontalRule",
-              v,
-              "Horizontal rule",
-            ))) return;
             this.plugin.settings.canonicalHorizontalRule = v as "---" | "***" | "___";
             await this.plugin.saveSettings();
           }),
       );
 
-    const presSection = this.createSettingGroup(root, "Source preservation");
+    const presSection = this.createSettingGroup(root, tx("Source preservation"));
 
     const preserveSetting = new Setting(presSection)
-      .setName("Preserve original formatting exactly")
+      .setName(tx("Preserve original formatting exactly"))
       .setDesc(
-        "Parts of the note you didn't edit stay exactly as they were in the original file: spacing, formatting style, and blank lines all preserved. Sections you edited are saved in Butter's standard clean format.",
+        tx("Parts of the note you didn't edit stay exactly as they were in the original file: spacing, formatting style, and blank lines all preserved. Sections you edited are saved in Butter's standard clean format."),
       )
       .addToggle((t) =>
         t
           .setValue(this.plugin.settings.preserveOriginalSource)
           .onChange(async (v) => {
-            if (!(await this.gateBundledToggle(
-              t,
-              "preserveOriginalSource",
-              v,
-              "Preserve original formatting exactly",
-            ))) return;
             this.plugin.settings.preserveOriginalSource = v;
             await this.plugin.saveSettings();
           }),
       );
-    preserveSetting.nameEl.createSpan({
-      cls: "butter-preset-tag is-experimental",
-      text: "Experimental",
-    });
+    appendInlineNotice(preserveSetting.descEl, tx("Experimental"), "warning");
 
-    const normSection = this.createSettingGroup(root, "Source normalizers");
+    const normSection = this.createSettingGroup(root, tx("Source normalizers"));
 
     new Setting(normSection)
-      .setName("Normalize heading gap to 1 blank line")
-      .setDesc("Adds a blank line between a heading and the next block if they're touching. Existing gaps are left alone. Respects fenced code blocks.")
+      .setName(tx("Normalize heading gap to 1 blank line"))
+      .setDesc(tx("Adds a blank line between a heading and the next block if they're touching. Existing gaps are left alone. Respects fenced code blocks."))
       .addToggle((t) =>
         t.setValue(this.plugin.settings.normalizeHeadingGap).onChange(async (v) => {
-          if (!(await this.gateBundledToggle(
-            t,
-            "normalizeHeadingGap",
-            v,
-            "Normalize heading gap to 1 blank line",
-          ))) return;
           if (v && !this.plugin.settings.normalizeWarningAcknowledged) {
             const ok = await this.showWarning();
             if (!ok) {
@@ -171,16 +126,10 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
       );
 
     new Setting(normSection)
-      .setName("Condense multiple blank lines")
-      .setDesc("Cap runs of 2+ blank lines at 1 on save. Respects fenced code blocks.")
+      .setName(tx("Condense multiple blank lines"))
+      .setDesc(tx("Cap runs of 2+ blank lines at 1 on save. Respects fenced code blocks."))
       .addToggle((t) =>
         t.setValue(this.plugin.settings.condenseBlankLines).onChange(async (v) => {
-          if (!(await this.gateBundledToggle(
-            t,
-            "condenseBlankLines",
-            v,
-            "Condense multiple blank lines",
-          ))) return;
           if (v && !this.plugin.settings.normalizeWarningAcknowledged) {
             const ok = await this.showWarning();
             if (!ok) {
@@ -195,16 +144,10 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
       );
 
     new Setting(normSection)
-      .setName("Close unclosed code fences")
-      .setDesc("Add a closing fence when the file ends inside an open code block. Prevents new content below the block from being treated as part of it.")
+      .setName(tx("Close unclosed code fences"))
+      .setDesc(tx("Add a closing fence when the file ends inside an open code block. Prevents new content below the block from being treated as part of it."))
       .addToggle((t) =>
         t.setValue(this.plugin.settings.closeUnclosedFences).onChange(async (v) => {
-          if (!(await this.gateBundledToggle(
-            t,
-            "closeUnclosedFences",
-            v,
-            "Close unclosed code fences",
-          ))) return;
           if (v && !this.plugin.settings.normalizeWarningAcknowledged) {
             const ok = await this.showWarning();
             if (!ok) {
@@ -219,16 +162,10 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
       );
 
     new Setting(normSection)
-      .setName("Auto-split full-width images into their own block")
-      .setDesc("Move full-width inline images into their own paragraph. Sized embeds (with `|WIDTH`) stay inline.")
+      .setName(tx("Auto-split full-width images into their own block"))
+      .setDesc(tx("Move full-width inline images into their own paragraph. Sized embeds (with `|WIDTH`) stay inline."))
       .addToggle((t) =>
         t.setValue(this.plugin.settings.splitFullWidthImages).onChange(async (v) => {
-          if (!(await this.gateBundledToggle(
-            t,
-            "splitFullWidthImages",
-            v,
-            "Auto-split full-width images into their own block",
-          ))) return;
           this.plugin.settings.splitFullWidthImages = v;
           await this.plugin.saveSettings();
         }),
@@ -239,7 +176,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
     const commandNote = normSection.createDiv({ cls: "setting-item-description" });
     commandNote.createEl("div", {
       text:
-        "Three commands (find them in the command palette) clean files on demand. 'tidy whitespace' applies the cleanup options above. 'rewrite current note' reformats the whole note with your marker choices. 'rewrite entire vault' does the same across all notes (back up with Git first).",
+        tx("Three commands (find them in the command palette) clean files on demand. 'tidy whitespace' applies the cleanup options above. 'rewrite current note' reformats the whole note with your marker choices. 'rewrite entire vault' does the same across all notes (back up with Git first)."),
     });
   }
 
@@ -251,19 +188,5 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
     return new Promise((resolve) => {
       const modal = new NormalizeWarningModal(this.app, resolve);
       modal.open();
-    });
-  }
-
-/** Show the preset-drift confirm modal when a bundled setting
-   *  changes would move the user out of an active preset. Resolves
-   *  true on confirm (apply the change), false on cancel (revert). */
-  export function confirmPresetDrift(this: ButterSettingTab, activePreset: SourcePurityMode, settingLabel: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      new PresetDriftConfirmModal(
-        this.app,
-        activePreset,
-        settingLabel,
-        resolve,
-      ).open();
     });
   }

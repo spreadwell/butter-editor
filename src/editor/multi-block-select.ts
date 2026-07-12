@@ -39,6 +39,7 @@ import {
   applyBlockContextMenuChrome,
   MERGE_MENU_ITEMS,
 } from "./block-menu-spec";
+import { tx, tv } from "../i18n";
 
 export interface MultiBlockSelection {
   /** Doc positions of the top-level blocks currently selected. Each
@@ -319,8 +320,8 @@ export function openMultiBlockContextMenu(
   const totalChars = nodes.reduce((s, n) => s + n.node.textContent.length, 0);
   applyBlockContextMenuChrome(menu, {
     icon: "layers",
-    title: `${count} block${count === 1 ? "" : "s"}`,
-    sub: `Selection · ${totalChars} char${totalChars === 1 ? "" : "s"}`,
+    title: tv("{count} {unit}", { count, unit: tx(count === 1 ? "block" : "blocks") }),
+    sub: tv("Selection - {count} {unit}", { count: totalChars, unit: tx(totalChars === 1 ? "char" : "chars") }),
   });
 
   const copyAll = async (): Promise<boolean> => {
@@ -329,7 +330,7 @@ export function openMultiBlockContextMenu(
       await navigator.clipboard.writeText(md.replace(/\n+$/, ""));
       return true;
     } catch {
-      new Notice("Clipboard write failed");
+      new Notice(tx("Clipboard write failed"));
       return false;
     }
   };
@@ -389,26 +390,26 @@ export function openMultiBlockContextMenu(
   }
 
   menu.addItem((item) => {
-    item.setTitle("Copy");
+    item.setTitle(tx("Copy"));
     item.setIcon("copy");
     item.onClick(async () => {
-      if (await copyAll()) new Notice(`Copied ${count} blocks`);
+      if (await copyAll()) new Notice(tv("Copied {count} blocks", { count }));
     });
   });
 
   menu.addItem((item) => {
-    item.setTitle("Cut");
+    item.setTitle(tx("Cut"));
     item.setIcon("scissors");
     item.onClick(async () => {
       if (await copyAll()) {
         deleteAll();
-        new Notice(`Cut ${count} blocks`);
+        new Notice(tv("Cut {count} blocks", { count }));
       }
     });
   });
 
   menu.addItem((item) => {
-    item.setTitle("Duplicate");
+    item.setTitle(tx("Duplicate"));
     item.setIcon("copy-plus");
     item.onClick(() => {
       const last = nodes[nodes.length - 1];
@@ -430,7 +431,7 @@ export function openMultiBlockContextMenu(
     for (const merge of MERGE_MENU_ITEMS) {
       if (!merge.appliesTo(blockNodes)) continue;
       menu.addItem((item) => {
-        item.setTitle(merge.title);
+        item.setTitle(tx(merge.title));
         item.setIcon(merge.icon);
         item.onClick(() => {
           merge.run(view, nodes);
@@ -447,7 +448,7 @@ export function openMultiBlockContextMenu(
   menu.addSeparator();
 
   menu.addItem((item) => {
-    item.setTitle("Delete");
+    item.setTitle(tx("Delete"));
     item.setIcon("trash-2");
     item.setWarning?.(true);
     item.dom?.classList.add("is-warning");

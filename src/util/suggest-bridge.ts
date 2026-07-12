@@ -18,6 +18,7 @@ import { Plugin as PMPlugin, PluginKey } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 
 import { PMEditorShim } from "./editor-shim";
+import { tx } from "../i18n";
 import { bindFloatingSurfaceReposition } from "./floating-surface";
 import type { Serializer } from "../core/serializer-types";
 
@@ -98,7 +99,7 @@ export function suggestBridgePlugin(
           const empty = ctx.popover.createDiv({
             cls: "butter-surface-empty suggestion-empty",
           });
-          empty.textContent = "No suggestions";
+          empty.textContent = tx("No suggestions");
           return;
         }
         const container = ctx.popover.createDiv({ cls: "suggestion" });
@@ -111,7 +112,7 @@ export function suggestBridgePlugin(
             ctx.suggest.renderSuggestion(ctx.items[i], el);
           } catch {
             const item = ctx.items[i];
-            el.setText(typeof item === "string" ? item : "[suggestion]");
+            el.setText(typeof item === "string" ? item : tx("[suggestion]"));
           }
           el.addEventListener("mousedown", (ev) => {
             ev.preventDefault();

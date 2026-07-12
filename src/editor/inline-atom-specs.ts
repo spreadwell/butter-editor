@@ -9,6 +9,7 @@
 
 import type { Node as PMNode, Schema } from "prosemirror-model";
 import { isInlineMathSource } from "../core/inline-math-delimiters";
+import type { MessageKey } from "../i18n";
 
 type EditorSchema = Schema<string, string>;
 
@@ -20,7 +21,7 @@ export interface AtomField {
   /** Attribute key on the atom node. */
   name: string;
   /** Label shown above the input. */
-  label: string;
+  label: MessageKey;
   /** Placeholder shown when the input is empty. Can be a function
    *  of the OTHER fields' current values - e.g. the alias field
    *  defaults its placeholder to the target name as the user types. */
@@ -42,7 +43,7 @@ export interface AtomSpec {
   /** PM node type name. */
   typeName: string;
   /** Human-readable label shown in the floating panel + context menu. */
-  label: string;
+  label: MessageKey;
   /** Render the atom's CURRENT attrs to the source pattern a user
    *  would author - this is what prefills the legacy single input. */
   toSource: (node: PMNode) => string;

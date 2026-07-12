@@ -74,4 +74,4 @@ Their licenses are preserved in the plugin. Everything else is original Butter E
 
 ## License
 
-Butter Editor is source-available proprietary software. The source is published in this repository under the [LICENSE](./LICENSE), which permits private use, internal organizational use, and custom one-off implementations, but restricts use as a substantial component of a competing Obsidian product. Runtime use is governed by the End User License Agreement at [buttereditor.com/terms](https://buttereditor.com/terms) and requires a valid Butter Editor license (or an active trial).
+Butter Editor is proprietary software. Its source is publicly visible solely for inspection, security review, and Obsidian plugin review; no general permission is granted to use, copy, compile, modify, or redistribute it. See the [LICENSE](./LICENSE). Use of the official compiled plugin is governed by the End User License Agreement at [buttereditor.com/terms](https://buttereditor.com/terms) and requires a valid Butter Editor license or an active trial.

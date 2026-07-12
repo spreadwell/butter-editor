@@ -42,6 +42,7 @@ import {
 } from "./insert-drawer";
 import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
 import { applyVaultFilesSuggest } from "./vault-files-suggest";
+import { tx, txKnown, type MessageKey } from "../i18n";
 
 /** Same check as the desktop toolbar's `isHtmlFormattingEnabled`,
  *  reachable from the mobile renderer without duplicating exports
@@ -72,14 +73,14 @@ export function installMobileToolbarOverflowIndicators(
   leftInd.classList.add("butter-mobile-overflow-indicator", "is-left");
   leftInd.setAttribute("role", "button");
   leftInd.setAttribute("tabindex", "0");
-  leftInd.setAttribute("aria-label", "Scroll toolbar left");
+  leftInd.setAttribute("aria-label", tx("Scroll toolbar left"));
   setIcon(leftInd, "chevron-left");
 
   const rightInd = activeDocument.createElement("div");
   rightInd.classList.add("butter-mobile-overflow-indicator", "is-right");
   rightInd.setAttribute("role", "button");
   rightInd.setAttribute("tabindex", "0");
-  rightInd.setAttribute("aria-label", "Scroll toolbar right");
+  rightInd.setAttribute("aria-label", tx("Scroll toolbar right"));
   setIcon(rightInd, "chevron-right");
 
   const getItems = () =>
@@ -183,11 +184,11 @@ function openMobileInsertTableModal(app: App, schema: Schema, view: EditorView) 
     private rows = 3;
     private cols = 3;
     onOpen() {
-      this.titleEl.setText("Insert table");
+      this.titleEl.setText(tx("Insert table"));
       const wrap = this.contentEl.createDiv({ cls: "butter-mobile-stepper-wrap" });
-      const stepper = (label: string, init: number, onChange: (n: number) => void) => {
+      const stepper = (label: MessageKey, init: number, onChange: (n: number) => void) => {
         const row = wrap.createDiv({ cls: "butter-mobile-stepper-row" });
-        row.createSpan({ cls: "butter-mobile-stepper-label", text: label });
+        row.createSpan({ cls: "butter-mobile-stepper-label", text: tx(label) });
         const minus = row.createEl("button", { cls: "butter-mobile-stepper-btn", text: "−" });
         const value = row.createSpan({ cls: "butter-mobile-stepper-value", text: String(init) });
         const plus = row.createEl("button", { cls: "butter-mobile-stepper-btn", text: "+" });
@@ -203,11 +204,11 @@ function openMobileInsertTableModal(app: App, schema: Schema, view: EditorView) 
       stepper("Rows", this.rows, (n) => (this.rows = n));
       stepper("Columns", this.cols, (n) => (this.cols = n));
       const actions = this.contentEl.createDiv({ cls: "butter-mobile-modal-actions" });
-      const cancel = actions.createEl("button", { text: "Cancel" });
+      const cancel = actions.createEl("button", { text: tx("Cancel") });
       cancel.addEventListener("click", () => this.close());
       const insert = actions.createEl("button", {
         cls: "mod-cta",
-        text: "Insert",
+        text: tx("Insert"),
       });
       insert.addEventListener("click", () => {
         this.close();
@@ -226,15 +227,15 @@ function openMobileAddLinkModal(app: App, schema: Schema, view: EditorView) {
     onOpen() {
       const sel = view.state.selection;
       const selectedText = sel.empty ? "" : view.state.doc.textBetween(sel.from, sel.to);
-      this.titleEl.setText("Add link");
+      this.titleEl.setText(tx("Add link"));
       const form = this.contentEl.createDiv({ cls: "butter-mobile-edit-form" });
       this.renderField(form, "target", "Link", "", "Note name or URL", true);
       this.renderField(form, "text", "Display text", selectedText, "Optional", false);
 
       const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
-      const cancel = actions.createEl("button", { text: "Cancel" });
+      const cancel = actions.createEl("button", { text: tx("Cancel") });
       cancel.addEventListener("click", () => this.close());
-      const insert = actions.createEl("button", { cls: "mod-cta", text: "Insert" });
+      const insert = actions.createEl("button", { cls: "mod-cta", text: tx("Insert") });
       insert.addEventListener("click", () => this.commit());
 
       window.setTimeout(() => this.inputs.target?.focus(), 0);
@@ -249,10 +250,10 @@ function openMobileAddLinkModal(app: App, schema: Schema, view: EditorView) {
       suggestNotes: boolean,
     ): void {
       const fieldEl = parent.createDiv({ cls: "butter-mobile-edit-field" });
-      fieldEl.createDiv({ cls: "butter-mobile-edit-field-label", text: label });
+      fieldEl.createDiv({ cls: "butter-mobile-edit-field-label", text: txKnown(label) });
       const input = fieldEl.createEl("input", {
         cls: "butter-mobile-edit-input",
-        attr: { type: "text", placeholder },
+        attr: { type: "text", placeholder: txKnown(placeholder) },
       });
       input.value = value;
       input.addEventListener("keydown", (ev) => {
@@ -314,12 +315,12 @@ function openMobileInsertImageDialog(
 ) {
   const modal = new (class extends Modal {
     onOpen() {
-      this.titleEl.setText("Insert image");
+      this.titleEl.setText(tx("Insert image"));
       const wrap = this.contentEl.createDiv({ cls: "butter-mobile-image-options" });
       // OS file picker - preferred mobile path
       const pickBtn = wrap.createEl("button", {
         cls: "butter-mobile-image-option mod-cta",
-        text: "Pick from device",
+        text: tx("Pick from device"),
       });
       pickBtn.addEventListener("click", () => {
         const input = activeDocument.createElement("input");
@@ -340,10 +341,10 @@ function openMobileInsertImageDialog(
       });
       // URL fallback
       const urlRow = wrap.createDiv({ cls: "butter-mobile-image-url-row" });
-      urlRow.createSpan({ text: "Or paste URL:" });
+      urlRow.createSpan({ text: tx("Or paste URL:") });
       const urlInput = urlRow.createEl("input", { type: "url" });
-      urlInput.placeholder = "Example: https://…";
-      const urlBtn = urlRow.createEl("button", { text: "Insert URL" });
+      urlInput.placeholder = tx("Example: https://...");
+      const urlBtn = urlRow.createEl("button", { text: tx("Insert URL") });
       urlBtn.addEventListener("click", () => {
         const src = urlInput.value.trim();
         if (!src) return;
@@ -397,7 +398,7 @@ async function insertImageFromFile(
     }
     view.focus();
   } catch (err) {
-    new Notice(`Failed to save image: ${(err as Error).message ?? err}`);
+    new Notice(`${tx("Failed to save image:")} ${(err as Error).message ?? err}`);
   }
 }
 
@@ -424,7 +425,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
       "clickable-icon",
       "butter-mobile-submenu",
     );
-    el.setAttribute("aria-label", item.label || "Submenu");
+  el.setAttribute("aria-label", item.label ? txKnown(item.label) : tx("Submenu"));
     el.dataset.submenuId = item.id;
     setIcon(el, item.icon || "more-horizontal");
     el.addEventListener("click", (e) => {
@@ -445,7 +446,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
       "clickable-icon",
       "butter-mobile-overflow",
     );
-    el.setAttribute("aria-label", "More");
+    el.setAttribute("aria-label", tx("More"));
     setIcon(el, "more-horizontal");
     el.addEventListener("click", (e) => {
       e.preventDefault();
@@ -470,7 +471,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   // automatically. With it, "detached" style mirrors Obsidian's own
   // mobile toolbar 1:1 without our CSS having to hard-code colors.
   el.classList.add("mobile-toolbar-option", "clickable-icon");
-  el.setAttribute("aria-label", def.label);
+  el.setAttribute("aria-label", tx(def.label));
   el.dataset.btnId = def.id;
   setIcon(el, def.icon);
   const existing = ctx.buttonMap.get(def.id);
@@ -614,7 +615,7 @@ function openMobileVariantsPopover(
     setIcon(icon, def.icon);
     const label = activeDocument.createElement("span");
     label.classList.add("butter-mobile-variant-label");
-    label.textContent = def.label;
+    label.textContent = tx(def.label);
     row.appendChild(icon);
     row.appendChild(label);
     row.addEventListener("click", (e) => {
@@ -687,7 +688,7 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
 
   const title = activeDocument.createElement("div");
   title.classList.add("butter-mobile-sheet-title");
-  title.textContent = "More actions";
+  title.textContent = tx("More actions");
   sheet.appendChild(title);
 
   const list = activeDocument.createElement("div");
@@ -722,7 +723,7 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
     setIcon(icon, def.icon);
     const label = activeDocument.createElement("span");
     label.classList.add("butter-mobile-sheet-label");
-    label.textContent = def.label;
+    label.textContent = tx(def.label);
     row.appendChild(icon);
     row.appendChild(label);
     row.addEventListener("click", () => {
@@ -861,7 +862,7 @@ function renderNativeMain(
     const swapBack = activeDocument.createElement("button");
     swapBack.className =
       "mobile-toolbar-option clickable-icon butter-mobile-swap-btn";
-    swapBack.setAttribute("aria-label", "Switch to table toolbar");
+    swapBack.setAttribute("aria-label", tx("Switch to table toolbar"));
     setIcon(swapBack, "table");
     swapBack.addEventListener("click", (e) => {
       e.preventDefault();
@@ -876,7 +877,7 @@ function renderNativeMain(
       "butter-mobile-overflow",
       "butter-mobile-overflow-auto",
     );
-    more.setAttribute("aria-label", "More");
+    more.setAttribute("aria-label", tx("More"));
     setIcon(more, "more-horizontal");
     more.addEventListener("click", (e) => {
       e.preventDefault();
@@ -939,7 +940,7 @@ function renderButterMain(
       "clickable-icon",
       "butter-mobile-insert-btn",
     );
-    insertBtn.setAttribute("aria-label", "Insert block");
+    insertBtn.setAttribute("aria-label", tx("Insert block"));
     setIcon(insertBtn, "plus");
     insertBtn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -964,7 +965,7 @@ function renderButterMain(
   const swapBack = activeDocument.createElement("button");
   swapBack.className =
     "mobile-toolbar-option clickable-icon butter-mobile-swap-btn";
-  swapBack.setAttribute("aria-label", "Switch to table toolbar");
+  swapBack.setAttribute("aria-label", tx("Switch to table toolbar"));
   setIcon(swapBack, "table");
   swapBack.addEventListener("click", (e) => {
     e.preventDefault();
@@ -975,7 +976,7 @@ function renderButterMain(
   const closeBtn = activeDocument.createElement("button");
   closeBtn.className =
     "mobile-toolbar-option clickable-icon butter-mobile-close-btn";
-  closeBtn.setAttribute("aria-label", "Close drawer");
+  closeBtn.setAttribute("aria-label", tx("Close drawer"));
   setIcon(closeBtn, "x");
   closeBtn.addEventListener("click", (e) => {
     e.preventDefault();
@@ -988,7 +989,7 @@ function renderButterMain(
   const hideKbBtn = activeDocument.createElement("button");
   hideKbBtn.className =
     "mobile-toolbar-option clickable-icon butter-mobile-hide-kb-btn";
-  hideKbBtn.setAttribute("aria-label", "Hide keyboard");
+  hideKbBtn.setAttribute("aria-label", tx("Hide keyboard"));
   setIcon(hideKbBtn, "chevron-down");
   // Use pointerdown rather than click so we blur BEFORE the editor
   // re-focuses on tap. Otherwise the browser refocuses the editable

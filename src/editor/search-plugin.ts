@@ -23,6 +23,7 @@ import {
 } from "prosemirror-state";
 import { Decoration, DecorationSet, type EditorView } from "prosemirror-view";
 import { setIcon } from "obsidian";
+import { tx } from "../i18n";
 
 // ═══════════════════════════════════════════
 //  Plugin state + match computation
@@ -129,7 +130,7 @@ function buildUI(): UIRefs {
 
   const queryInput = row1.createEl("input", {
     cls: "butter-search-input",
-    attr: { type: "text", placeholder: "Find in note…", spellcheck: "false" },
+    attr: { type: "text", placeholder: tx("Find in note..."), spellcheck: "false" },
   });
 
   const countEl = row1.createDiv({ cls: "butter-search-count" });
@@ -137,37 +138,37 @@ function buildUI(): UIRefs {
 
   const caseBtn = row1.createEl("button", {
     cls: "butter-search-flag",
-    attr: { title: "Match case" },
+    attr: { title: tx("Match case") },
   });
   caseBtn.textContent = "Aa";
 
   const regexBtn = row1.createEl("button", {
     cls: "butter-search-flag",
-    attr: { title: "Use regular expression" },
+    attr: { title: tx("Use regular expression") },
   });
   regexBtn.textContent = ".*";
 
   const prevBtn = row1.createEl("button", {
     cls: "butter-search-nav clickable-icon",
-    attr: { title: "Previous match (Shift+Enter)" },
+    attr: { title: tx("Previous match (Shift+Enter)") },
   });
   setIcon(prevBtn, "chevron-up");
 
   const nextBtn = row1.createEl("button", {
     cls: "butter-search-nav clickable-icon",
-    attr: { title: "Next match (enter)" },
+    attr: { title: tx("Next match (enter)") },
   });
   setIcon(nextBtn, "chevron-down");
 
   const toggleReplaceBtn = row1.createEl("button", {
     cls: "butter-search-nav clickable-icon",
-    attr: { title: "Toggle replace (Ctrl+H)" },
+    attr: { title: tx("Toggle replace (Ctrl+H)") },
   });
   setIcon(toggleReplaceBtn, "replace");
 
   const closeBtn = row1.createEl("button", {
     cls: "butter-search-nav clickable-icon",
-    attr: { title: "Close (escape)" },
+    attr: { title: tx("Close (escape)") },
   });
   setIcon(closeBtn, "x");
 
@@ -178,18 +179,18 @@ function buildUI(): UIRefs {
 
   const replaceInput = replaceRow.createEl("input", {
     cls: "butter-search-input",
-    attr: { type: "text", placeholder: "Replace with…", spellcheck: "false" },
+    attr: { type: "text", placeholder: tx("Replace with..."), spellcheck: "false" },
   });
 
   const replaceBtn = replaceRow.createEl("button", {
     cls: "butter-search-action",
   });
-  replaceBtn.textContent = "Replace";
+  replaceBtn.textContent = tx("Replace");
 
   const replaceAllBtn = replaceRow.createEl("button", {
     cls: "butter-search-action",
   });
-  replaceAllBtn.textContent = "All";
+  replaceAllBtn.textContent = tx("All");
 
   // Imperative wiring is attached by the view() callback via closures
   // over the PM view. We expose the DOM refs via the return value.
@@ -503,7 +504,7 @@ function syncUI(view: EditorView, ui: UIRefs) {
   ui.caseBtn.classList.toggle("is-active", s.caseSensitive);
   ui.regexBtn.classList.toggle("is-active", s.regex);
   if (!s.matches.length) {
-    ui.countEl.textContent = s.query ? "No matches" : "";
+    ui.countEl.textContent = s.query ? tx("No matches") : "";
   } else {
     ui.countEl.textContent = `${s.currentIndex + 1} / ${s.matches.length}`;
   }

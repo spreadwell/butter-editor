@@ -32,6 +32,7 @@ import {
   buildBlockContextMenuHeaderEl,
   type BlockMenuChrome,
 } from "../editor/block-menu-spec";
+import { txKnown } from "../i18n";
 
 export interface RichMenuField {
   /** Stable id used by callers to read the value. */
@@ -155,7 +156,7 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
       }
       const labelEl = activeDocument.createElement("div");
       labelEl.className = "butter-rich-menu-field-label";
-      labelEl.textContent = field.label;
+    labelEl.textContent = txKnown(field.label);
       headerEl.appendChild(labelEl);
       fieldEl.appendChild(headerEl);
       const input = activeDocument.createElement("input");
@@ -163,7 +164,7 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
       input.className = "butter-inline-atom-edit-input butter-rich-menu-input";
       input.spellcheck = false;
       input.value = field.initial ?? "";
-      if (field.placeholder) input.placeholder = field.placeholder;
+    if (field.placeholder) input.placeholder = txKnown(field.placeholder);
       if (field.autocomplete === "vault-files") {
         applyVaultFilesSuggest(opts.app, input, {
           skipWhen: field.suggestSkipWhen,
@@ -226,14 +227,14 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
     if (action.warning) actionEl.classList.add("is-warning");
     actionEl.setAttribute("role", "menuitem");
     actionEl.setAttribute("tabindex", "0");
-    actionEl.setAttribute("aria-label", action.label);
+    actionEl.setAttribute("aria-label", txKnown(action.label));
     const iconEl = activeDocument.createElement("div");
     iconEl.className = "menu-item-icon";
     setIcon(iconEl, action.icon);
     actionEl.appendChild(iconEl);
     const titleEl = activeDocument.createElement("div");
     titleEl.className = "menu-item-title";
-    titleEl.textContent = action.label;
+    titleEl.textContent = txKnown(action.label);
     actionEl.appendChild(titleEl);
     actionEl.addEventListener("mousedown", (e) => {
       // Prevent the click-outside dismiss handler from firing before

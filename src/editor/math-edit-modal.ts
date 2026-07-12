@@ -14,6 +14,7 @@
  */
 
 import { App, Modal, Platform } from "obsidian";
+import { tx } from "../i18n";
 
 export class MathEditModal extends Modal {
   private text = "";
@@ -29,7 +30,7 @@ export class MathEditModal extends Modal {
   onOpen() {
     if (Platform.isMobile) this.modalEl.addClass("mod-lg");
     const { contentEl, titleEl } = this;
-    titleEl.setText("Edit math source");
+    titleEl.setText(tx("Edit math source"));
     const ta = contentEl.createEl("textarea", { cls: "butter-math-edit-textarea" });
     ta.value = this.initial;
     ta.rows = 8;
@@ -44,9 +45,9 @@ export class MathEditModal extends Modal {
     window.setTimeout(() => ta.focus(), 0);
 
     const btnRow = contentEl.createDiv({ cls: "modal-button-container" });
-    const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
+    const cancelBtn = btnRow.createEl("button", { text: tx("Cancel") });
     const saveBtn = btnRow.createEl("button", {
-      text: "Save",
+      text: tx("Save"),
       cls: "mod-cta",
     });
     cancelBtn.addEventListener("click", () => this.close());

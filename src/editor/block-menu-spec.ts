@@ -45,6 +45,7 @@ import { MathEditModal } from "./math-edit-modal";
 import { MobileAtomEditModal } from "./mobile-atom-sheet";
 import { SPECS as ATOM_SPECS } from "./inline-atom-specs";
 import { clearSourceRange } from "../core/source-range";
+import { tx, txKnown, type MessageKey } from "../i18n";
 
 // ── Spec types ─────────────────────────────────────────────────
 
@@ -63,7 +64,7 @@ export interface BlockSubItem {
 export interface BlockMenuItem {
   /** Stable id used for cross-block intersection. */
   id: string;
-  title: string;
+  title: MessageKey;
   icon: string;
   warning?: boolean;
   /** Hide from the multi-block menu intersection. Used for actions
@@ -92,7 +93,7 @@ export interface BlockMenuItem {
 
 export interface TurnIntoTarget {
   id: string;
-  label: string;
+  label: MessageKey;
   icon: string;
   level?: number;
 }
@@ -812,12 +813,12 @@ export function buildBlockContextMenuHeaderEl(
   textEl.className = "butter-block-menu-header-text";
   const titleEl = activeDocument.createElement("div");
   titleEl.className = "butter-block-menu-header-title";
-  titleEl.textContent = chrome.title;
+  titleEl.textContent = txKnown(chrome.title);
   textEl.appendChild(titleEl);
   if (chrome.sub) {
     const subEl = activeDocument.createElement("div");
     subEl.className = "butter-block-menu-header-sub";
-    subEl.textContent = chrome.sub;
+    subEl.textContent = txKnown(chrome.sub);
     textEl.appendChild(subEl);
   }
   header.appendChild(textEl);
@@ -911,7 +912,7 @@ export function renderBlockMenuItems(
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     menu.addItem((mi) => {
-      mi.setTitle(item.title);
+      mi.setTitle(tx(item.title));
       mi.setIcon(item.icon);
       if (item.warning) {
         mi.setWarning?.(true);
@@ -925,7 +926,7 @@ export function renderBlockMenuItems(
           if (gi > 0) sub.addSeparator();
           for (const subItem of group) {
             sub.addItem((si) => {
-              si.setTitle(subItem.title);
+              si.setTitle(txKnown(subItem.title));
               if (subItem.icon) si.setIcon(subItem.icon);
               if (subItem.isCurrent) si.setChecked(true);
               si.onClick(() => runItem(subItem));
@@ -958,7 +959,7 @@ export function renderBlockMenuItems(
 
 export interface MergeMenuItem {
   id: string;
-  title: string;
+  title: MessageKey;
   icon: string;
   /** Selection always has ≥2 nodes by the time this is asked. */
   appliesTo: (nodes: PMNode[]) => boolean;

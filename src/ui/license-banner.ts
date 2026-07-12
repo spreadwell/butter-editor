@@ -18,6 +18,7 @@
 
 import { Modal, setIcon, Platform } from "obsidian";
 import type ButterEditorPlugin from "../main";
+import { tx, type MessageKey } from "../i18n";
 
 export class LicenseActionSheet extends Modal {
   constructor(
@@ -40,18 +41,18 @@ export class LicenseActionSheet extends Modal {
 
     const text = header.createDiv({ cls: "butter-license-action-sheet-text" });
     if (this.status === "expired") {
-      text.createDiv({ cls: "title", text: "Trial expired - read-only mode" });
-      text.createDiv({ cls: "subtitle", text: "Purchase a license to keep editing in Butter." });
+      text.createDiv({ cls: "title", text: tx("Trial expired - read-only mode") });
+      text.createDiv({ cls: "subtitle", text: tx("Purchase a license to keep editing in Butter.") });
     } else if (this.status === "unknown") {
-      text.createDiv({ cls: "title", text: "Checking license…" });
-      text.createDiv({ cls: "subtitle", text: "Read-only until the licensing server can be reached." });
+      text.createDiv({ cls: "title", text: tx("Checking license...") });
+      text.createDiv({ cls: "subtitle", text: tx("Read-only until the licensing server can be reached.") });
     } else {
-      text.createDiv({ cls: "title", text: "License required - read-only mode" });
+      text.createDiv({ cls: "title", text: tx("License required - read-only mode") });
       text.createDiv({
         cls: "subtitle",
-        text: this.hasActivated
+        text: tx(this.hasActivated
           ? "Paste your license key to enable editing."
-          : "Start a free trial or paste a license key to enable editing.",
+          : "Start a free trial or paste a license key to enable editing."),
       });
     }
 
@@ -61,7 +62,7 @@ export class LicenseActionSheet extends Modal {
       this.plugin.openSettings("license");
     };
 
-    const trialBtnText = this.status === "expired" ? "Purchase" : (this.hasActivated ? "Purchase" : "Start trial");
+    const trialBtnText = tx(this.status === "expired" ? "Purchase" : (this.hasActivated ? "Purchase" : "Start trial"));
     const trialBtn = actions.createEl("button", {
       cls: "mod-cta",
       text: trialBtnText,
@@ -76,7 +77,7 @@ export class LicenseActionSheet extends Modal {
     });
 
     if (this.status !== "expired") {
-      const enterBtn = actions.createEl("button", { text: "Enter license" });
+      const enterBtn = actions.createEl("button", { text: tx("Enter license") });
       enterBtn.addEventListener("click", openSettings);
     }
   }
@@ -170,32 +171,32 @@ export function mountLicenseBanner(
     const iconEl = bannerEl.createSpan({ cls: `${BANNER_CLASS}-icon` });
     setIcon(iconEl, "lock");
 
-    const stateText = status === "expired" ? "Trial expired"
-      : status === "unknown" ? "Checking license…"
+    const stateText: MessageKey = status === "expired" ? "Trial expired"
+      : status === "unknown" ? "Checking license..."
       : isTrialAvailable ? "Free trial available" : "License required";
-    bannerEl.createSpan({ cls: `${BANNER_CLASS}-state`, text: stateText });
+    bannerEl.createSpan({ cls: `${BANNER_CLASS}-state`, text: tx(stateText) });
     bannerEl.createSpan({ cls: `${BANNER_CLASS}-separator`, text: "•" });
-    bannerEl.createSpan({ cls: `${BANNER_CLASS}-readonly`, text: "Read-only" });
+    bannerEl.createSpan({ cls: `${BANNER_CLASS}-readonly`, text: tx("Read-only") });
 
     const actions = bannerEl.createDiv({ cls: `${BANNER_CLASS}-actions` });
 
-    const enterBtn = actions.createEl("button", { text: "Enter key" });
+    const enterBtn = actions.createEl("button", { text: tx("Enter key") });
     enterBtn.addEventListener("click", () => {
       plugin.openSettings("license");
     });
 
     if (status !== "unknown") {
-      const purchaseBtn = actions.createEl("button", { text: "Purchase" });
+      const purchaseBtn = actions.createEl("button", { text: tx("Purchase") });
       purchaseBtn.addEventListener("click", () => {
         plugin.startLifetimeCheckoutFlow();
       });
     }
 
     if (isTrialAvailable) {
-      const trialBtn = actions.createEl("button", { cls: "mod-cta", text: "Start trial" });
+      const trialBtn = actions.createEl("button", { cls: "mod-cta", text: tx("Start trial") });
       trialBtn.addEventListener("click", () => {
         trialBtn.disabled = true;
-        trialBtn.innerText = "Starting…";
+        trialBtn.innerText = tx("Starting...");
         plugin.startTrialFlow();
       });
     }

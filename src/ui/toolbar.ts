@@ -36,6 +36,7 @@ import {
   insertFlatListItem,
 } from "./slash-menu";
 import { openRichContextMenu } from "./link-context-menu";
+import { tx, txKnown, tv, type MessageKey } from "../i18n";
 import {
   cleanupMobileToolbarOverflowIndicators,
   renderMobile,
@@ -55,7 +56,7 @@ import { bindFixedPopoverToAnchor } from "../util/floating-surface";
 export interface BtnDef {
   id: string;
   icon: string;
-  label: string;
+  label: MessageKey;
   kbd?: string;
   kind: "mark" | "block" | "list" | "insert" | "heading" | "history";
   markName?: string;
@@ -145,7 +146,7 @@ const BUTTONS = {
     { id: "turn-into",     icon: "shuffle",      label: "Turn into",     kind: "insert" as const },
     { id: "block-actions", icon: "square-menu",  label: "Block actions", kind: "insert" as const },
   ],
-};
+} satisfies Record<string, BtnDef[]>;
 
 const ALL_BUTTONS: BtnDef[] = [
   ...BUTTONS.heading,
@@ -170,7 +171,7 @@ for (const b of ALL_BUTTONS) BUTTON_REGISTRY.set(b.id, b);
  */
 export const MAIN_TOOLBAR_BUTTON_DEFS: Array<{
   id: string;
-  label: string;
+  label: MessageKey;
   group: string;
   icon: string;
 }> = [
@@ -356,7 +357,7 @@ class BaseFilePickerModal extends FuzzySuggestModal<TFile> {
     private onPick: (file: TFile) => void,
   ) {
     super(app);
-    this.setPlaceholder("Pick a .base file to embed…");
+    this.setPlaceholder(tx("Pick a .base file to embed..."));
   }
   getItems(): TFile[] {
     return this.files;
@@ -382,9 +383,9 @@ class ImageUrlPromptModal extends Modal {
 
   onOpen() {
     const { contentEl, titleEl } = this;
-    titleEl.setText("Insert image");
+    titleEl.setText(tx("Insert image"));
     const wrap = contentEl.createDiv({ cls: "butter-image-url-modal" });
-    wrap.createDiv({ cls: "butter-image-url-label", text: "Image URL" });
+    wrap.createDiv({ cls: "butter-image-url-label", text: tx("Image URL") });
     const input = wrap.createEl("input", {
       type: "text",
       placeholder: "https://...",
@@ -392,8 +393,8 @@ class ImageUrlPromptModal extends Modal {
     });
     input.focus();
     const actions = wrap.createDiv({ cls: "butter-image-url-actions" });
-    const cancelBtn = actions.createEl("button", { text: "Cancel" });
-    const okBtn = actions.createEl("button", { text: "Insert", cls: "mod-cta" });
+    const cancelBtn = actions.createEl("button", { text: tx("Cancel") });
+    const okBtn = actions.createEl("button", { text: tx("Insert"), cls: "mod-cta" });
     const submit = () => {
       const value = input.value.trim();
       this.close();
@@ -439,7 +440,7 @@ function insertMarkdownLink(view: EditorView, schema: Schema) {
     }
     return;
   }
-  const placeholder = "link text";
+  const placeholder = tx("link text");
   const linkMark = markType.create({ href: "https://" });
   const textNode = schema.text(placeholder, [linkMark]);
   const insertPos = selection.from;
@@ -580,7 +581,7 @@ function createTablePicker(
   // matching the mouse-hover sizing affordance. Tabindex=0 lets the
   // popover receive focus when setPopover anchors it.
   picker.setAttribute("role", "grid");
-  picker.setAttribute("aria-label", "Pick table size");
+  picker.setAttribute("aria-label", tx("Pick table size"));
   picker.tabIndex = 0;
 
   const grid = activeDocument.createElement("div");
@@ -589,7 +590,7 @@ function createTablePicker(
 
   const label = activeDocument.createElement("div");
   label.classList.add("label");
-  label.textContent = "Hover or arrow-key to size";
+  label.textContent = tx("Hover or arrow-key to size");
   picker.appendChild(label);
 
   let hoverR = -1, hoverC = -1;
@@ -610,7 +611,7 @@ function createTablePicker(
       cell.classList.toggle("is-hot", cr <= r && cc <= c);
     });
     label.textContent =
-      r >= 0 ? `${r + 1} × ${c + 1} table` : "Hover or arrow-key to size";
+      r >= 0 ? `${r + 1} × ${c + 1} ${tx("table")}` : tx("Hover or arrow-key to size");
   };
 
   for (let r = 0; r < ROWS; r++) {
@@ -674,7 +675,7 @@ function createTablePicker(
 // Values are CSS color literals (named or hex) so the source written
 // to disk renders identically outside Butter / in plain markdown
 // preview tools.
-const TEXT_SWATCHES: ReadonlyArray<{ name: string; value: string }> = [
+const TEXT_SWATCHES: ReadonlyArray<{ name: MessageKey; value: string }> = [
   { name: "Red",     value: "#e03131" },
   { name: "Orange",  value: "#e8590c" },
   { name: "Yellow",  value: "#f08c00" },
@@ -691,7 +692,7 @@ const TEXT_SWATCHES: ReadonlyArray<{ name: string; value: string }> = [
 // Obsidian's native `==highlight==` does. Solid pastels covered the
 // text and made font coloring look like it disappeared. Alpha 0.4
 // matches Obsidian's default highlight overlay.
-const HIGHLIGHT_SWATCHES: ReadonlyArray<{ name: string; value: string }> = [
+const HIGHLIGHT_SWATCHES: ReadonlyArray<{ name: MessageKey; value: string }> = [
   { name: "Yellow",  value: "rgba(255, 234, 0, 0.4)" },
   { name: "Orange",  value: "rgba(255, 140, 0, 0.4)" },
   { name: "Red",     value: "rgba(255, 80, 80, 0.4)" },
@@ -890,7 +891,7 @@ export function setPresetColorsProvider(provider: PresetColorsProvider | null): 
 function presetName(kind: ColorKind, value: string, index: number): string {
   const swatches = kind === "text" ? TEXT_SWATCHES : HIGHLIGHT_SWATCHES;
   const known = swatches.find((swatch) => colorsEquivalent(swatch.value, value));
-  return known?.name ?? `Color ${index + 1}`;
+  return known ? tx(known.name) : tv("Color {number}", { number: index + 1 });
 }
 
 function palettePresets(kind: ColorKind): ReadonlyArray<{ name: string; value: string }> {
@@ -904,7 +905,8 @@ function palettePresets(kind: ColorKind): ReadonlyArray<{ name: string; value: s
   const names = kind === "text" ? TEXT_PALETTE_PRESETS : HIGHLIGHT_PALETTE_PRESETS;
   return names
     .map((name) => swatches.find((swatch) => swatch.name === name))
-    .filter((swatch): swatch is { name: string; value: string } => Boolean(swatch));
+    .filter((swatch): swatch is { name: MessageKey; value: string } => Boolean(swatch))
+    .map((swatch) => ({ name: tx(swatch.name), value: swatch.value }));
 }
 
 function colorsEquivalent(a: unknown, b: unknown): boolean {
@@ -1127,13 +1129,14 @@ function createColorPalette(
   grid.appendChild(customBtn);
 
   for (const sw of swatches) {
-    const cell = makeCell(sw.name);
+    const swatchName = sw.name;
+    const cell = makeCell(swatchName);
     if (colorsEquivalent(currentColor, sw.value)) {
       cell.classList.add("is-selected");
       cell.setAttribute("aria-current", "true");
     }
-    cell.setAttribute("aria-label", sw.name);
-    cell.title = sw.name;
+    cell.setAttribute("aria-label", swatchName);
+    cell.title = swatchName;
     const fill = activeDocument.createElement("span");
     fill.classList.add("butter-color-cell-fill");
     fill.style.backgroundColor = sw.value;
@@ -1244,7 +1247,7 @@ function createCustomColorPicker(args: {
   pickerHeader.classList.add("butter-color-custom-header");
   const pickerTitle = activeDocument.createElement("span");
   pickerTitle.classList.add("butter-color-custom-title");
-  pickerTitle.textContent = "Custom";
+  pickerTitle.textContent = tx("Custom");
   pickerHeader.appendChild(pickerTitle);
   const pickerValue = activeDocument.createElement("span");
   pickerValue.classList.add("butter-color-custom-value");
@@ -1255,7 +1258,7 @@ function createCustomColorPicker(args: {
   sv.classList.add("butter-color-sv");
   sv.tabIndex = 0;
   sv.setAttribute("role", "slider");
-  sv.setAttribute("aria-label", "Saturation and brightness");
+  sv.setAttribute("aria-label", tx("Saturation and brightness"));
   const svThumb = activeDocument.createElement("div");
   svThumb.classList.add("butter-color-sv-thumb");
   sv.appendChild(svThumb);
@@ -1265,7 +1268,7 @@ function createCustomColorPicker(args: {
   hue.classList.add("butter-color-hue");
   hue.tabIndex = 0;
   hue.setAttribute("role", "slider");
-  hue.setAttribute("aria-label", "Hue");
+  hue.setAttribute("aria-label", tx("Hue"));
   hue.setAttribute("aria-valuemin", "0");
   hue.setAttribute("aria-valuemax", "360");
   const hueThumb = activeDocument.createElement("div");
@@ -1281,7 +1284,7 @@ function createCustomColorPicker(args: {
     alphaWrap.classList.add("butter-color-alpha");
     const alphaLabel = activeDocument.createElement("span");
     alphaLabel.classList.add("butter-color-alpha-label");
-    alphaLabel.textContent = "Opacity";
+    alphaLabel.textContent = tx("Opacity");
     alphaWrap.appendChild(alphaLabel);
 
     alphaSlider = activeDocument.createElement("input");
@@ -1316,7 +1319,7 @@ function createCustomColorPicker(args: {
   hexInput.classList.add("butter-color-hex-input");
   hexInput.spellcheck = false;
   hexInput.inputMode = "text";
-  hexInput.setAttribute("aria-label", "Hex color");
+  hexInput.setAttribute("aria-label", tx("Hex color"));
   controls.appendChild(hexInput);
 
   const actions = activeDocument.createElement("div");
@@ -1326,24 +1329,24 @@ function createCustomColorPicker(args: {
   const cancelBtn = activeDocument.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.classList.add("butter-btn", "clickable-icon", "butter-color-control");
-  cancelBtn.setAttribute("aria-label", "Cancel");
-  cancelBtn.title = "Cancel";
+  cancelBtn.setAttribute("aria-label", tx("Cancel"));
+  cancelBtn.title = tx("Cancel");
   setIcon(cancelBtn, "x");
   const cancelLabel = activeDocument.createElement("span");
   cancelLabel.classList.add("butter-color-control-label");
-  cancelLabel.textContent = "Cancel";
+  cancelLabel.textContent = tx("Cancel");
   cancelBtn.appendChild(cancelLabel);
   actions.appendChild(cancelBtn);
 
   const applyBtn = activeDocument.createElement("button");
   applyBtn.type = "button";
   applyBtn.classList.add("butter-btn", "clickable-icon", "butter-color-control", "is-active");
-  applyBtn.setAttribute("aria-label", "Apply");
-  applyBtn.title = "Apply";
+  applyBtn.setAttribute("aria-label", tx("Apply"));
+  applyBtn.title = tx("Apply");
   setIcon(applyBtn, "check");
   const applyLabel = activeDocument.createElement("span");
   applyLabel.classList.add("butter-color-control-label");
-  applyLabel.textContent = "Apply";
+  applyLabel.textContent = tx("Apply");
   applyBtn.appendChild(applyLabel);
   actions.appendChild(applyBtn);
 
@@ -1377,7 +1380,7 @@ function createCustomColorPicker(args: {
     sv.setAttribute("aria-valuenow", String(Math.round(hsv.s * 100)));
     sv.setAttribute(
       "aria-valuetext",
-      `${Math.round(hsv.s * 100)}% saturation, ${Math.round(hsv.v * 100)}% brightness`,
+      `${Math.round(hsv.s * 100)}% ${tx("saturation")}, ${Math.round(hsv.v * 100)}% ${tx("brightness")}`,
     );
     hue.setAttribute("aria-valuenow", String(Math.round(hsv.h)));
   };
@@ -1792,12 +1795,12 @@ function openColorDrawer(target: ColorTarget): void {
   const backBtn = activeDocument.createElement("button");
   backBtn.type = "button";
   backBtn.classList.add("butter-mobile-color-back", "clickable-icon");
-  backBtn.setAttribute("aria-label", "Back to presets");
+  backBtn.setAttribute("aria-label", tx("Back to presets"));
   setIcon(backBtn, "chevron-left");
   header.appendChild(backBtn);
   const backLabel = activeDocument.createElement("span");
   backLabel.classList.add("butter-mobile-color-back-label");
-  backLabel.textContent = "Presets";
+  backLabel.textContent = tx("Presets");
   header.appendChild(backLabel);
 
   // Explicit close affordance (shown in slot/settings mode, where there's
@@ -1805,7 +1808,7 @@ function openColorDrawer(target: ColorTarget): void {
   const closeBtn = activeDocument.createElement("button");
   closeBtn.type = "button";
   closeBtn.classList.add("butter-mobile-color-close", "clickable-icon");
-  closeBtn.setAttribute("aria-label", "Close");
+  closeBtn.setAttribute("aria-label", tx("Close"));
   setIcon(closeBtn, "x");
   closeBtn.hidden = !target.showClose;
   closeBtn.addEventListener("click", () => closeAndRefocus());
@@ -1850,11 +1853,11 @@ function openColorDrawer(target: ColorTarget): void {
   notice.classList.add("butter-mobile-color-notice");
   notice.textContent = target.allowDefault
     ? kind === "text"
-      ? "Change selected text color"
-      : "Change selected text highlight"
+      ? tx("Change selected text color")
+      : tx("Change selected text highlight")
     : kind === "text"
-      ? "Change text preset color"
-      : "Change highlight preset color";
+      ? tx("Change text preset color")
+      : tx("Change highlight preset color");
   page1.appendChild(notice);
 
   // Row 1: the (editable) preset colours.
@@ -1877,7 +1880,7 @@ function openColorDrawer(target: ColorTarget): void {
   const shadeFills: HTMLElement[] = [];
   for (let i = 0; i < SHADE_STOPS.length; i++) {
     const { cell, fill } = makeCell("butter-mobile-color-shade-cell");
-    cell.setAttribute("aria-label", `Shade ${i + 1}`);
+    cell.setAttribute("aria-label", `${tx("Shade")} ${i + 1}`);
     const idx = i;
     cell.addEventListener("click", () => selectShade(idx));
     shadeRow.appendChild(cell);
@@ -1895,13 +1898,13 @@ function openColorDrawer(target: ColorTarget): void {
     eraser = activeDocument.createElement("button");
     eraser.type = "button";
     eraser.classList.add("butter-mobile-color-action");
-    eraser.setAttribute("aria-label", kind === "text" ? "Clear text color" : "Clear highlight");
+    eraser.setAttribute("aria-label", tx(kind === "text" ? "Clear text color" : "Clear highlight"));
     const eraserIcon = activeDocument.createElement("span");
     eraserIcon.classList.add("butter-mobile-color-action-icon");
     setIcon(eraserIcon, "eraser");
     eraser.appendChild(eraserIcon);
     const eraserLabel = activeDocument.createElement("span");
-    eraserLabel.textContent = "Clear";
+    eraserLabel.textContent = tx("Clear");
     eraser.appendChild(eraserLabel);
     eraser.addEventListener("click", () => selectDefault());
     actionRow.appendChild(eraser);
@@ -1915,7 +1918,7 @@ function openColorDrawer(target: ColorTarget): void {
   setIcon(preciseIcon, "pipette");
   preciseLink.appendChild(preciseIcon);
   const preciseLabel = activeDocument.createElement("span");
-  preciseLabel.textContent = "Custom";
+  preciseLabel.textContent = tx("Custom");
   preciseLink.appendChild(preciseLabel);
   actionRow.appendChild(preciseLink);
 
@@ -1960,13 +1963,13 @@ function openColorDrawer(target: ColorTarget): void {
     section.classList.add("butter-mobile-color-section");
     const label = activeDocument.createElement("div");
     label.classList.add("butter-mobile-color-section-label");
-    label.textContent = labelText;
+    label.textContent = txKnown(labelText);
     section.appendChild(label);
     const track = activeDocument.createElement("div");
     track.classList.add("butter-mobile-color-slider");
     track.tabIndex = 0;
     track.setAttribute("role", "slider");
-    track.setAttribute("aria-label", labelText);
+    track.setAttribute("aria-label", txKnown(labelText));
     track.setAttribute("aria-valuemin", "0");
     track.setAttribute("aria-valuemax", String(max));
     const thumb = activeDocument.createElement("div");
@@ -2027,13 +2030,13 @@ function openColorDrawer(target: ColorTarget): void {
   const customBackBtn = activeDocument.createElement("button");
   customBackBtn.type = "button";
   customBackBtn.classList.add("butter-mobile-color-action");
-  customBackBtn.setAttribute("aria-label", "Back to presets");
+  customBackBtn.setAttribute("aria-label", tx("Back to presets"));
   const customBackIcon = activeDocument.createElement("span");
   customBackIcon.classList.add("butter-mobile-color-action-icon");
   setIcon(customBackIcon, "palette");
   customBackBtn.appendChild(customBackIcon);
   const customBackLabel = activeDocument.createElement("span");
-  customBackLabel.textContent = "Presets";
+  customBackLabel.textContent = tx("Presets");
   customBackBtn.appendChild(customBackLabel);
   customNavRow.appendChild(customBackBtn);
   let customizePresetsBtn: HTMLButtonElement | null = null;
@@ -2041,13 +2044,13 @@ function openColorDrawer(target: ColorTarget): void {
     customizePresetsBtn = activeDocument.createElement("button");
     customizePresetsBtn.type = "button";
     customizePresetsBtn.classList.add("butter-mobile-color-action");
-    customizePresetsBtn.setAttribute("aria-label", "Customize presets");
+    customizePresetsBtn.setAttribute("aria-label", tx("Customize presets"));
     const customizePresetsIcon = activeDocument.createElement("span");
     customizePresetsIcon.classList.add("butter-mobile-color-action-icon");
     setIcon(customizePresetsIcon, "settings");
     customizePresetsBtn.appendChild(customizePresetsIcon);
     const customizePresetsLabel = activeDocument.createElement("span");
-    customizePresetsLabel.textContent = "Customize presets";
+    customizePresetsLabel.textContent = tx("Customize presets");
     customizePresetsBtn.appendChild(customizePresetsLabel);
     customNavRow.appendChild(customizePresetsBtn);
   }
@@ -2311,15 +2314,15 @@ function openToolbarLinkMenu(
     anchor,
     chrome: {
       icon: "link",
-      title: "Add link",
-      sub: "URL or note name",
+      title: tx("Add link"),
+      sub: tx("URL or note name"),
     },
     fields: [
       {
         id: "target",
-        label: "Link",
+        label: tx("Link"),
         icon: "link-2",
-        placeholder: "https://… or note name",
+        placeholder: tx("https://... or note name"),
         // Dual-purpose field - attach the vault-files suggester but
         // suppress its dropdown when the typed value clearly looks
         // like a URL (has a scheme, or a domain-shaped TLD). That
@@ -2330,15 +2333,15 @@ function openToolbarLinkMenu(
       },
       {
         id: "text",
-        label: "Display text",
+        label: tx("Display text"),
         icon: "type",
         initial: selectedText,
-        placeholder: "Optional",
+        placeholder: tx("Optional"),
       },
     ],
     actions: [
       {
-        label: "Insert",
+        label: tx("Insert"),
         icon: "check",
         onClick: (v) => insert(v),
       },
@@ -2472,7 +2475,7 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
   el.classList.add("butter-btn", "clickable-icon");
   el.setAttribute(
     "aria-label",
-    def.kbd ? `${def.label} (${def.kbd})` : def.label,
+    def.kbd ? `${tx(def.label)} (${def.kbd})` : tx(def.label),
   );
   el.dataset.btnId = def.id;
   setIcon(el, def.icon);
@@ -2565,7 +2568,7 @@ function renderSubmenuButton(
 ): HTMLElement {
   const el = activeDocument.createElement("button");
   el.classList.add("butter-btn", "clickable-icon", "butter-btn-submenu");
-  el.setAttribute("aria-label", item.label || "Submenu");
+  el.setAttribute("aria-label", item.label ? txKnown(item.label) : tx("Submenu"));
   el.setAttribute("aria-haspopup", "menu");
   el.setAttribute("aria-expanded", "false");
   el.dataset.submenuId = item.id;
@@ -2586,7 +2589,7 @@ function renderSubmenuButton(
     popup.dataset.activeStyle =
       el.closest<HTMLElement>(".butter-toolbar")?.dataset.activeStyle ?? "filled";
     popup.setAttribute("role", "menu");
-    popup.setAttribute("aria-label", item.label || "Submenu");
+    popup.setAttribute("aria-label", item.label ? txKnown(item.label) : tx("Submenu"));
     const popupButtons: Array<{ id: string; el: HTMLElement }> = [];
 
     for (const child of item.children) {
@@ -2609,7 +2612,7 @@ function renderSubmenuButton(
     if (popup.children.length === 0) {
       const empty = activeDocument.createElement("div");
       empty.classList.add("butter-toolbar-submenu-empty");
-      empty.textContent = "Empty";
+      empty.textContent = tx("Empty");
       popup.appendChild(empty);
     }
     el.setAttribute("aria-expanded", "true");
@@ -2781,14 +2784,14 @@ function installToolbarOverflowIndicators(
   leftInd.classList.add("butter-toolbar-overflow-indicator", "is-left");
   leftInd.setAttribute("role", "button");
   leftInd.setAttribute("tabindex", "0");
-  leftInd.setAttribute("aria-label", "Scroll toolbar left");
+  leftInd.setAttribute("aria-label", tx("Scroll toolbar left"));
   setIcon(leftInd, "chevron-left");
 
   const rightInd = doc.createElement("div");
   rightInd.classList.add("butter-toolbar-overflow-indicator", "is-right");
   rightInd.setAttribute("role", "button");
   rightInd.setAttribute("tabindex", "0");
-  rightInd.setAttribute("aria-label", "Scroll toolbar right");
+  rightInd.setAttribute("aria-label", tx("Scroll toolbar right"));
   setIcon(rightInd, "chevron-right");
 
   const getToolbarItems = () =>

@@ -26,6 +26,7 @@ import type { Node as PMNode } from "prosemirror-model";
 import type { EditorView } from "prosemirror-view";
 import type { AtomSpec, AtomField } from "./inline-atom-specs";
 import { applyVaultFilesSuggest } from "../ui/vault-files-suggest";
+import { tx, txKnown } from "../i18n";
 
 /** A single action row in the bottom drawer. The drawer is built
  *  from an array of these so the caller can tailor the action set
@@ -92,7 +93,7 @@ export function openMobileActionDrawer(opts: OpenMobileActionDrawerOptions): voi
 
   const addAction = (action: MobileSheetAction, section: string) => {
     menu.addItem((item) => {
-      item.setTitle(action.label);
+      item.setTitle(txKnown(action.label));
       item.setIcon(action.icon);
       if (action.warning) {
         (item as unknown as { setWarning?: (w: boolean) => unknown })
@@ -108,7 +109,7 @@ export function openMobileActionDrawer(opts: OpenMobileActionDrawerOptions): voi
 
   if (opts.onEdit) {
     menu.addItem((item) => {
-      item.setTitle(opts.editLabel ?? "Edit...");
+    item.setTitle(txKnown(opts.editLabel ?? "Edit..."));
       item.setIcon("pencil");
       (item as unknown as { setSection?: (s: string) => unknown })
         .setSection?.("edit");
@@ -196,14 +197,14 @@ export class MobileAtomEditModal extends Modal {
     if (!spec.fields || !spec.toFields || !spec.fromFields) {
       // No field schema means no editable form — bail with a
       // helpful message so the user understands.
-      titleEl.setText(spec.label);
+    titleEl.setText(tx(spec.label));
       contentEl.createEl("p", {
-        text: "This element has no editable fields.",
+        text: tx("This element has no editable fields."),
       });
       this.addCloseButton(contentEl);
       return;
     }
-    titleEl.setText(`Edit ${spec.label.toLowerCase()}`);
+    titleEl.setText(`${tx("Edit")} ${tx(spec.label).toLowerCase()}`);
     const initial = spec.toFields(node);
 
     const form = contentEl.createDiv({ cls: "butter-mobile-edit-form" });
@@ -212,10 +213,10 @@ export class MobileAtomEditModal extends Modal {
     }
 
     const btnRow = contentEl.createDiv({ cls: "modal-button-container" });
-    const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
+    const cancelBtn = btnRow.createEl("button", { text: tx("Cancel") });
     cancelBtn.addEventListener("click", () => this.close());
     const saveBtn = btnRow.createEl("button", {
-      text: "Save",
+      text: tx("Save"),
       cls: "mod-cta",
     });
     saveBtn.addEventListener("click", () => this.commit());
@@ -234,7 +235,7 @@ export class MobileAtomEditModal extends Modal {
     const fieldEl = parent.createDiv({ cls: "butter-mobile-edit-field" });
     fieldEl.createDiv({
       cls: "butter-mobile-edit-field-label",
-      text: field.label,
+      text: tx(field.label),
     });
     const input = fieldEl.createEl("input", {
       cls: "butter-mobile-edit-input",
@@ -243,7 +244,7 @@ export class MobileAtomEditModal extends Modal {
         placeholder:
           typeof field.placeholder === "function"
             ? field.placeholder({ [field.name]: value })
-            : (field.placeholder ?? ""),
+        : field.placeholder ? txKnown(field.placeholder) : "",
       },
     });
     input.value = value;
@@ -273,7 +274,7 @@ export class MobileAtomEditModal extends Modal {
 
   private addCloseButton(parent: HTMLElement): void {
     const btnRow = parent.createDiv({ cls: "modal-button-container" });
-    const btn = btnRow.createEl("button", { text: "Close", cls: "mod-cta" });
+    const btn = btnRow.createEl("button", { text: tx("Close"), cls: "mod-cta" });
     btn.addEventListener("click", () => this.close());
   }
 

@@ -60,6 +60,15 @@ import { WelcomeModal } from "./ui/welcome-modal";
 import { LicenseClient, LicenseClientError, setPluginVersion } from "./integration/license/client";
 import { LINKS } from "./integration/license/links";
 import {
+  resolveI18nLanguage,
+  getI18nLanguage,
+  setI18nLanguage,
+  tx,
+  tv,
+  type ButterLanguageSetting,
+  type MessageKey,
+} from "./i18n";
+import {
   BUTTER_HOVER_SOURCE,
 } from "./editor/nodeviews";
 
@@ -178,7 +187,7 @@ export function cycleView(leaf: WorkspaceLeaf, modes: ButterViewMode[]): void {
 }
 
 /** Human-readable label for a mode - used in tooltips / menu items. */
-function modeLabel(mode: ButterViewMode): string {
+function modeLabel(mode: ButterViewMode): MessageKey {
   switch (mode) {
     case "source": return "Source";
     case "live": return "Live Preview";
@@ -186,6 +195,27 @@ function modeLabel(mode: ButterViewMode): string {
     case "butter": return "Butter";
   }
 }
+
+const LOCALIZED_COMMAND_NAMES = {
+  "toggle-butter": "Toggle WYSIWYG mode",
+  "open-as-butter": "Open current note in WYSIWYG view",
+  "open-as-markdown": "Switch back to default Markdown view",
+  "find-in-note": "Find in note",
+  "replace-in-note": "Replace in note",
+  "toggle-bold": "Toggle bold",
+  "toggle-italic": "Toggle italic",
+  "toggle-inline-code": "Toggle inline code",
+  "toggle-strikethrough": "Toggle strikethrough",
+  "toggle-highlight": "Toggle highlight",
+  "show-shortcuts": "Show keyboard shortcuts",
+  "open-outline": "Open outline view",
+  "toggle-frontmatter-visibility": "Toggle frontmatter visibility",
+  "toggle-comments": "Toggle comments",
+  "normalize-current-note": "Tidy whitespace in current note",
+  "canonicalize-current-note": "Rewrite current note in standard format",
+  "canonicalize-vault": "Rewrite entire vault in standard format (irreversible - back up first)",
+  "show-recent-errors": "Show recent errors",
+} as const satisfies Record<string, MessageKey>;
 
 /** Lucide icon name for each mode - surfaced in the View-as menu.
  *  `butter-editor` is the Butter brand mark registered via `addIcon()`
@@ -299,8 +329,10 @@ function visibleHeadingLineMD(view: MarkdownView): number {
 // ═══════════════════════════════════════════
 
 export interface ButterSettings {
+  /** UI language for Butter's own controls. "auto" follows Obsidian. */
+  uiLanguage: ButterLanguageSetting;
   /**
-   * Allow HTML-only formatting in the toolbar. When ON (default),
+   * Allow HTML-backed rich formatting in the toolbar. When ON,
    * Butter exposes the marks that have no markdown shorthand and can
    * only be written as inline HTML in source: `<font color>` (text
    * color), `<mark style="background: ...">` (custom highlight
@@ -552,22 +584,9 @@ export interface ButterSettings {
    */
   statusBarHoverFade: boolean;
   /**
-   * Source purity preset. The headline question Butter asks new
-   * users on first launch:
-   *   • "strict"  - markdown is canonical; HTML escape hatches
-   *     (font color, raw spans, etc.) are disabled to keep source
-   *     clean and tool-portable.
-   *   • "rich"    - markdown plus HTML extras are allowed; users
-   *     prioritize visual formatting freedom over source purity.
-   * Future HTML-only features check this flag directly. Default
-   * "strict" matches Obsidian community convention.
-   */
-  sourcePurity: "strict" | "rich";
-  /**
    * Onboarding gate. False on first install → triggers the welcome
-   * modal in onload(). Set to true once the user has either picked
-   * a source-purity preset or dismissed the modal (silent default
-   * = strict). Subsequent launches skip the modal.
+   * modal in onload(). Set to true once the user continues or
+   * dismisses the modal. Subsequent launches skip the modal.
    */
   hasCompletedOnboarding: boolean;
 
@@ -713,7 +732,8 @@ export const DEFAULT_PRESET_HIGHLIGHT_COLORS = [
 ];
 
 const DEFAULT_SETTINGS: ButterSettings = {
-  enableHtmlFormatting: true,
+  uiLanguage: "auto",
+  enableHtmlFormatting: false,
   presetTextColors: [...DEFAULT_PRESET_TEXT_COLORS],
   presetHighlightColors: [...DEFAULT_PRESET_HIGHLIGHT_COLORS],
   enableSuggestBridge: true,
@@ -755,7 +775,6 @@ const DEFAULT_SETTINGS: ButterSettings = {
   mobileTableToolbarLayout: null,
   mobileToolbarStyle: "attached",
   statusBarHoverFade: true,
-  sourcePurity: "strict",
   hasCompletedOnboarding: false,
   // License defaults - empty / zero. `deviceId` is generated on first
   // `loadSettings()` if still empty. `everValidated` stays false until
@@ -886,7 +905,6 @@ export default class ButterEditorPlugin extends Plugin {
   isActivatingTrialFlow = false;
 
   startTrialFlow(): void {
-    this.isActivatingTrialFlow = true;
     if (this.settingTab) {
       void this.settingTab.beginTrialActivation();
     }
@@ -898,7 +916,7 @@ export default class ButterEditorPlugin extends Plugin {
 
     if (!this.settings.licenseKey) {
       new Notice(
-        "Complete your purchase in the browser, then use the license link on the welcome page to activate Butter.",
+        tx("Complete your purchase in the browser, then use the license link on the welcome page to activate Butter."),
         8000,
       );
       return;
@@ -910,7 +928,7 @@ export default class ButterEditorPlugin extends Plugin {
   private startUpgradePolling(): void {
     if (this.upgradePoller != null) return;
     this.upgradePollTicks = 0;
-    new Notice("Complete your purchase in the browser. Butter will update automatically.", 8000);
+    new Notice(tx("Complete your purchase in the browser. Butter will update automatically."), 8000);
     this.upgradePoller = window.setInterval(() => {
       void this.pollForUpgrade();
     }, 2000);
@@ -1017,7 +1035,7 @@ export default class ButterEditorPlugin extends Plugin {
           this.settings.customerEmail = "";
           this.settings.pendingTrialActivation = null;
           await this.saveSettings();
-          new Notice("Your license has been upgraded!", 5000);
+          new Notice(tx("Your license has been upgraded!"), 5000);
           import("canvas-confetti").then((m) => {
             void (m.default || m)({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
           }).catch(() => {});
@@ -1146,12 +1164,17 @@ export default class ButterEditorPlugin extends Plugin {
   async resumeTrialActivation(): Promise<void> {
     const pending = this.settings.pendingTrialActivation;
     if (!pending) return;
+    if (!pending.pollToken) {
+      this.settings.pendingTrialActivation = null;
+      await this.saveSettings();
+      return;
+    }
     const ageMs = Date.now() - (pending.startedAt || 0);
     if (ageMs > 30 * 60 * 1000) {
       this.settings.pendingTrialActivation = null;
       await this.saveSettings();
       new Notice(
-        "Trial activation timed out. Open settings → license to try again.",
+        tx("Trial activation timed out. Open settings > license to try again."),
         10_000,
       );
       return;
@@ -1205,7 +1228,7 @@ export default class ButterEditorPlugin extends Plugin {
     const key = (rawKey ?? "").trim();
     const customer = (rawCustomer ?? "").trim();
     if (!key) {
-      new Notice("Recovery link is missing the license key.", 7000);
+      new Notice(tx("Recovery link is missing the license key."), 7000);
       this.openSettings("license");
       return;
     }
@@ -1225,12 +1248,11 @@ export default class ButterEditorPlugin extends Plugin {
       await this.saveSettings();
       await this.refreshLicenseStatus();
       this.openSettings("license");
-      const tag = customer ? ` (${customer})` : "";
-      new Notice(`License recovered${tag}.`, 5000);
+      new Notice(customer ? tv("License recovered ({customer}).", { customer }) : tx("License recovered."), 5000);
     } catch (err) {
       const msg = err instanceof LicenseClientError && err.kind === "license_invalid"
-        ? "Recovery link's key is not valid (revoked, expired, or unrecognized)."
-        : "Couldn't validate the recovered license. Try again from Settings → License.";
+        ? tx("Recovery link's key is not valid (revoked, expired, or unrecognized).")
+        : tx("Couldn't validate the recovered license. Try again from Settings > License.");
       new Notice(msg, 8000);
       this.openSettings("license");
     }
@@ -1443,7 +1465,7 @@ export default class ButterEditorPlugin extends Plugin {
       } else {
         // Last resort: Notice toast.
         new Notice(
-          `"${name}" is locked by another process. Close the other app and try again.`,
+          tv("\"{name}\" is locked by another process. Close the other app and try again.", { name }),
           7000,
         );
       }
@@ -1495,6 +1517,11 @@ export default class ButterEditorPlugin extends Plugin {
     addIcon(
       "butter-editor",
       `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:1.5;"><g transform="matrix(1,0,0,1,-112.678345,-44.485992)"><g transform="matrix(1.087664,0,0,1.433718,220.741139,-122.077846)"><g transform="matrix(0.023898,0,0,0.018129,-117.145741,104.829128)"><path d="M1206.206,684.914C1576.954,684.914 1610.168,718.128 1610.168,1088.876C1610.168,1459.624 1576.954,1492.838 1206.206,1492.838C835.458,1492.838 802.244,1459.624 802.244,1088.876C802.244,718.128 835.458,684.914 1206.206,684.914Z" fill="none" stroke="currentColor" stroke-width="76.95"/></g><g transform="matrix(0.013632,0,0,0.015879,-106.215729,112.408534)"><path d="M657.622,782.347C670.417,768.126 657.607,765.864 657.607,765.864C657.607,342.578 713.651,304.657 1339.243,304.657C1964.094,304.657 2020.745,342.488 2020.879,764.362L2020.865,765.864C2019.98,968.497 1943.553,862.395 1778.676,999.512C1620.883,1130.737 1475.792,1048.446 1372.478,952.257C1259.153,846.749 1084.931,928.14 1019.59,949.717C810.02,1018.92 587.616,860.151 657.622,782.347ZM925.33,745.67L1751.055,745.67C1786.884,745.67 1815.973,725.988 1815.973,701.746C1815.973,677.503 1786.884,657.821 1751.055,657.821L925.33,657.821C889.501,657.821 860.413,677.503 860.413,701.746C860.413,725.988 889.501,745.67 925.33,745.67ZM925.33,563.005L1488.998,563.005C1524.827,563.005 1553.916,543.323 1553.916,519.08C1553.916,494.838 1524.827,475.156 1488.998,475.156L925.33,475.156C889.501,475.156 860.413,494.838 860.413,519.08C860.413,543.323 889.501,563.005 925.33,563.005Z" fill="currentColor"/></g></g></g></svg>`,
+    );
+
+    addIcon(
+      "butter-obsidian-wireframe",
+      `<svg viewBox="0 0 323 413" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M90.6477 380.398C152.948 254.09 92.4296 196.56 53.6352 171.281M114.665 253.194C175.21 238.49 234.073 239.345 275.308 328.127M178.712 246.522C119.858 99.1765 216.591 93.3093 192.635 14.8077M275.308 328.127C266.574 344.086 262.222 362.382 260.103 378.124C257.642 396.407 239.753 410.689 221.975 405.758C196.644 398.779 167.315 387.893 140.925 385.865C137.446 385.597 100.479 382.794 100.479 382.794C93.9396 382.328 87.802 379.47 83.235 374.767L13.5419 302.994C5.92544 295.151 3.8638 283.455 8.33925 273.48C8.33925 273.48 51.4336 178.764 53.0342 173.839C53.1941 173.346 53.3966 172.475 53.6352 171.281C55.7845 160.528 60.8564 123.648 63.9895 102.875C64.9121 96.759 67.9312 91.1526 72.5295 87.016L154.974 12.8475C165.996 2.93261 182.866 3.95674 192.635 14.8077C193.032 15.2493 193.418 15.7071 193.791 16.1811L263.049 104.165C266.967 109.145 268.976 115.334 269.005 121.67C269.084 138.339 270.459 172.563 279.675 194.605C288.64 216.047 305.094 239.203 313.693 250.597C316.992 254.97 317.498 260.884 314.71 265.6C308.642 275.876 296.651 295.606 279.675 320.921C278.11 323.255 276.657 325.663 275.308 328.127Z" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     );
 
     addIcon(
@@ -1631,7 +1658,7 @@ export default class ButterEditorPlugin extends Plugin {
           const addedItems: MenuItem[] = [];
           for (const mode of ourModes) {
             menu.addItem((item) => {
-              item.setTitle(`Open as ${modeLabel(mode)}`);
+              item.setTitle(tv("Open as {mode}", { mode: tx(modeLabel(mode)) }));
               item.setIcon(modeIcon(mode));
               item.onClick(() => {
                 void switchToMode(targetLeaf, mode);
@@ -1880,7 +1907,7 @@ export default class ButterEditorPlugin extends Plugin {
   private registerCommands() {
     this.addCommand({
       id: "toggle-butter",
-      name: "Toggle WYSIWYG mode",
+      name: tx("Toggle WYSIWYG mode"),
       checkCallback: (checking) => {
         const v = this.app.workspace.getActiveViewOfType(ButterEditorView);
         if (v?.file) {
@@ -1898,7 +1925,7 @@ export default class ButterEditorPlugin extends Plugin {
 
     this.addCommand({
       id: "open-as-butter",
-      name: "Open current note in WYSIWYG view",
+      name: tx("Open current note in WYSIWYG view"),
       checkCallback: (checking) => {
         const md = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (!md?.file) return false;
@@ -1909,7 +1936,7 @@ export default class ButterEditorPlugin extends Plugin {
 
     this.addCommand({
       id: "open-as-markdown",
-      name: "Switch back to default Markdown view",
+      name: tx("Switch back to default Markdown view"),
       checkCallback: (checking) => {
         const v = this.app.workspace.getActiveViewOfType(ButterEditorView);
         if (!v?.file) return false;
@@ -1923,7 +1950,7 @@ export default class ButterEditorPlugin extends Plugin {
     // configured hotkeys. Users bind these via Settings → Hotkeys.
     this.addCommand({
       id: "find-in-note",
-      name: "Find in note",
+      name: tx("Find in note"),
       checkCallback: (checking) => {
         const v = this.app.workspace.getActiveViewOfType(ButterEditorView);
         const pm = v?.pmViewRef();
@@ -1935,7 +1962,7 @@ export default class ButterEditorPlugin extends Plugin {
 
     this.addCommand({
       id: "replace-in-note",
-      name: "Replace in note",
+      name: tx("Replace in note"),
       checkCallback: (checking) => {
         const v = this.app.workspace.getActiveViewOfType(ButterEditorView);
         const pm = v?.pmViewRef();
@@ -1968,11 +1995,11 @@ export default class ButterEditorPlugin extends Plugin {
       });
     };
 
-    butterMarkCommand("toggle-bold", "Toggle bold", "strong");
-    butterMarkCommand("toggle-italic", "Toggle italic", "em");
-    butterMarkCommand("toggle-inline-code", "Toggle inline code", "code");
-    butterMarkCommand("toggle-strikethrough", "Toggle strikethrough", "strikethrough");
-    butterMarkCommand("toggle-highlight", "Toggle highlight", "highlight");
+    butterMarkCommand("toggle-bold", tx("Toggle bold"), "strong");
+    butterMarkCommand("toggle-italic", tx("Toggle italic"), "em");
+    butterMarkCommand("toggle-inline-code", tx("Toggle inline code"), "code");
+    butterMarkCommand("toggle-strikethrough", tx("Toggle strikethrough"), "strikethrough");
+    butterMarkCommand("toggle-highlight", tx("Toggle highlight"), "highlight");
   }
 
   private resolveButterEditor(target?: EventTarget | null) {
@@ -2100,11 +2127,11 @@ export default class ButterEditorPlugin extends Plugin {
    * turn one shortcut into two toggle transactions.
    */
   private registerHotkeyManagerFormattingBridge() {
-    const hotkeyManager = this.app.hotkeyManager as
-      | {
-          onTrigger?: (evt: unknown, hotkey: unknown) => unknown;
-        }
-      | undefined;
+    const hotkeyManager = (this.app as unknown as {
+      hotkeyManager?: {
+        onTrigger?: (evt: unknown, hotkey: unknown) => unknown;
+      };
+    }).hotkeyManager;
     if (!hotkeyManager?.onTrigger || this.restoreHotkeyManagerFormattingBridge) return;
 
     const originalOnTrigger = hotkeyManager.onTrigger;
@@ -2156,13 +2183,13 @@ export default class ButterEditorPlugin extends Plugin {
   private registerPolishCommands() {
     this.addCommand({
       id: "show-shortcuts",
-      name: "Show keyboard shortcuts",
+      name: tx("Show keyboard shortcuts"),
       callback: () => new ShortcutHelpModal(this.app).open(),
     });
 
     this.addCommand({
       id: "open-outline",
-      name: "Open outline view",
+      name: tx("Open outline view"),
       checkCallback: (checking) => {
         if (!this.settings.useButterOutline) return false;
         if (!checking) void this.openOutline();
@@ -2172,7 +2199,7 @@ export default class ButterEditorPlugin extends Plugin {
 
     this.addCommand({
       id: "toggle-frontmatter-visibility",
-      name: "Toggle frontmatter visibility",
+      name: tx("Toggle frontmatter visibility"),
       callback: async () => {
         const cycle: Record<string, "match" | "visible" | "hidden"> =
           { match: "visible", visible: "hidden", hidden: "match" };
@@ -2180,19 +2207,23 @@ export default class ButterEditorPlugin extends Plugin {
         this.settings.frontmatterVisibility = next;
         await this.saveSettings();
         this.refreshAllButterViews();
-        const labels = { match: "Match Obsidian", visible: "Always visible", hidden: "Always hidden" };
-        new Notice(`Frontmatter: ${labels[next]}`);
+        const labels = {
+          match: "Match Obsidian",
+          visible: "Always visible",
+          hidden: "Always hidden",
+        } satisfies Record<typeof next, MessageKey>;
+        new Notice(tv("Frontmatter: {state}", { state: tx(labels[next]) }));
       },
     });
 
     this.addCommand({
       id: "toggle-comments",
-      name: "Toggle comments",
+      name: tx("Toggle comments"),
       callback: async () => {
         this.settings.showComments = !this.settings.showComments;
         await this.saveSettings();
         this.refreshAllButterViews();
-        new Notice(`Comments: ${this.settings.showComments ? "shown" : "hidden"}`);
+        new Notice(tv("Comments: {state}", { state: tx(this.settings.showComments ? "shown" : "hidden") }));
       },
     });
 
@@ -2217,7 +2248,7 @@ export default class ButterEditorPlugin extends Plugin {
     //   The thorough cleanup; expect a bigger diff.
     this.addCommand({
       id: "normalize-current-note",
-      name: "Tidy whitespace in current note",
+      name: tx("Tidy whitespace in current note"),
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "md") return false;
@@ -2228,7 +2259,7 @@ export default class ButterEditorPlugin extends Plugin {
 
     this.addCommand({
       id: "canonicalize-current-note",
-      name: "Rewrite current note in standard format",
+      name: tx("Rewrite current note in standard format"),
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "md") return false;
@@ -2239,7 +2270,7 @@ export default class ButterEditorPlugin extends Plugin {
 
     this.addCommand({
       id: "canonicalize-vault",
-      name: "Rewrite entire vault in standard format (irreversible - back up first)",
+      name: tx("Rewrite entire vault in standard format (irreversible - back up first)"),
       callback: () => void this.canonicalizeVaultWithConfirm(),
     });
 
@@ -2250,7 +2281,7 @@ export default class ButterEditorPlugin extends Plugin {
     // copy-able + clearable.
     this.addCommand({
       id: "show-recent-errors",
-      name: "Show recent errors",
+      name: tx("Show recent errors"),
       callback: () => {
         new ErrorLogModal(this.app, getErrorLog(), () => clearErrorLog()).open();
       },
@@ -2258,7 +2289,7 @@ export default class ButterEditorPlugin extends Plugin {
 
     this.outlineRibbonEl = this.addRibbonIcon(
       "list-tree",
-      "Open Butter outline",
+      tx("Open Butter outline"),
       () => this.openOutline(),
     );
     // Applied on layout-ready below (see applyOutlineMode).
@@ -2439,7 +2470,7 @@ export default class ButterEditorPlugin extends Plugin {
     if (!ok) return;
 
     const startNotice = new Notice(
-      `Canonicalizing ${files.length} files…`,
+      tv("Canonicalizing {count} files...", { count: files.length }),
       0,
     );
     let changed = 0;
@@ -2470,8 +2501,8 @@ export default class ButterEditorPlugin extends Plugin {
 
     startNotice.hide();
     const summary =
-      `Canonicalized: ${changed} changed, ${unchanged} unchanged` +
-      (errored ? `, ${errored} errored` : "");
+      tv("Canonicalized: {changed} changed, {unchanged} unchanged", { changed, unchanged }) +
+      (errored ? tv(", {errored} errored", { errored }) : "");
     new Notice(summary, 8000);
     if (errored) {
       console.warn(
@@ -2598,7 +2629,7 @@ export default class ButterEditorPlugin extends Plugin {
         if (!(file instanceof TFile) || file.extension !== "md") return;
         menu.addItem((item) => {
           item
-            .setTitle("Open in Butter editor")
+            .setTitle(tx("Open in Butter editor"))
             .setIcon("edit-3")
             .onClick(() => {
               const leaf = this.app.workspace.getLeaf(false);
@@ -2616,7 +2647,7 @@ export default class ButterEditorPlugin extends Plugin {
         if (!(view instanceof MarkdownView) || !view.file) return;
         menu.addItem((item) => {
           item
-            .setTitle("Switch to Butter editor")
+            .setTitle(tx("Switch to Butter editor"))
             .setIcon("edit-3")
             .onClick(() => swapMarkdownToButter(view));
         });
@@ -2760,6 +2791,7 @@ export default class ButterEditorPlugin extends Plugin {
       else hadUnknownKeys = true;
     }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, filtered);
+    this.applyI18nLanguage();
     // Migrate legacy mobileToolbarStyle keys ("native" / "butter") to
     // the new names ("detached" / "attached"). Old data.json files
     // still have the legacy values; rename them in-memory now and
@@ -2870,6 +2902,33 @@ export default class ButterEditorPlugin extends Plugin {
     // Re-apply on every save so the Debug-tab toggle takes effect
     // without reloading the plugin.
     setVerbose(this.settings.verboseLogging);
+    this.applyI18nLanguage();
+  }
+
+  public applyI18nLanguage(): void {
+    const next = resolveI18nLanguage(this.app, this.settings.uiLanguage);
+    if (getI18nLanguage() === next) return;
+    setI18nLanguage(next);
+    this.refreshLocalizedCommandNames();
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_BUTTER)) {
+      const view = leaf.view as unknown as { refreshLocalization?: () => void };
+      view.refreshLocalization?.();
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_BUTTER_OUTLINE)) {
+      const view = leaf.view as unknown as { refreshLocalization?: () => void };
+      view.refreshLocalization?.();
+    }
+  }
+
+  private refreshLocalizedCommandNames(): void {
+    const commands = this.app.commands?.commands as
+      | Record<string, { name?: string } | undefined>
+      | undefined;
+    if (!commands) return;
+    for (const [id, message] of Object.entries(LOCALIZED_COMMAND_NAMES)) {
+      const command = commands[`${this.manifest.id}:${id}`];
+      if (command) command.name = tx(message);
+    }
   }
 }
 

@@ -21,16 +21,11 @@ import {
   setIcon,
 } from "obsidian";
 import type ButterEditorPlugin from "../main";
-import type { ButterSettings } from "../main";
 import { LicenseClientError } from "../integration/license/client";
 import type { DeviceWireRecord } from "../integration/license/client";
-import type { ToolbarLayoutItem } from "../main";
+import type { ButterSettings, ToolbarLayoutItem } from "../main";
+import { tx, tv } from "../i18n";
 
-
-import {
-  wouldDriftFromActive,
-  type SourcePurityMode,
-} from "./welcome-modal";
 
 import { renderLicense, computeLicensePhase, renderRowsFor, renderUnlicensedRows, renderPollingRows, renderTrialRows, renderLifetimeRows, renderDeactivatedRows, renderInvalidatedRows, reasonCopyFor, renderExpiredRows, renderUnknownRows, trialHeadlineFor, trialStatLineFor, formatActivationDate, formatRelativeTime, renderKeyRow, renderPasteKeyRow, renderRecoveryRow, renderDevicesSection, renderDeviceListSkeleton, renderDeviceRow, renderCurrentDeviceFallback, renderDeviceUtilities, renderSupportSection, computeRemaining, scheduleTrialPoll, friendlyError } from "./settings/license-tab";
 import { renderGeneral, renderGeneralIntroSections, renderBehavior, renderAdvanced, renderStartTrialCardIfApplicable } from "./settings/general-tab";
@@ -38,7 +33,7 @@ import { TRIAL_LENGTH_DAYS } from "../integration/license/policy";
 import { renderToolbar, renderLayoutSection, renderPresetColorsSection, createSettingGroup, renderPrimaryToolbarSection, renderTableToolbarSection, renderLayoutEditor, openMoveToSubmenuMenu, openSubmenuEditModal, wireDrag } from "./settings/toolbar-tab";
 import { renderOutlineSection } from "./settings/outline-tab";
 import { renderDragSection } from "./settings/drag-tab";
-import { renderSourceSection, confirmPresetDrift, showWarning } from "./settings/source-tab";
+import { renderSourceSection, showWarning } from "./settings/source-tab";
 import { renderDebugSection } from "./settings/debug-tab";
 
 export class ButterSettingTab extends PluginSettingTab {
@@ -98,13 +93,13 @@ export class ButterSettingTab extends PluginSettingTab {
     const tabWrap = containerEl.createDiv({ cls: "butter-settings-tabs-wrap" });
     const leftInd = tabWrap.createDiv({
       cls: "butter-settings-tabs-indicator is-left",
-      attr: { role: "button", tabindex: "0", "aria-label": "Scroll tabs left" },
+      attr: { role: "button", tabindex: "0", "aria-label": tx("Scroll tabs left") },
     });
     setIcon(leftInd, "chevron-left");
     const tabBar = tabWrap.createDiv({ cls: "butter-settings-tabs" });
     const rightInd = tabWrap.createDiv({
       cls: "butter-settings-tabs-indicator is-right",
-      attr: { role: "button", tabindex: "0", "aria-label": "Scroll tabs right" },
+      attr: { role: "button", tabindex: "0", "aria-label": tx("Scroll tabs right") },
     });
     setIcon(rightInd, "chevron-right");
 
@@ -234,11 +229,11 @@ export class ButterSettingTab extends PluginSettingTab {
       });
     };
 
-    addTab("general", "General");
-    addTab("behavior", "Behavior");
-    addTab("toolbar", "Toolbar");
-    addTab("advanced", "Advanced");
-    addTab("license", "License");
+    addTab("general", tx("General"));
+    addTab("behavior", tx("Behavior"));
+    addTab("toolbar", tx("Toolbar"));
+    addTab("advanced", tx("Advanced"));
+    addTab("license", tx("License"));
     render();
     // Initial indicator visibility once layout has settled.
     window.requestAnimationFrame(updateIndicators);
@@ -299,7 +294,7 @@ export class ButterSettingTab extends PluginSettingTab {
       listEl.empty();
       this.renderCurrentDeviceFallback(
         listEl,
-        "Local session missing - re-paste your key to refresh the device list.",
+        tx("Local session missing - re-paste your key to refresh the device list."),
       );
       return;
     }
@@ -329,7 +324,7 @@ export class ButterSettingTab extends PluginSettingTab {
       // Network / polar / unknown - fall back to local-only view.
       this.renderCurrentDeviceFallback(
         listEl,
-        "Couldn't reach the licensing server. Showing this device only.",
+        tx("Couldn't reach the licensing server. Showing this device only."),
       );
       return;
     }
@@ -340,7 +335,7 @@ export class ButterSettingTab extends PluginSettingTab {
       // pre-1.7.0 Worker). Fall back to local-only view.
       this.renderCurrentDeviceFallback(
         listEl,
-        "Paste your license key on another machine to add it here.",
+        tx("Paste your license key on another machine to add it here."),
       );
       return;
     }
@@ -410,7 +405,7 @@ export class ButterSettingTab extends PluginSettingTab {
     await this.plugin.saveSettings();
     await this.plugin.refreshLicenseStatus();
     (this as unknown as { display: () => void }).display();
-    new Notice("This device deactivated.", 4000);
+    new Notice(tx("This device deactivated."), 4000);
   }
 
   /** Sibling-device deactivation: revoke server-side, refresh the
@@ -421,16 +416,16 @@ export class ButterSettingTab extends PluginSettingTab {
   public async deactivateSiblingDevice(deviceId: string) {
     const sessionToken = this.plugin.settings.sessionToken;
     if (!sessionToken) {
-      new Notice("Session expired - re-paste your key to refresh.", 5000);
+      new Notice(tx("Session expired - re-paste your key to refresh."), 5000);
       return;
     }
     try {
       await this.plugin.licenseClient.deactivateDevice(sessionToken, deviceId);
-      new Notice("Device deactivated.", 4000);
+      new Notice(tx("Device deactivated."), 4000);
     } catch (err) {
       const msg = err instanceof LicenseClientError
         ? this.friendlyError(err)
-        : "Couldn't reach the licensing server.";
+        : tx("Couldn't reach the licensing server.");
       new Notice(msg, 5000);
       return;
     }
@@ -493,19 +488,18 @@ export class ButterSettingTab extends PluginSettingTab {
 
   // ── Inline trial activation (replaces TrialPollingModal) ────
 
-  /** Tap-to-trial: hits `/trial`, persists `pendingTrialActivation`
-   *  (including the browser-fallback `checkoutUrl`), flips the
-   *  License-status section into the polling phase, and starts the
-   *  inline poll loop. Idempotent - a second tap while polling is a
-   *  no-op. */
+  /** Tap-to-trial: hits `/trial/instant` and keeps the License section
+   *  in its activating phase until the request resolves. Idempotent -
+   *  a second tap while activation is in flight is a no-op. */
   public async beginTrialActivation(): Promise<void> {
-    this.plugin.isActivatingTrialFlow = false; // Clear UI flag instantly
-    if (this.plugin.settings.pendingTrialActivation) {
+    if (
+      this.plugin.isActivatingTrialFlow
+      || this.plugin.settings.pendingTrialActivation
+    ) {
       return;
     }
 
-    // Show pending state immediately so the user knows it's working
-    this.plugin.settings.pendingTrialActivation = { pollToken: "", startedAt: Date.now() };
+    this.plugin.isActivatingTrialFlow = true;
     (this as unknown as { display: () => void }).display();
 
     try {
@@ -516,20 +510,18 @@ export class ButterSettingTab extends PluginSettingTab {
       this.plugin.settings.licenseExpiresAt = Date.parse(resp.expiresAt);
       this.plugin.settings.everValidated = true;
       this.plugin.settings.activatedAt = Date.now();
-      this.plugin.settings.pendingTrialActivation = null;
       await this.plugin.saveSettings();
       await this.plugin.refreshLicenseStatus();
-      new Notice(`Trial activated! You have ${TRIAL_LENGTH_DAYS} days of full access.`, 5000);
+      new Notice(tv("Trial activated! You have {days} days of full access.", { days: TRIAL_LENGTH_DAYS }), 5000);
       import("canvas-confetti").then((module) => {
         const confetti = module.default || module;
         void confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
       }).catch(() => {});
     } catch (err) {
-      this.plugin.settings.pendingTrialActivation = null;
       console.error("[beginTrialActivation] Error starting trial:", err);
       if (err instanceof LicenseClientError && err.kind === "trial_used") {
         new Notice(
-          "Your free trial has already been used on this device. Purchase a license to keep using Butter.",
+          tx("Your free trial has already been used on this device. Purchase a license to keep using Butter."),
           10_000,
         );
         this.plugin.settings.everValidated = true;
@@ -538,9 +530,11 @@ export class ButterSettingTab extends PluginSettingTab {
       } else {
         const msg = err instanceof LicenseClientError
           ? this.friendlyError(err)
-          : "Couldn't reach the licensing server.";
+          : tx("Couldn't reach the licensing server.");
         new Notice(msg, 7000);
       }
+    } finally {
+      this.plugin.isActivatingTrialFlow = false;
     }
     (this as unknown as { display: () => void }).display();
   }
@@ -554,7 +548,7 @@ export class ButterSettingTab extends PluginSettingTab {
    *  polling. */
   public async runTrialPollOnce(): Promise<void> {
     const pending = this.plugin.settings.pendingTrialActivation;
-    if (!pending) {
+    if (!pending?.pollToken) {
       return;
     }
     const ageMs = Date.now() - (pending.startedAt || 0);
@@ -563,7 +557,7 @@ export class ButterSettingTab extends PluginSettingTab {
       this.plugin.settings.pendingTrialActivation = null;
       await this.plugin.saveSettings();
       new Notice(
-        "Trial activation timed out. Open settings → license to try again.",
+        tx("Trial activation timed out. Open settings > license to try again."),
         10_000,
       );
       (this as unknown as { display: () => void }).display();
@@ -591,7 +585,7 @@ export class ButterSettingTab extends PluginSettingTab {
         this.plugin.settings.lastReason = "";
         await this.plugin.saveSettings();
         await this.plugin.refreshLicenseStatus();
-        new Notice("Trial activated!", 4000);
+        new Notice(tx("Trial activated!"), 4000);
 
         import("canvas-confetti").then((module) => {
           const confetti = module.default || module;
@@ -656,7 +650,7 @@ export class ButterSettingTab extends PluginSettingTab {
       await this.plugin.saveSettings();
       await this.plugin.refreshLicenseStatus();
       (this as unknown as { display: () => void }).display();
-      new Notice("License activated.", 4000);
+      new Notice(tx("License activated."), 4000);
 
       import("canvas-confetti").then((module) => {
         const confetti = module.default || module;
@@ -669,7 +663,7 @@ export class ButterSettingTab extends PluginSettingTab {
     } catch (err) {
       const msg = err instanceof LicenseClientError
         ? this.friendlyError(err)
-        : "Couldn't reach the licensing server.";
+        : tx("Couldn't reach the licensing server.");
       if (errorEl) {
         errorEl.textContent = msg;
         errorEl.removeClass("butter-hidden");
@@ -715,57 +709,6 @@ export class ButterSettingTab extends PluginSettingTab {
 
 
 
-
-
-  /** Drift-check wrapper for a bundled-setting toggle. If changing
-   *  `settingKey` to `newValue` would move the user out of an active
-   *  preset, fires the drift confirm modal. Returns true if the
-   *  caller should proceed with the change, false if it should
-   *  revert the toggle (already reverted here). Use at the top of
-   *  any bundled toggle's onChange before mutating settings. */
-  public async gateBundledToggle(
-    t: { setValue(v: boolean): void },
-    settingKey: keyof ButterSettings,
-    newValue: boolean,
-    settingLabel: string,
-  ): Promise<boolean> {
-    const drift = wouldDriftFromActive(
-      this.plugin,
-      settingKey,
-      newValue,
-    );
-    if (drift === null) return true;
-    const ok = await this.confirmPresetDrift(drift, settingLabel);
-    if (!ok) {
-      t.setValue(this.plugin.settings[settingKey] as boolean);
-      return false;
-    }
-    return true;
-  }
-
-  /** Drift-check wrapper for a bundled string-valued dropdown (e.g.
-   *  canonical-glyph picks). Same flow as gateBundledToggle but
-   *  reverts via setValue(string) so the dropdown returns to the
-   *  current setting if the user cancels the drift modal. */
-  public async gateBundledChoice(
-    d: { setValue(v: string): void },
-    settingKey: keyof ButterSettings,
-    newValue: string,
-    settingLabel: string,
-  ): Promise<boolean> {
-    const drift = wouldDriftFromActive(
-      this.plugin,
-      settingKey,
-      newValue,
-    );
-    if (drift === null) return true;
-    const ok = await this.confirmPresetDrift(drift, settingLabel);
-    if (!ok) {
-      d.setValue(this.plugin.settings[settingKey] as string);
-      return false;
-    }
-    return true;
-  }
 
 
   public renderGeneralIntroSections(root: HTMLElement) {
@@ -978,10 +921,6 @@ export class ButterSettingTab extends PluginSettingTab {
     return showWarning.call(this);
   }
 
-  public confirmPresetDrift(activePreset: SourcePurityMode, settingLabel: string): Promise<boolean> {
-    return confirmPresetDrift.call(this, activePreset, settingLabel);
-  }
-
   public renderDebugSection(root: HTMLElement) {
     return renderDebugSection.call(this, root);
   }
@@ -995,23 +934,23 @@ export class NormalizeWarningModal extends Modal {
   }
   onOpen() {
     const { contentEl, titleEl } = this;
-    titleEl.setText("Enable source normalization?");
+    titleEl.setText(tx("Enable source normalization?"));
     contentEl.createEl("p", {
       text:
-        "You're turning on a setting that automatically changes file formatting on save. Files with different formatting will be adjusted the next time they're saved.",
+        tx("You're turning on a setting that automatically changes file formatting on save. Files with different formatting will be adjusted the next time they're saved."),
     });
     contentEl.createEl("p", {
       text:
-        "This is an advanced feature. Most users prefer the default so they can switch freely between Butter, live preview, and source mode without their files being reformatted.",
+        tx("This is an advanced feature. Most users prefer the default so they can switch freely between Butter, live preview, and source mode without their files being reformatted."),
     });
     contentEl.createEl("p", {
       text:
-        "Continue only if you understand you're opting into automatic source changes.",
+        tx("Continue only if you understand you're opting into automatic source changes."),
     });
     const btnRow = contentEl.createDiv({ cls: "modal-button-container" });
-    const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
+    const cancelBtn = btnRow.createEl("button", { text: tx("Cancel") });
     const okBtn = btnRow.createEl("button", {
-      text: "I understand - enable",
+      text: tx("I understand - enable"),
       cls: "mod-cta",
     });
     cancelBtn.addEventListener("click", () => {
@@ -1056,7 +995,7 @@ export class SubmenuEditModal extends Modal {
   onOpen() {
     const { contentEl, titleEl } = this;
     if (Platform.isMobile) this.modalEl.addClass("mod-lg");
-    titleEl.setText(this.isNew ? "Add submenu" : "Edit submenu");
+    titleEl.setText(tx(this.isNew ? "Add submenu" : "Edit submenu"));
 
     const previewWrap = contentEl.createDiv({
       cls: "butter-submenu-edit-preview",
@@ -1067,16 +1006,16 @@ export class SubmenuEditModal extends Modal {
     setIcon(previewIcon, this.current.icon || "more-horizontal");
     const previewLabel = previewWrap.createDiv({
       cls: "butter-submenu-edit-preview-label",
-      text: this.current.label || "Submenu",
+      text: this.current.label || tx("Submenu"),
     });
 
     new Setting(contentEl)
-      .setName("Label")
-      .setDesc("Shown as the submenu's tooltip.")
+      .setName(tx("Label"))
+      .setDesc(tx("Shown as the submenu's tooltip."))
       .addText((t) => {
         t.setValue(this.current.label).onChange((v) => {
           this.current.label = v;
-          previewLabel.setText(v || "Submenu");
+          previewLabel.setText(v || tx("Submenu"));
         });
         t.inputEl.addClass("butter-submenu-label-input");
       });
@@ -1088,11 +1027,11 @@ export class SubmenuEditModal extends Modal {
     const iconWrap = contentEl.createDiv({ cls: "butter-icon-picker" });
     iconWrap.createEl("div", {
       cls: "butter-icon-picker-label",
-      text: "Icon",
+      text: tx("Icon"),
     });
     const search = iconWrap.createEl("input", {
       cls: "butter-icon-picker-search",
-      attr: { type: "text", placeholder: "Search icons…" },
+      attr: { type: "text", placeholder: tx("Search icons...") },
     });
     const grid = iconWrap.createDiv({ cls: "butter-icon-picker-grid" });
 
@@ -1138,13 +1077,13 @@ export class SubmenuEditModal extends Modal {
       if (matches.length > cap) {
         grid.createEl("div", {
           cls: "butter-icon-picker-overflow",
-          text: `Showing first ${cap} of ${matches.length} matches - refine your search.`,
+          text: tv("Showing first {shown} of {total} matches - refine your search.", { shown: cap, total: matches.length }),
         });
       }
       if (matches.length === 0) {
         grid.createEl("div", {
           cls: "butter-icon-picker-empty",
-          text: "No icons match.",
+          text: tx("No icons match."),
         });
       }
     };
@@ -1152,9 +1091,9 @@ export class SubmenuEditModal extends Modal {
     search.addEventListener("input", () => renderGrid(search.value));
 
     const btnRow = contentEl.createDiv({ cls: "modal-button-container" });
-    const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
+    const cancelBtn = btnRow.createEl("button", { text: tx("Cancel") });
     const saveBtn = btnRow.createEl("button", {
-      text: this.isNew ? "Add" : "Save",
+      text: tx(this.isNew ? "Add" : "Save"),
       cls: "mod-cta",
     });
     cancelBtn.addEventListener("click", () => this.close());
@@ -1190,21 +1129,21 @@ export class DeactivateConfirmModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Deactivate this device?" });
+    contentEl.createEl("h2", { text: tx("Deactivate this device?") });
     contentEl.createEl("p", {
       text:
-        "Removes the cached license from this Obsidian install. Your license key stays valid - paste it back on this or any other device any time to re-add it.",
+        tx("Removes the cached license from this Obsidian install. Your license key stays valid - paste it back on this or any other device any time to re-add it."),
     });
     contentEl.createEl("p", {
       text:
-        "Butter editor will switch to read-only mode here until you re-add the device.",
+        tx("Butter editor will switch to read-only mode here until you re-add the device."),
       cls: "setting-item-description",
     });
 
     const btnRow = contentEl.createDiv({ cls: "modal-button-container" });
-    const cancel = btnRow.createEl("button", { text: "Cancel" });
+    const cancel = btnRow.createEl("button", { text: tx("Cancel") });
     const ok = btnRow.createEl("button", {
-      text: "Deactivate",
+      text: tx("Deactivate"),
       cls: "mod-warning",
     });
     cancel.addEventListener("click", () => this.close());

@@ -13,6 +13,7 @@ import {
   blockMenuLabel,
   blockMenuHeaderIcon,
 } from "../block-menu-spec";
+import { tx, tv } from "../../i18n";
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -31,7 +32,10 @@ export function openBlockContextMenu(
   applyBlockContextMenuChrome(menu, {
     icon: blockMenuHeaderIcon(node),
     title: blockMenuLabel(node),
-    sub: `${charCount} char${charCount === 1 ? "" : "s"}`,
+    sub: tv("{count} {unit}", {
+      count: charCount,
+      unit: tx(charCount === 1 ? "char" : "chars"),
+    }),
   });
 
   const items = buildSingleBlockMenuItems({ view, pos, node, app });
@@ -51,7 +55,7 @@ export function openBlockContextMenu(
 
   // Universal items: Copy, Cut, Duplicate, Delete
   menu.addItem((mi) => {
-    mi.setTitle("Copy");
+    mi.setTitle(tx("Copy"));
     mi.setIcon("copy");
     mi.onClick(async () => {
       try {
@@ -61,7 +65,7 @@ export function openBlockContextMenu(
   });
 
   menu.addItem((mi) => {
-    mi.setTitle("Cut");
+    mi.setTitle(tx("Cut"));
     mi.setIcon("scissors");
     mi.onClick(async () => {
       try {
@@ -73,7 +77,7 @@ export function openBlockContextMenu(
   });
 
   menu.addItem((mi) => {
-    mi.setTitle("Duplicate");
+    mi.setTitle(tx("Duplicate"));
     mi.setIcon("copy-plus");
     mi.onClick(() => {
       const insertAt = pos + node.nodeSize;
@@ -85,7 +89,7 @@ export function openBlockContextMenu(
   menu.addSeparator();
 
   menu.addItem((mi) => {
-    mi.setTitle("Delete");
+    mi.setTitle(tx("Delete"));
     mi.setIcon("trash-2");
     mi.setWarning?.(true);
     mi.dom?.classList.add("is-warning");
@@ -105,4 +109,3 @@ export function openBlockContextMenu(
 }
 
 // ── Handle layer for "always" mode ───────────────────────────
-

@@ -4,6 +4,13 @@ import type { DeviceWireRecord } from "../../integration/license/client";
 import { LicenseClientError } from "../../integration/license/client";
 import { TRIAL_LENGTH_DAYS, MAX_DEVICES_PER_CUSTOMER } from "../../integration/license/policy";
 import { LINKS } from "../../integration/license/links";
+import {
+  formatI18nRelativeTime,
+  formatI18nUnit,
+  getI18nLanguage,
+  tx,
+  tv,
+} from "../../i18n";
 
 /**
    * License tab - four-zone layout: brand stamp, hero, settings
@@ -27,7 +34,7 @@ import { LINKS } from "../../integration/license/links";
     // (heading + body). The body holds the ticket on top, then
     // native hairline-divided detail rows below, all in one card.
     // Same chrome as Devices + Support below.
-    const section = this.createSettingGroup(root, "License", undefined);
+    const section = this.createSettingGroup(root, tx("License"), undefined);
     section.addClass("butter-license-section");
     this.renderRowsFor(section, phase);
 
@@ -108,27 +115,27 @@ export function renderUnlicensedRows(this: ButterSettingTab, parent: HTMLElement
 
     if (!hasActivated) {
       const row = new Setting(parent)
-        .setName("Free trial available")
-        .setDesc(`${TRIAL_LENGTH_DAYS} days, full access. No card, no email.`)
+        .setName(tx("Free trial available"))
+        .setDesc(tv("{days} days, full access. No card, no email.", { days: TRIAL_LENGTH_DAYS }))
           .addButton((b) =>
-            b.setButtonText("Start free trial").setCta()
+            b.setButtonText(tx("Start free trial")).setCta()
               .onClick(async () => {
                 b.setDisabled(true);
-                b.setButtonText("Starting...");
+                b.setButtonText(tx("Starting..."));
                 await this.beginTrialActivation();
               }),
           )
           .addButton((b) =>
-            b.setButtonText("Purchase")
+            b.setButtonText(tx("Purchase"))
               .onClick(() => { this.openCheckoutAndPoll(); }),
           );
       prependIcon(row, "badge-alert", "butter-license-icon-muted");
     } else {
       const row = new Setting(parent)
-        .setName("License required")
-        .setDesc("This device has already used a free trial. Purchase a license to keep using Butter. One-time, no subscription.")
+        .setName(tx("License required"))
+        .setDesc(tx("This device has already used a free trial. Purchase a license to keep using Butter. One-time, no subscription."))
         .addButton((b) =>
-          b.setButtonText("Purchase").setCta()
+          b.setButtonText(tx("Purchase")).setCta()
             .onClick(() => { this.openCheckoutAndPoll(); }),
         );
       prependIcon(row, "badge-alert", "butter-license-icon-muted");
@@ -142,11 +149,11 @@ export function renderPollingRows(this: ButterSettingTab, parent: HTMLElement) {
     const pending = this.plugin.settings.pendingTrialActivation;
     const ageSec = pending ? (Date.now() - (pending.startedAt || 0)) / 1000 : 0;
     const desc = ageSec > 15
-      ? "Taking longer than expected. Your trial is being set up in the background — hang tight."
+      ? "Taking longer than expected. Your trial is being set up in the background - hang tight."
       : "Confirming with the licensing server. This usually takes a few seconds.";
     const row = new Setting(parent)
-      .setName("Activating trial…")
-      .setDesc(desc);
+      .setName(tx("Activating trial..."))
+      .setDesc(tx(desc));
     prependIcon(row, "loader-2", "butter-activating-spinner");
   }
 
@@ -155,16 +162,16 @@ export function renderTrialRows(this: ButterSettingTab, parent: HTMLElement) {
     const s = this.plugin.settings;
     const dayN = Math.min(TRIAL_LENGTH_DAYS, r.daysUsed + 1);
     const stateName = r.daysLeft <= 0 && r.hoursLeft > 0
-      ? `Trial · ${r.hoursLeft} ${r.hoursLeft === 1 ? "hour" : "hours"} left`
-      : `Trial · ${r.daysLeft} ${r.daysLeft === 1 ? "day" : "days"} left`;
+      ? tv("Trial - {count} {unit} left", { count: r.hoursLeft, unit: formatI18nUnit("hour", r.hoursLeft) })
+      : tv("Trial - {count} {unit} left", { count: r.daysLeft, unit: formatI18nUnit("day", r.daysLeft) });
     const exp = s.licenseExpiresAt
-      ? `Day ${dayN} of ${TRIAL_LENGTH_DAYS} · ends ${this.formatActivationDate(s.licenseExpiresAt)}.`
-      : `Day ${dayN} of ${TRIAL_LENGTH_DAYS}.`;
+      ? tv("Day {day} of {total} - ends {date}.", { day: dayN, total: TRIAL_LENGTH_DAYS, date: this.formatActivationDate(s.licenseExpiresAt) })
+      : tv("Day {day} of {total}.", { day: dayN, total: TRIAL_LENGTH_DAYS });
     const row = new Setting(parent)
       .setName(stateName)
       .setDesc(exp)
       .addButton((b) =>
-        b.setButtonText("Purchase").setCta()
+        b.setButtonText(tx("Purchase")).setCta()
           .onClick(() => { this.openCheckoutAndPoll(); }),
       );
     prependIcon(row, "hourglass", "butter-license-icon-trial");
@@ -176,12 +183,12 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
     const s = this.plugin.settings;
     const tierLabel = s.tier === "v2" ? "v2" : "v1";
     const row = new Setting(parent)
-      .setName(`Lifetime License · ${tierLabel}`)
-      .setDesc("Thanks for buying Butter - yours, forever.");
+      .setName(`${tx("Lifetime License")} - ${tierLabel}`)
+      .setDesc(tx("Thanks for buying Butter - yours, forever."));
     prependIcon(row, "badge-check", "butter-license-icon-paid");
     row
       .addButton((b) =>
-        b.setButtonText("Manage license").setCta()
+        b.setButtonText(tx("Manage license")).setCta()
           .onClick(() => { window.open(LINKS.licensePortal, "_blank"); }),
       );
     this.renderKeyRow(parent);
@@ -195,13 +202,13 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
       ? s.customerEmail : "";
     if (s.activatedAt) {
       const desc = realEmail
-        ? `${realEmail} · Activated ${this.formatActivationDate(s.activatedAt)}`
-        : `Activated ${this.formatActivationDate(s.activatedAt)}`;
+        ? tv("{email} - Activated {date}", { email: realEmail, date: this.formatActivationDate(s.activatedAt) })
+        : tv("Activated {date}", { date: this.formatActivationDate(s.activatedAt) });
       new Setting(parent)
-        .setName(realEmail ? "Registered email" : "Activated")
+        .setName(tx(realEmail ? "Registered email" : "Activated"))
         .setDesc(desc);
     } else if (realEmail) {
-      new Setting(parent).setName("Registered email").setDesc(realEmail);
+      new Setting(parent).setName(tx("Registered email")).setDesc(realEmail);
     }
     this.renderPasteKeyRow(parent, /* asUpdate */ true);
   }
@@ -211,8 +218,8 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
    *  device_deactivated. Cleared on next successful activation. */
   export function renderDeactivatedRows(this: ButterSettingTab, parent: HTMLElement) {
     new Setting(parent)
-      .setName("Device deactivated")
-      .setDesc("This install was removed from your license from another device. Paste your key to add it back.");
+      .setName(tx("Device deactivated"))
+      .setDesc(tx("This install was removed from your license from another device. Paste your key to add it back."));
     this.renderPasteKeyRow(parent, /* asUpdate */ false);
     this.renderRecoveryRow(parent);
   }
@@ -225,19 +232,19 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
     const s = this.plugin.settings;
     const reason = this.reasonCopyFor(s.lastReason);
     new Setting(parent)
-      .setName("License could not be verified")
-      .setDesc(`We couldn't validate your license. ${reason}`)
+      .setName(tx("License could not be verified"))
+      .setDesc(tv("We couldn't validate your license. {reason}", { reason }))
       .addButton((b) =>
-        b.setButtonText("Re-check").setCta().onClick(async () => {
+        b.setButtonText(tx("Re-check")).setCta().onClick(async () => {
           await this.plugin.refreshLicenseStatus();
           (this as unknown as { display: () => void }).display();
         }),
       );
     new Setting(parent)
-      .setName("Contact support")
-      .setDesc("If this is unexpected, get in touch and we'll sort it.")
+      .setName(tx("Contact support"))
+      .setDesc(tx("If this is unexpected, get in touch and we'll sort it."))
       .addButton((b) =>
-        b.setButtonText("Email").onClick(() => {
+        b.setButtonText(tx("Email")).onClick(() => {
           window.open(`mailto:${LINKS.supportEmail}`, "_blank");
         }),
       );
@@ -248,36 +255,36 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
   export function reasonCopyFor(this: ButterSettingTab, reason: string): string {
     switch (reason) {
       case "license_invalid":
-        return "The key was not recognized by the server (refund, chargeback, or revoked).";
+        return tx("The key was not recognized by the server (refund, chargeback, or revoked).");
       case "device_deactivated":
-        return "This device was deactivated from another machine.";
+        return tx("This device was deactivated from another machine.");
       case "polar_error":
-        return "The licensing service is temporarily unavailable.";
+        return tx("The licensing service is temporarily unavailable.");
       case "network":
-        return "We couldn't reach the licensing server.";
+        return tx("We couldn't reach the licensing server.");
       default:
-        return "Try again, or contact support if this persists.";
+        return tx("Try again, or contact support if this persists.");
     }
   }
 
   export function renderExpiredRows(this: ButterSettingTab, parent: HTMLElement) {
     const expiredAt = this.plugin.settings.licenseExpiresAt || 0;
     const isFuture = expiredAt > Date.now();
-    let desc = "Your free trial has expired. Purchase a license to keep using Butter. One-time, no subscription.";
-    let title = "Free trial expired";
+    let desc = tx("Your free trial has expired. Purchase a license to keep using Butter. One-time, no subscription.");
+    let title = tx("Free trial expired");
     if (expiredAt) {
       if (isFuture) {
-        title = "Trial revoked";
-        desc = "Your trial was revoked. Purchase a license to keep using Butter.";
+        title = tx("Trial revoked");
+        desc = tx("Your trial was revoked. Purchase a license to keep using Butter.");
       } else {
-        desc = `Your free trial expired ${this.formatActivationDate(expiredAt)}. Purchase a license to keep using Butter.`;
+        desc = tv("Your free trial expired {date}. Purchase a license to keep using Butter.", { date: this.formatActivationDate(expiredAt) });
       }
     }
     const row = new Setting(parent)
       .setName(title)
       .setDesc(desc)
       .addButton((b) =>
-        b.setButtonText("Purchase").setCta()
+        b.setButtonText(tx("Purchase")).setCta()
           .onClick(() => { this.openCheckoutAndPoll(); }),
       );
     prependIcon(row, "badge-x", "butter-license-icon-expired");
@@ -287,9 +294,9 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
 
 export function renderUnknownRows(this: ButterSettingTab, parent: HTMLElement) {
     const row = new Setting(parent)
-      .setName("Checking license…")
-      .setDesc("Verifying with the licensing server.")
-      .addButton((b) => b.setButtonText("Checking…").setDisabled(true));
+      .setName(tx("Checking license..."))
+      .setDesc(tx("Verifying with the licensing server."))
+      .addButton((b) => b.setButtonText(tx("Checking...")).setDisabled(true));
     prependIcon(row, "badge-alert", "butter-license-icon-muted");
   }
 
@@ -301,14 +308,14 @@ export function renderUnknownRows(this: ButterSettingTab, parent: HTMLElement) {
    *  are computed as fractions of `TRIAL_LENGTH_DAYS` so the copy
    *  follows trial-length changes automatically. */
   export function trialHeadlineFor(this: ButterSettingTab, remaining: { daysLeft: number; hoursLeft: number; expired: boolean }): string {
-    if (remaining.expired) return "Trial expired.";
-    if (remaining.daysLeft <= 0) return "Today's the day.";
-    if (remaining.daysLeft === 1) return "One day left.";
-    if (remaining.daysLeft === 2) return "Two days left.";
+    if (remaining.expired) return tx("Trial expired.");
+    if (remaining.daysLeft <= 0) return tx("Today's the day.");
+    if (remaining.daysLeft === 1) return tx("One day left.");
+    if (remaining.daysLeft === 2) return tx("Two days left.");
     const pct = remaining.daysLeft / TRIAL_LENGTH_DAYS;
-    if (pct <= 0.33) return "Closing in.";
-    if (pct <= 0.66) return "Halfway through.";
-    return "Settling in.";
+    if (pct <= 0.33) return tx("Closing in.");
+    if (pct <= 0.66) return tx("Halfway through.");
+    return tx("Settling in.");
   }
 
 /** Mono detail line below the trial headline. Format:
@@ -320,12 +327,12 @@ export function renderUnknownRows(this: ButterSettingTab, parent: HTMLElement) {
     const exp = this.plugin.settings.licenseExpiresAt
       || this.plugin.settings.sessionExpiresAt
       || 0;
-    if (!exp) return `day ${dayN} of ${TRIAL_LENGTH_DAYS}`;
-    if (remaining.expired) return `day ${TRIAL_LENGTH_DAYS} of ${TRIAL_LENGTH_DAYS} · ended`;
+    if (!exp) return tv("day {day} of {total}", { day: dayN, total: TRIAL_LENGTH_DAYS });
+    if (remaining.expired) return tv("day {day} of {total} - ended", { day: TRIAL_LENGTH_DAYS, total: TRIAL_LENGTH_DAYS });
     const dateStr = remaining.daysLeft <= 0
-      ? `ends in ${Math.max(1, remaining.hoursLeft)}h`
-      : `ends ${this.formatActivationDate(exp)}`;
-    return `day ${dayN} of ${TRIAL_LENGTH_DAYS} · ${dateStr}`;
+      ? tv("ends in {hours}h", { hours: Math.max(1, remaining.hoursLeft) })
+      : tv("ends {date}", { date: this.formatActivationDate(exp) });
+    return tv("day {day} of {total} - {date}", { day: dayN, total: TRIAL_LENGTH_DAYS, date: dateStr });
   }
 
 /** Compact "Mon DD, YYYY" - Intl.DateTimeFormat with short month.
@@ -334,7 +341,7 @@ export function renderUnknownRows(this: ButterSettingTab, parent: HTMLElement) {
     if (!ms) return "-";
     const d = new Date(ms);
     const sameYear = d.getFullYear() === new Date().getFullYear();
-    return d.toLocaleDateString(undefined, {
+    return d.toLocaleDateString(getI18nLanguage(), {
       month: "short",
       day: "numeric",
       ...(sameYear ? {} : { year: "numeric" }),
@@ -347,29 +354,28 @@ export function renderUnknownRows(this: ButterSettingTab, parent: HTMLElement) {
     if (!ms) return "-";
     const diffMs = Date.now() - ms;
     const min = Math.floor(diffMs / 60_000);
-    if (min < 1) return "just now";
-    if (min < 60) return `${min} ${min === 1 ? "minute" : "minutes"} ago`;
+    if (min < 1) return tx("just now");
+    if (min < 60) return formatI18nRelativeTime(min, "minute");
     const hr = Math.floor(min / 60);
-    if (hr < 24) return `${hr} ${hr === 1 ? "hour" : "hours"} ago`;
+    if (hr < 24) return formatI18nRelativeTime(hr, "hour");
     const day = Math.floor(hr / 24);
-    if (day === 1) return "yesterday";
-    if (day < 7) return `${day} days ago`;
+    if (day < 7) return formatI18nRelativeTime(day, "day", "auto");
     return this.formatActivationDate(ms);
   }
 
 export function renderKeyRow(this: ButterSettingTab, parent: HTMLElement) {
-    const setting = new Setting(parent).setName("License key");
+    const setting = new Setting(parent).setName(tx("License key"));
     setting.descEl.createEl("code", {
       cls: "butter-license-keyview",
       text: this.plugin.settings.licenseKey || "-",
     });
     setting.addButton((b) =>
-      b.setButtonText("Copy").onClick(async () => {
+      b.setButtonText(tx("Copy")).onClick(async () => {
         try {
           await navigator.clipboard.writeText(this.plugin.settings.licenseKey);
-          new Notice("License key copied.", 2000);
+          new Notice(tx("License key copied."), 2000);
         } catch {
-          new Notice("Couldn't copy - your browser blocked clipboard access.", 4000);
+          new Notice(tx("Couldn't copy - your browser blocked clipboard access."), 4000);
         }
       }),
     );
@@ -381,10 +387,10 @@ export function renderKeyRow(this: ButterSettingTab, parent: HTMLElement) {
   export function renderPasteKeyRow(this: ButterSettingTab, parent: HTMLElement, asUpdate: boolean) {
     let keyInputValue = "";
     const setting = new Setting(parent)
-      .setName(asUpdate ? "Update license key" : "Have a license key?")
+      .setName(tx(asUpdate ? "Update license key" : "Have a license key?"))
       .setDesc(asUpdate
-        ? "Replace the active key (e.g. trial → lifetime)."
-        : "Paste the key from your purchase or recovery email.")
+        ? tx("Replace the active key (e.g. trial to lifetime).")
+        : tx("Paste the key from your purchase or recovery email."))
       .addText((t) =>
         t.setPlaceholder("BTR-xxxx-xxxx-xxxx")
           .onChange((v) => { keyInputValue = v.trim(); }),
@@ -392,8 +398,8 @@ export function renderKeyRow(this: ButterSettingTab, parent: HTMLElement) {
     const errorEl = setting.descEl.createDiv({ cls: "butter-license-error" });
     errorEl.addClass("butter-hidden");
     setting.addButton((b) =>
-      b.setButtonText("Validate").setCta().onClick(async () => {
-        if (!keyInputValue) { new Notice("Paste a key first."); return; }
+      b.setButtonText(tx("Validate")).setCta().onClick(async () => {
+        if (!keyInputValue) { new Notice(tx("Paste a key first.")); return; }
         await this.validateLicenseKeyFlow(keyInputValue, errorEl);
       }),
     );
@@ -402,28 +408,28 @@ export function renderKeyRow(this: ButterSettingTab, parent: HTMLElement) {
 export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
     let recoverEmail = "";
     new Setting(parent)
-      .setName("Lost your key?")
-      .setDesc("We'll email a one-time access link to recover your licenses.")
+      .setName(tx("Lost your key?"))
+      .setDesc(tx("We'll email a one-time access link to recover your licenses."))
       .addText((t) =>
         t.setPlaceholder("you@example.com")
           .onChange((v) => { recoverEmail = v.trim(); }),
       )
       .addButton((b) =>
-        b.setButtonText("Send link").onClick(async () => {
+        b.setButtonText(tx("Send link")).onClick(async () => {
           if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recoverEmail)) {
-            new Notice("Enter a valid email first.");
+            new Notice(tx("Enter a valid email first."));
             return;
           }
           try {
             await this.plugin.licenseClient.requestRecovery(recoverEmail);
             new Notice(
-              "If a license exists for that email, a recovery link is on its way.",
+              tx("If a license exists for that email, a recovery link is on its way."),
               7000,
             );
           } catch (err) {
             const msg = err instanceof LicenseClientError
               ? this.friendlyError(err)
-              : "Couldn't reach the licensing server. Try again in a moment.";
+              : tx("Couldn't reach the licensing server. Try again in a moment.");
             new Notice(msg, 7000);
           }
         }),
@@ -442,7 +448,7 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
    *  Reset license state + Copy diagnostic info live below the
    *  device list as plain rows. */
   export function renderDevicesSection(this: ButterSettingTab, root: HTMLElement) {
-    const section = this.createSettingGroup(root, "Devices");
+    const section = this.createSettingGroup(root, tx("Devices"));
     const phase = this.computeLicensePhase();
     const hasActiveLicense =
       phase === "trial" || phase === "valid" || phase === "offline";
@@ -454,7 +460,7 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
     } else {
       list.createDiv({
         cls: "butter-license-devices-hint",
-        text: "No active license on this device.",
+        text: tx("No active license on this device."),
       });
     }
 
@@ -480,13 +486,13 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
   export function renderDeviceRow(this: ButterSettingTab, parent: HTMLElement, device: DeviceWireRecord) {
     const activated = this.formatActivationDate(device.activatedAt);
     const lastSeen = device.lastSeenAt && device.lastSeenAt !== device.activatedAt
-      ? ` · last seen ${this.formatRelativeTime(device.lastSeenAt)}`
+      ? tv(" - last seen {time}", { time: this.formatRelativeTime(device.lastSeenAt) })
       : "";
     const setting = new Setting(parent)
-      .setName(device.isCurrent ? "This device" : "Another device")
-      .setDesc(`Activated ${activated}${lastSeen}`);
+      .setName(tx(device.isCurrent ? "This device" : "Another device"))
+      .setDesc(tv("Activated {date}{extra}", { date: activated, extra: lastSeen }));
       setting.addButton((b) => {
-        b.setButtonText("Deactivate");
+        b.setButtonText(tx("Deactivate"));
         (b as unknown as { setWarning: () => typeof b }).setWarning();
         b.onClick(() => {
         if (device.isCurrent) {
@@ -508,13 +514,13 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
       || this.plugin.settings.lastValidatedAt
       || 0;
     const desc = activatedAt
-      ? `Activated ${this.formatActivationDate(activatedAt)}`
-      : "this install";
+      ? tv("Activated {date}", { date: this.formatActivationDate(activatedAt) })
+      : tx("this install");
     new Setting(parent)
-      .setName("This device")
+      .setName(tx("This device"))
       .setDesc(desc)
       .addButton((b) => {
-        b.setButtonText("Deactivate");
+        b.setButtonText(tx("Deactivate"));
         (b as unknown as { setWarning: () => typeof b }).setWarning();
         b.onClick(() => {
           new DeactivateConfirmModal(this.app, async () => {
@@ -535,10 +541,10 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
    *  shouldn't need it - Deactivate covers the sign-out path.) */
   export function renderDeviceUtilities(this: ButterSettingTab, section: HTMLElement) {
     new Setting(section)
-      .setName("Copy diagnostic info")
-      .setDesc("Device ID, key prefix, plugin version, and server URL for support tickets.")
+      .setName(tx("Copy diagnostic info"))
+      .setDesc(tx("Device ID, key prefix, plugin version, and server URL for support tickets."))
       .addButton((b) =>
-        b.setButtonText("Copy").onClick(async () => {
+        b.setButtonText(tx("Copy")).onClick(async () => {
           const devId = this.plugin.settings.deviceId || "-";
           const keyPrefix = (this.plugin.settings.licenseKey || "").slice(0, 12) || "-";
           const ver = this.plugin.manifest.version;
@@ -553,9 +559,9 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
           ].join("\n");
           try {
             await navigator.clipboard.writeText(payload);
-            new Notice("Diagnostic info copied.", 2000);
+            new Notice(tx("Diagnostic info copied."), 2000);
           } catch {
-            new Notice("Couldn't copy - clipboard access was blocked.", 4000);
+            new Notice(tx("Couldn't copy - clipboard access was blocked."), 4000);
           }
         }),
       );
@@ -564,58 +570,58 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
 // ── Section 3: Support ──────────────────────────────────────
 
   export function renderSupportSection(this: ButterSettingTab, root: HTMLElement) {
-    const section = this.createSettingGroup(root, "Support", undefined);
+    const section = this.createSettingGroup(root, tx("Support"), undefined);
 
     new Setting(section)
-      .setName("Documentation")
-      .setDesc("Read the docs and FAQ.")
+      .setName(tx("Documentation"))
+      .setDesc(tx("Read the docs and FAQ."))
       .addButton((b) =>
-        b.setButtonText("Open").onClick(() => { window.open(LINKS.docs, "_blank"); }),
+        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.docs, "_blank"); }),
       );
 
     new Setting(section)
-      .setName("Report an issue")
-      .setDesc("GitHub issue tracker.")
+      .setName(tx("Report an issue"))
+      .setDesc(tx("GitHub issue tracker."))
       .addButton((b) =>
-        b.setButtonText("Open").onClick(() => { window.open(LINKS.issues, "_blank"); }),
+        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.issues, "_blank"); }),
       );
 
     new Setting(section)
-      .setName("Community thread")
-      .setDesc("Obsidian forum thread.")
+      .setName(tx("Community thread"))
+      .setDesc(tx("Obsidian forum thread."))
       .addButton((b) =>
-        b.setButtonText("Open").onClick(() => { window.open(LINKS.forum, "_blank"); }),
+        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.forum, "_blank"); }),
       );
 
     new Setting(section)
-      .setName("Email support")
+      .setName(tx("Email support"))
       .setDesc(LINKS.supportEmail)
       .addButton((b) =>
-        b.setButtonText("Email").onClick(() => {
+        b.setButtonText(tx("Email")).onClick(() => {
           window.open(`mailto:${LINKS.supportEmail}`, "_blank");
         }),
       );
 
     new Setting(section)
-      .setName("Privacy policy")
+      .setName(tx("Privacy policy"))
       .addButton((b) =>
-        b.setButtonText("Open").onClick(() => { window.open(LINKS.privacy, "_blank"); }),
+        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.privacy, "_blank"); }),
       );
 
     new Setting(section)
-      .setName("Terms of service")
+      .setName(tx("Terms of service"))
       .addButton((b) =>
-        b.setButtonText("Open").onClick(() => { window.open(LINKS.terms, "_blank"); }),
+        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.terms, "_blank"); }),
       );
 
     new Setting(section)
-      .setName("Refund policy")
+      .setName(tx("Refund policy"))
       .addButton((b) =>
-        b.setButtonText("Open").onClick(() => { window.open(LINKS.refunds, "_blank"); }),
+        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.refunds, "_blank"); }),
       );
 
     new Setting(section)
-      .setName("Plugin version")
+      .setName(tx("Plugin version"))
       .setDesc(`v${this.plugin.manifest.version}`);
   }
 
@@ -664,7 +670,7 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
   export function scheduleTrialPoll(this: ButterSettingTab) {
     if (this.trialPollTimer != null) return; // already armed
     const pending = this.plugin.settings.pendingTrialActivation;
-    if (!pending) return;
+    if (!pending?.pollToken) return;
     const ageMs = Date.now() - (pending.startedAt || 0);
     const delay = ageMs < 25_000 ? 1_500 : ageMs < 5 * 60_000 ? 5_000 : 30_000;
     const myGen = this.pollGeneration;
@@ -680,24 +686,24 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
   export function friendlyError(this: ButterSettingTab, err: LicenseClientError): string {
     switch (err.kind) {
       case "license_invalid":
-        return "That license key is not valid (revoked, expired, or unrecognized).";
+        return tx("That license key is not valid (revoked, expired, or unrecognized).");
       case "device_deactivated":
-        return "This device was removed from this license. Paste the key again to add it back.";
+        return tx("This device was removed from this license. Paste the key again to add it back.");
       case "device_cap":
-        return `This license is active on ${MAX_DEVICES_PER_CUSTOMER} devices already. Deactivate one at licenses.buttereditor.com to free a slot.`;
+        return tv("This license is active on {count} devices already. Deactivate one at licenses.buttereditor.com to free a slot.", { count: MAX_DEVICES_PER_CUSTOMER });
       case "unauthorized":
-        return "Session expired. Re-enter the license key to continue.";
+        return tx("Session expired. Re-enter the license key to continue.");
       case "trial_used":
-        return "A trial has already been activated for this email or device.";
+        return tx("A trial has already been activated for this email or device.");
       case "rate_limited":
-        return "Too many attempts in a short window. Wait a minute and try again.";
+        return tx("Too many attempts in a short window. Wait a minute and try again.");
       case "network":
-        return "Couldn't reach the licensing server. Check your internet connection.";
+        return tx("Couldn't reach the licensing server. Check your internet connection.");
       case "polar_error":
-        return "The licensing service is temporarily unavailable. Try again in a minute.";
+        return tx("The licensing service is temporarily unavailable. Try again in a minute.");
       case "invalid_input":
-        return "Input was rejected by the server. Double-check email + key formatting.";
+        return tx("Input was rejected by the server. Double-check email + key formatting.");
       default:
-        return "Something went wrong. Try again in a moment.";
+        return tx("Something went wrong. Try again in a moment.");
     }
   }

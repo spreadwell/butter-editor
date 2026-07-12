@@ -14,6 +14,12 @@
  */
 
 import { Platform, requestUrl } from "obsidian";
+import {
+  parseInstantTrialResponse,
+  type InstantTrialResponse,
+} from "./trial-response";
+
+export type { InstantTrialResponse } from "./trial-response";
 
 export const WORKER_BASE = "https://api.buttereditor.com";
 
@@ -32,11 +38,6 @@ function detectPlatform(): string {
 /** Hard cap on each Worker call. The Worker itself has 8s timeouts on
  * its upstream Polar/Resend calls, so 10s leaves a small margin. */
 const REQUEST_TIMEOUT_MS = 10_000;
-
-export interface InstantTrialResponse {
-  licenseKey: string;
-  expiresAt: string;
-}
 
 export interface TrialPollResponse {
   status: "pending" | "ready";
@@ -204,7 +205,16 @@ export class LicenseClient {
    */
   async startInstantTrial(deviceId: string): Promise<InstantTrialResponse> {
     const res = await call("/trial/instant", { method: "POST", body: { deviceId, platform: detectPlatform() } });
-    return expectOk<InstantTrialResponse>("/trial/instant", res);
+    const body = expectOk<unknown>("/trial/instant", res);
+    const trial = parseInstantTrialResponse(body);
+    if (!trial) {
+      throw new LicenseClientError(
+        "unknown",
+        res.status,
+        "Worker returned an invalid instant-trial response",
+      );
+    }
+    return trial;
   }
 
   /**

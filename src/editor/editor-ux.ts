@@ -34,6 +34,7 @@ import { Fragment, type Schema } from "prosemirror-model";
 import type { Command } from "prosemirror-state";
 import { enterMovesDown } from "./table-editing";
 import { buildInlineMathInputRule } from "./inline-math-input-rule";
+import { tx } from "../i18n";
 
 // ── Task-list Enter command ──
 //
@@ -893,25 +894,25 @@ function showContextMenu(schema: Schema, view: EditorView, event: MouseEvent) {
   if (hasSelection) {
     if (schema.marks.strong) {
       menu.addItem((item) =>
-        item.setTitle("Bold").setIcon("bold")
+        item.setTitle(tx("Bold")).setIcon("bold")
           .onClick(() => toggleMark(schema.marks.strong)(view.state, view.dispatch)),
       );
     }
     if (schema.marks.em) {
       menu.addItem((item) =>
-        item.setTitle("Italic").setIcon("italic")
+        item.setTitle(tx("Italic")).setIcon("italic")
           .onClick(() => toggleMark(schema.marks.em)(view.state, view.dispatch)),
       );
     }
     if (schema.marks.strikethrough) {
       menu.addItem((item) =>
-        item.setTitle("Strikethrough").setIcon("strikethrough")
+        item.setTitle(tx("Strikethrough")).setIcon("strikethrough")
           .onClick(() => toggleMark(schema.marks.strikethrough)(view.state, view.dispatch)),
       );
     }
     if (schema.marks.code) {
       menu.addItem((item) =>
-        item.setTitle("Inline code").setIcon("code-2")
+        item.setTitle(tx("Inline code")).setIcon("code-2")
           .onClick(() => toggleMark(schema.marks.code)(view.state, view.dispatch)),
       );
     }
@@ -919,11 +920,11 @@ function showContextMenu(schema: Schema, view: EditorView, event: MouseEvent) {
   }
 
   menu.addItem((item) =>
-    item.setTitle("Blockquote").setIcon("quote")
+    item.setTitle(tx("Blockquote")).setIcon("quote")
       .onClick(() => wrapIn(schema.nodes.blockquote)(view.state, view.dispatch)),
   );
   menu.addItem((item) =>
-    item.setTitle("Horizontal rule").setIcon("minus")
+    item.setTitle(tx("Horizontal rule")).setIcon("minus")
       .onClick(() => {
         const tr = view.state.tr.replaceSelectionWith(schema.nodes.horizontal_rule.create());
         view.dispatch(tr);
@@ -932,15 +933,15 @@ function showContextMenu(schema: Schema, view: EditorView, event: MouseEvent) {
 
   menu.addSeparator();
   menu.addItem((item) =>
-    item.setTitle("Cut").setIcon("scissors")
+    item.setTitle(tx("Cut")).setIcon("scissors")
       .onClick(() => runClipboardCommand(activeDocument, "cut")),
   );
   menu.addItem((item) =>
-    item.setTitle("Copy").setIcon("copy")
+    item.setTitle(tx("Copy")).setIcon("copy")
       .onClick(() => runClipboardCommand(activeDocument, "copy")),
   );
   menu.addItem((item) =>
-    item.setTitle("Paste").setIcon("clipboard-check")
+    item.setTitle(tx("Paste")).setIcon("clipboard-check")
       .onClick(() => {
         void navigator.clipboard.readText().then((text) => {
           view.dispatch(view.state.tr.insertText(text));

@@ -1,8 +1,9 @@
 {
   "name": "butter-editor",
-  "version": "0.10.4",
+  "version": "0.11.0",
   "description": "Butter Editor — WYSIWYG editing mode for Obsidian (ProseMirror + markdown-it, custom bridge)",
   "main": "main.js",
+  "license": "UNLICENSED",
   "scripts": {
     "build": "node esbuild.config.mjs production"
   },

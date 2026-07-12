@@ -45,6 +45,7 @@ import {
 import { TableMap, CellSelection } from "prosemirror-tables";
 import { Notice } from "obsidian";
 import { debug } from "../integration/debug";
+import { tx } from "../i18n";
 import {
   applyColumnMove,
   applyRowMove,
@@ -636,7 +637,7 @@ export function tableRowColDragPlugin() {
           return;
         }
         if (!tableHasNoSpans(activeCtx.table)) {
-          new Notice("Reorder is unavailable on tables with merged cells.");
+          new Notice(tx("Reorder is unavailable on tables with merged cells."));
           dragArmed = null;
           window.removeEventListener("pointermove", onArmMove);
           window.removeEventListener("pointerup", onArmUp);

@@ -78,6 +78,7 @@ import {
   rawBlockSafetyPlugin,
   RAW_BLOCK_SYNC_META,
 } from "../core/raw-block-safety";
+import { tx, tv } from "../i18n";
 import { SaveScheduler } from "../ui/save-scheduler";
 import { suppressNativeMobileToolbar } from "../ui/mobile-native-toolbar";
 import { scrollHostTop, runClipboardCommand } from "../util/dom-utils";
@@ -488,6 +489,12 @@ export class ButterEditorView extends TextFileView {
 
     updateState();
 
+  }
+
+  public refreshLocalization(): void {
+    this.applyToolbarButtonVisibility();
+    this.renderProperties();
+    this.licenseBanner?.refresh();
   }
 
   public applyToolbarPosition() {
@@ -923,7 +930,7 @@ export class ButterEditorView extends TextFileView {
     });
     const foldEl = heading.createDiv({ cls: "collapse-indicator collapse-icon" });
     setIcon(foldEl, "right-triangle");
-    heading.createDiv({ cls: "metadata-properties-title", text: "Properties" });
+    heading.createDiv({ cls: "metadata-properties-title", text: tx("Properties") });
     heading.addEventListener("click", (e) => {
       e.preventDefault();
       metaContainer.toggleClass("is-collapsed", !metaContainer.hasClass("is-collapsed"));
@@ -969,7 +976,7 @@ export class ButterEditorView extends TextFileView {
           "danger",
         ]);
         menu.setSectionSubmenu?.("action.changeType", {
-          title: "Property type",
+          title: tx("Property type"),
           icon: "lucide-info",
         });
         if (widgets) {
@@ -992,26 +999,26 @@ export class ButterEditorView extends TextFileView {
           }
         }
         menu.addItem((item: MenuItem) => {
-          item.setTitle("Cut").setIcon("lucide-scissors").onClick(() =>
+          item.setTitle(tx("Cut")).setIcon("lucide-scissors").onClick(() =>
             runClipboardCommand(activeDocument, "cut"),
           );
           item.setSection?.("clipboard");
         });
         menu.addItem((item: MenuItem) => {
-          item.setTitle("Copy").setIcon("lucide-copy").onClick(() =>
+          item.setTitle(tx("Copy")).setIcon("lucide-copy").onClick(() =>
             runClipboardCommand(activeDocument, "copy"),
           );
           item.setSection?.("clipboard");
         });
         menu.addItem((item: MenuItem) => {
-          item.setTitle("Paste").setIcon("lucide-clipboard-check").onClick(
+          item.setTitle(tx("Paste")).setIcon("lucide-clipboard-check").onClick(
             () => runClipboardCommand(activeDocument, "paste"),
           );
           item.setSection?.("clipboard");
         });
         menu.addItem((item: MenuItem) => {
           item
-            .setTitle("Remove")
+            .setTitle(tx("Remove"))
             .setIcon("lucide-trash-2")
             .onClick(() => {
               void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
@@ -1130,7 +1137,7 @@ export class ButterEditorView extends TextFileView {
           attr: { contentEditable: "true", tabIndex: 0 },
         });
         if (!arrValue || arrValue.length === 0) {
-          addInput.setAttribute("data-placeholder", "Empty");
+          addInput.setAttribute("data-placeholder", tx("Empty"));
         }
         addInput.addEventListener("keydown", (e) => {
           if (e.key === "Enter" && addInput.textContent?.trim()) {
@@ -1189,7 +1196,7 @@ export class ButterEditorView extends TextFileView {
           cls: "metadata-input metadata-input-text",
           type: "text",
           value: fmValueToString(value),
-          placeholder: "Empty",
+          placeholder: tx("Empty"),
           attr: { tabIndex: 0 },
         });
         textInput.addEventListener("change", () => {
@@ -1206,7 +1213,7 @@ export class ButterEditorView extends TextFileView {
     });
     const addBtnIcon = addBtn.createSpan({ cls: "text-button-icon" });
     setIcon(addBtnIcon, "lucide-plus");
-    addBtn.createSpan({ cls: "text-button-label", text: "Add property" });
+    addBtn.createSpan({ cls: "text-button-label", text: tx("Add property") });
     addBtn.addEventListener("click", () => {
       void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
         let k = "property";
@@ -1242,7 +1249,7 @@ export class ButterEditorView extends TextFileView {
     // "book-open" for Reading.
     const cycleAction = this.addAction(
       modeIcon("butter"),
-      "Switch view mode",
+      tx("Switch view mode"),
       () => {
         cycleView(this.leaf, this.settings.viewCycleModes);
       },
@@ -1263,7 +1270,7 @@ export class ButterEditorView extends TextFileView {
           this.file.parent?.path + "/" + newName + "." + this.file.extension,
         ).catch((err: unknown) => {
           recordError("inline-title-rename", String((err as Error)?.message ?? err));
-          new Notice("Rename failed");
+          new Notice(tx("Rename failed"));
         });
       }
     });
@@ -1407,34 +1414,34 @@ export class ButterEditorView extends TextFileView {
           plugin.applyToolbarPositionToAllViews();
         };
         menu.addItem((item) => {
-          item.setTitle("Position");
+          item.setTitle(tx("Position"));
           item.setIcon("move-vertical");
           const sub = item.setSubmenu();
           sub.addItem((s) => {
-            s.setTitle("Top");
+            s.setTitle(tx("Top"));
             s.setIcon("arrow-up-to-line");
             if (plugin.settings.toolbarPosition === "top") s.setChecked(true);
             s.onClick(() => void setPos("top"));
           });
           sub.addItem((s) => {
-            s.setTitle("Bottom");
+            s.setTitle(tx("Bottom"));
             s.setIcon("arrow-down-to-line");
             if (plugin.settings.toolbarPosition === "bottom") s.setChecked(true);
             s.onClick(() => void setPos("bottom"));
           });
         });
         menu.addItem((item) => {
-          item.setTitle("Style");
+          item.setTitle(tx("Style"));
           item.setIcon("layers");
           const sub = item.setSubmenu();
           sub.addItem((s) => {
-            s.setTitle("Attached");
+            s.setTitle(tx("Attached"));
             s.setIcon("rectangle-horizontal");
             if (plugin.settings.toolbarStyle === "attached") s.setChecked(true);
             s.onClick(() => void setStyle("attached"));
           });
           sub.addItem((s) => {
-            s.setTitle("Detached");
+            s.setTitle(tx("Detached"));
             s.setIcon("square-dashed");
             if (plugin.settings.toolbarStyle === "detached") s.setChecked(true);
             s.onClick(() => void setStyle("detached"));
@@ -1444,7 +1451,7 @@ export class ButterEditorView extends TextFileView {
       }
       menu.addItem((item) => {
         item
-          .setTitle("Settings")
+          .setTitle(tx("Settings"))
           .setIcon("settings")
           .onClick(() => plugin.openSettings("toolbar"));
       });
@@ -1750,7 +1757,7 @@ export class ButterEditorView extends TextFileView {
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           recordError("save", `vault.modify failed: ${msg}`);
-          new Notice("Butter: save failed - " + msg);
+          new Notice(`${tx("Butter: save failed -")} ${msg}`);
         }
       })();
     });
@@ -2136,9 +2143,8 @@ export class ButterEditorView extends TextFileView {
             // long-duration Notice + status-bar warning indicator
             // makes it impossible to miss that something happened.
             new Notice(
-              `Butter: save normalized — the file was saved but ` +
-                `Butter's safety check found a structural difference. ` +
-                `Diagnostic dump: ${dumpPath} (at vault root).`,
+              `${tx("Butter: save normalized - the file was saved but Butter's safety check found a structural difference.")} ` +
+                tv("Diagnostic dump: {path} (at vault root).", { path: dumpPath }),
               15000,
             );
             recordError(
@@ -2163,9 +2169,7 @@ export class ButterEditorView extends TextFileView {
           // serializer path enabled by setting; respecting that choice
           // and saving its output is the right behavior.)
           new Notice(
-            `Butter: save normalized — primary serializer round-trip ` +
-              `failed and no fallback is available. File saved anyway. ` +
-              `Open DevTools console for details.`,
+            tx("Butter: save normalized - primary serializer round-trip failed and no fallback is available. File saved anyway. Open DevTools console for details."),
             12000,
           );
           recordError(

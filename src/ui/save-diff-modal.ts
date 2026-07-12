@@ -14,6 +14,7 @@
  */
 
 import { App, Modal, Platform } from "obsidian";
+import { tx } from "../i18n";
 
 export class SaveDiffModal extends Modal {
   constructor(
@@ -31,36 +32,31 @@ export class SaveDiffModal extends Modal {
     // query on the diff-wrap child.
     modalEl.classList.add("butter-modal-save-diff");
     if (Platform.isMobile) modalEl.addClass("mod-lg");
-    titleEl.setText("Butter - formatting adjusted on save");
+    titleEl.setText(tx("Butter - formatting adjusted on save"));
 
     const intro = contentEl.createDiv({ cls: "butter-save-diff-intro" });
     intro.setText(
-      "Butter saved your work, but had to adjust some formatting to " +
-        "keep the file consistent. Your content is preserved - only the " +
-        "layout of certain blocks changed. Compare the previous and new " +
-        "versions below. To roll back to a prior save, use Obsidian's " +
-        "core File Recovery plugin (Settings > Core plugins > File " +
-        "recovery > View recovered files).",
+      tx("Butter saved your work, but had to adjust some formatting to keep the file consistent. Your content is preserved - only the layout of certain blocks changed. Compare the previous and new versions below. To roll back to a prior save, use Obsidian's core File Recovery plugin (Settings > Core plugins > File recovery > View recovered files)."),
     );
 
     const reasonEl = contentEl.createDiv({ cls: "butter-save-diff-reason" });
     reasonEl.createSpan({
       cls: "butter-save-diff-reason-label",
-      text: "Reason: ",
+      text: tx("Reason: "),
     });
     reasonEl.createSpan({ text: this.reason });
 
     const diffWrap = contentEl.createDiv({ cls: "butter-save-diff-wrap" });
 
     const beforeCol = diffWrap.createDiv({ cls: "butter-save-diff-col" });
-    beforeCol.createEl("h4", { text: "Before (previous version)" });
+    beforeCol.createEl("h4", { text: tx("Before (previous version)") });
     const beforePre = beforeCol.createEl("pre", {
       cls: "butter-save-diff-pre",
     });
     beforePre.setText(this.original);
 
     const afterCol = diffWrap.createDiv({ cls: "butter-save-diff-col" });
-    afterCol.createEl("h4", { text: "After (current version)" });
+    afterCol.createEl("h4", { text: tx("After (current version)") });
     const afterPre = afterCol.createEl("pre", {
       cls: "butter-save-diff-pre",
     });
@@ -70,7 +66,7 @@ export class SaveDiffModal extends Modal {
       cls: "modal-button-container butter-save-diff-buttons",
     });
     const closeBtn = btnRow.createEl("button", {
-      text: "Close",
+      text: tx("Close"),
       cls: "mod-cta",
     });
     closeBtn.addEventListener("click", () => this.close());

@@ -15,6 +15,7 @@ import {
   type AutocompleteMode,
 } from "./autocomplete-query";
 import { bindFloatingSurfaceReposition } from "../util/floating-surface";
+import { tx, tv } from "../i18n";
 
 type SuggestItem = { text: string; secondary?: string; create?: boolean };
 type Mode = AutocompleteMode | null;
@@ -106,7 +107,7 @@ export function autocompletePlugin(app: App, schema: Schema) {
     el.setAttribute("role", "listbox");
     el.setAttribute(
       "aria-label",
-      newMode === "tag" ? "Tag suggestions" : "Link suggestions",
+      newMode === "tag" ? tx("Tag suggestions") : tx("Link suggestions"),
     );
     el.id = `butter-autocomplete-${Math.random().toString(36).slice(2, 9)}`;
     activeDocument.body.appendChild(el);
@@ -139,13 +140,15 @@ export function autocompletePlugin(app: App, schema: Schema) {
 
   function itemLabel(item: SuggestItem): string {
     if (item.create) {
-      return mode === "tag" ? `Create #${item.text}` : `Create link to "${item.text}"`;
+      return mode === "tag"
+        ? tv("Create #{tag}", { tag: item.text })
+        : tv("Create link to \"{name}\"", { name: item.text });
     }
     return mode === "tag" ? `#${item.text}` : item.text;
   }
 
   function itemDesc(item: SuggestItem): string | null {
-    if (item.create) return "Press Enter";
+    if (item.create) return tx("Press Enter");
     if (item.secondary) return item.secondary;
     return null;
   }
@@ -182,7 +185,7 @@ export function autocompletePlugin(app: App, schema: Schema) {
     if (items.length === 0) {
       const empty = activeDocument.createElement("div");
       empty.classList.add("butter-surface-empty");
-      empty.textContent = "No matches";
+      empty.textContent = tx("No matches");
       popover.appendChild(empty);
       return;
     }

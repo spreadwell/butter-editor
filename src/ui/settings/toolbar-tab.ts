@@ -4,6 +4,7 @@ import { MAIN_TOOLBAR_BUTTON_DEFS, openMobilePresetColorSheet, createPresetColor
 import { TABLE_TOOLBAR_BUTTON_DEFS } from "../../editor/table-toolbar";
 import { defaultTableLayout, mainLayoutFull, mainLayoutSimple, mobileLayoutDefault, mobileTableLayoutDefault, cloneLayout, collectButtonIds, locate, removeItem, newId } from "../toolbar-layout";
 import type { ToolbarLayoutItem } from "../../main";
+import { tx, txKnown, tv } from "../../i18n";
 import {
   DEFAULT_PRESET_TEXT_COLORS,
   DEFAULT_PRESET_HIGHLIGHT_COLORS,
@@ -25,7 +26,7 @@ export function renderToolbar(this: ButterSettingTab, root: HTMLElement) {
 
     const switcher = root.createDiv({
       cls: "butter-toolbar-platform-switcher",
-      attr: { role: "tablist", "aria-label": "Toolbar platform" },
+      attr: { role: "tablist", "aria-label": tx("Toolbar platform") },
     });
 
     // Sliding accent pill - a single absolutely-positioned element
@@ -48,7 +49,7 @@ export function renderToolbar(this: ButterSettingTab, root: HTMLElement) {
       setIcon(iconEl, icon);
       btn.createSpan({
         cls: "butter-toolbar-platform-switcher__label",
-        text: label,
+        text: txKnown(label),
       });
       return btn;
     };
@@ -91,7 +92,7 @@ export function renderToolbar(this: ButterSettingTab, root: HTMLElement) {
 /** Preset colours section. Shared across desktop + mobile - one set of
  *  five text + five highlight swatches feeds both the desktop palette
  *  and the mobile picker - so it sits outside the platform switcher,
- *  directly above Primary toolbar. Grayed out when HTML formatting is
+ *  directly above Primary toolbar. Grayed out when rich formatting is
  *  off, since custom colours author inline HTML. */
 export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElement): void {
   const container = root.createDiv({ cls: "butter-toolbar-segment-body" });
@@ -111,10 +112,10 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
     const enabled = this.plugin.settings.enableHtmlFormatting !== false;
     const items = this.createSettingGroup(
       container,
-      "Preset colors",
+      tx("Preset colors"),
       undefined,
       undefined,
-      { label: "Mobile & Desktop", icons: ["smartphone", "monitor"] },
+      { label: tx("Mobile & Desktop"), icons: ["smartphone", "monitor"] },
     );
     const group = items.closest(".butter-setting-group");
     if (group?.instanceOf(HTMLElement)) {
@@ -123,9 +124,9 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
 
     if (!enabled) {
       new Setting(items)
-        .setName("Colours are off")
+        .setName(tx("Colours are off"))
         .setDesc(
-          "Turn on HTML formatting in the general tab to customize preset colours.",
+          tx("Turn on rich formatting in the general tab to customize preset colours."),
         )
         .settingEl.addClass("butter-preset-colors-note");
     }
@@ -142,12 +143,12 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
       kind: "text" | "highlight",
     ): void => {
       const wrap = items.createDiv({ cls: "butter-preset-chip-group" });
-      wrap.createDiv({ cls: "butter-preset-chip-label", text: label });
+      wrap.createDiv({ cls: "butter-preset-chip-label", text: txKnown(label) });
       const gridEl = wrap.createDiv({ cls: "butter-preset-chip-grid" });
       colors.forEach((value, i) => {
         const chip = gridEl.createEl("button", {
           cls: "butter-preset-chip",
-          attr: { type: "button", "aria-label": `${label} preset ${i + 1}` },
+          attr: { type: "button", "aria-label": tv("{label} preset {number}", { label: txKnown(label), number: i + 1 }) },
         });
         const fill = chip.createSpan({ cls: "butter-preset-chip-fill" });
         fill.style.backgroundColor = value;
@@ -178,7 +179,7 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
       colors: string[],
       kind: "text" | "highlight",
     ): void => {
-      const setting = new Setting(items).setName(label);
+      const setting = new Setting(items).setName(txKnown(label));
       setting.controlEl.addClass("butter-preset-color-row");
       let activePopover: HTMLElement | null = null;
       let activeCleanup: (() => void) | null = null;
@@ -213,10 +214,10 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
       colors.forEach((value, i) => {
         const button = setting.controlEl.createEl("button", {
           cls: "butter-preset-color-button",
-          attr: { type: "button", "aria-label": `${label} preset ${i + 1}` },
+          attr: { type: "button", "aria-label": tv("{label} preset {number}", { label: txKnown(label), number: i + 1 }) },
         });
         button.disabled = !enabled;
-        button.title = `Preset ${i + 1}`;
+        button.title = tv("Preset {number}", { number: i + 1 });
         const fill = button.createSpan({ cls: "butter-preset-color-button-fill" });
         fill.style.backgroundColor = value;
         button.addEventListener("click", () => {
@@ -292,11 +293,11 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
 
     // Reset lives inside the section (not in the heading).
     new Setting(items)
-      .setName("Reset to defaults")
+      .setName(tx("Reset to defaults"))
       .addButton((b) =>
         b
-          .setButtonText("Reset")
-          .setTooltip("Reset preset colours to defaults")
+          .setButtonText(tx("Reset"))
+          .setTooltip(tx("Reset preset colours to defaults"))
           .onClick(async () => {
             this.plugin.settings.presetTextColors = [...DEFAULT_PRESET_TEXT_COLORS];
             this.plugin.settings.presetHighlightColors = [
@@ -324,11 +325,11 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
       const segment = getSegment();
       const tag =
         segment === "desktop"
-          ? { label: "Desktop", icon: "monitor" }
-          : { label: "Mobile", icon: "smartphone" };
+          ? { label: tx("Desktop"), icon: "monitor" }
+          : { label: tx("Mobile"), icon: "smartphone" };
       const layoutItems = this.createSettingGroup(
         container,
-        "Layout",
+        tx("Layout"),
         undefined,
         undefined,
         tag,
@@ -336,16 +337,16 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
 
       if (segment === "desktop") {
         new Setting(layoutItems)
-          .setName("Toolbar style")
-          .setDesc("Attached sits as a chrome row at the edge of the pane. Detached floats as a card inside the editor.")
+          .setName(tx("Toolbar style"))
+          .setDesc(tx("Attached sits as a chrome row at the edge of the pane. Detached floats as a card inside the editor."))
           .addDropdown((d) =>
             // Integrated is implemented but hidden from this dropdown
             // until the design pass for view-header layout is finalized.
             // The setting still works if set programmatically.
             d
               .addOptions({
-                attached: "Attached",
-                detached: "Detached",
+                attached: tx("Attached"),
+                detached: tx("Detached"),
               })
               .setValue(
                 this.plugin.settings.toolbarStyle === "integrated"
@@ -360,11 +361,11 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
           );
 
         new Setting(layoutItems)
-          .setName("Toolbar position")
-          .setDesc("Top: pins above the editor content. Bottom: pins below.")
+          .setName(tx("Toolbar position"))
+          .setDesc(tx("Top: pins above the editor content. Bottom: pins below."))
           .addDropdown((d) =>
             d
-              .addOptions({ top: "Pin to top", bottom: "Pin to bottom" })
+              .addOptions({ top: tx("Pin to top"), bottom: tx("Pin to bottom") })
               .setValue(this.plugin.settings.toolbarPosition)
               .onChange(async (v) => {
                 this.plugin.settings.toolbarPosition = v as "top" | "bottom";
@@ -374,11 +375,11 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
           );
       } else {
         new Setting(layoutItems)
-          .setName("Mobile toolbar style")
-          .setDesc("Detached matches Obsidian's mobile toolbar look. Attached is Butter's own style with larger buttons and frosted glass.")
+          .setName(tx("Mobile toolbar style"))
+          .setDesc(tx("Detached matches Obsidian's mobile toolbar look. Attached is Butter's own style with larger buttons and frosted glass."))
           .addDropdown((d) =>
             d
-              .addOptions({ detached: "Detached", attached: "Attached" })
+              .addOptions({ detached: tx("Detached"), attached: tx("Attached") })
               .setValue(this.plugin.settings.mobileToolbarStyle)
               .onChange(async (v) => {
                 this.plugin.settings.mobileToolbarStyle = v as
@@ -395,15 +396,15 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
       // Active style applies to both desktop and mobile toolbars,
       // so render it in either segment view.
       new Setting(layoutItems)
-        .setName("Active style")
-        .setDesc("How active formatting buttons are highlighted.")
+        .setName(tx("Active style"))
+        .setDesc(tx("How active formatting buttons are highlighted."))
         .addDropdown((d) =>
           d
             .addOptions({
-              filled: "Filled",
-              soft: "Soft",
-              outlined: "Outlined",
-              underline: "Underline",
+              filled: tx("Filled"),
+              soft: tx("Soft"),
+              outlined: tx("Outlined"),
+              underline: tx("Underline"),
             })
             .setValue(this.plugin.settings.toolbarActiveStyle)
             .onChange(async (v) => {
@@ -414,8 +415,8 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
 
       if (segment === "desktop") {
         new Setting(layoutItems)
-          .setName("Fade status bar on toolbar hover")
-          .setDesc("When the bottom toolbar overlaps the status bar, hovering toolbar buttons fades the status bar so they're reachable.")
+          .setName(tx("Fade status bar on toolbar hover"))
+          .setDesc(tx("When the bottom toolbar overlaps the status bar, hovering toolbar buttons fades the status bar so they're reachable."))
           .addToggle((t) =>
             t
               .setValue(this.plugin.settings.statusBarHoverFade)
@@ -460,13 +461,11 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
     const infoEl = headerEl.createDiv({ cls: "setting-item-info" });
     const nameEl = infoEl.createDiv({
       cls: "setting-item-name",
-      text: heading,
+      text: txKnown(heading),
     });
-    // Optional dimmed-italic suffix (icon + label) on the heading.
-    // Same visual treatment as the "Experimental" preset tag - used
-    // by the platform-segmented sections (Layout / Primary toolbar /
-    // Table toolbar) to show whether the current view is Desktop or
-    // Mobile.
+    // Optional dimmed-italic suffix (icon + label) on the heading,
+    // used by platform-segmented sections to show whether the current
+    // view is Desktop or Mobile.
     if (tag) {
       const tagEl = nameEl.createSpan({ cls: "butter-platform-tag" });
       const icons = tag.icons ?? (tag.icon ? [tag.icon] : []);
@@ -476,17 +475,17 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
       }
       tagEl.createSpan({
         cls: "butter-platform-tag__label",
-        text: tag.label,
+        text: txKnown(tag.label),
       });
     }
     if (description) {
-      infoEl.createDiv({ cls: "setting-item-description", text: description });
+      infoEl.createDiv({ cls: "setting-item-description", text: txKnown(description) });
     }
     if (action) {
       const controlEl = headerEl.createDiv({ cls: "setting-item-control" });
       const btn = controlEl.createEl("button", {
         cls: "clickable-icon",
-        attr: { "aria-label": action.tooltip, type: "button" },
+        attr: { "aria-label": txKnown(action.tooltip), type: "button" },
       });
       setIcon(btn, action.icon);
       btn.addEventListener("click", (e) => {
@@ -683,7 +682,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         const chip = toast.createDiv({ cls: "butter-toolbar-update-toast__chip" });
         const icon = chip.createSpan({ cls: "butter-toolbar-update-toast__icon" });
         setIcon(icon, "check");
-        chip.createSpan({ cls: "butter-toolbar-update-toast__label", text: "Toolbar Updated" });
+        chip.createSpan({ cls: "butter-toolbar-update-toast__label", text: tx("Toolbar Updated") });
         host.prepend(toast);
       }
       if (removeToastTimer !== null) {
@@ -717,9 +716,9 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
     };
 
     for (const p of presets) {
-      const row = new Setting(items).setName(p.name).setDesc(p.desc);
+      const row = new Setting(items).setName(txKnown(p.name)).setDesc(txKnown(p.desc));
       row.addButton((b) => {
-        b.setButtonText("Apply").onClick(async () => {
+        b.setButtonText(tx("Apply")).onClick(async () => {
           await commitLayout(p.build());
         });
         if (p.cta) b.setCta();
@@ -733,8 +732,8 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
     // `sliders-horizontal` icon flags it as the customization
     // entry-point distinct from the preset rows above.
     const customizeRow = new Setting(items)
-      .setName("Customize buttons")
-      .setDesc(desc);
+      .setName(tx("Customize buttons"))
+      .setDesc(txKnown(desc));
     const customizeIcon = createSpan({ cls: "butter-customize-icon" });
     setIcon(customizeIcon, "sliders-horizontal");
     customizeRow.nameEl.prepend(customizeIcon);
@@ -749,7 +748,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       const onWrap = wrap.createDiv({ cls: "butter-layout-list" });
       onWrap.createEl("div", {
         cls: "butter-layout-list-label",
-        text: "On toolbar",
+        text: tx("On toolbar"),
       });
       const onList = onWrap.createDiv({
         cls: "butter-layout-rows",
@@ -774,7 +773,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
 
         const handle = row.createEl("button", {
           cls: "butter-layout-handle clickable-icon",
-          attr: { "aria-label": "Drag to reorder", type: "button" },
+          attr: { "aria-label": tx("Drag to reorder"), type: "button" },
         });
         setIcon(handle, "grip-vertical");
         handle.dataset.dragHandle = "1";
@@ -790,16 +789,16 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           // row type. The label itself takes a muted-italic style
           // that reads as "divider marker" without competing with
           // the surrounding rows visually.
-          label.setText("Divider");
+          label.setText(tx("Divider"));
           label.classList.add("butter-layout-sep-label");
         } else if (item.type === "submenu") {
           setIcon(icon, item.icon || "more-horizontal");
-          label.setText(item.label || "Submenu");
+          label.setText(item.label ? txKnown(item.label) : tx("Submenu"));
           row.classList.add("is-submenu");
         } else {
           const def = defLookup.get(item.id);
           setIcon(icon, def?.icon ?? "circle-help");
-          label.setText(def?.label ?? item.id);
+          label.setText(def ? txKnown(def.label) : item.id);
         }
 
         const actions = row.createDiv({ cls: "butter-layout-row-actions" });
@@ -807,7 +806,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         if (item.type === "submenu") {
           const editBtn = actions.createEl("button", {
             cls: "butter-layout-action clickable-icon",
-            attr: { "aria-label": "Edit submenu", type: "button" },
+            attr: { "aria-label": tx("Edit submenu"), type: "button" },
           });
           setIcon(editBtn, "pencil");
           editBtn.addEventListener("click", (e) => {
@@ -827,7 +826,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           if (depth === 0 && submenus.length > 0) {
             const moveBtn = actions.createEl("button", {
               cls: "butter-layout-action clickable-icon",
-              attr: { "aria-label": "Move into submenu", type: "button" },
+              attr: { "aria-label": tx("Move into submenu"), type: "button" },
             });
             setIcon(moveBtn, "folder-input");
             moveBtn.addEventListener("click", (e) => {
@@ -849,7 +848,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
             const moveOutBtn = actions.createEl("button", {
               cls: "butter-layout-action clickable-icon",
               attr: {
-                "aria-label": "Move out of submenu",
+                "aria-label": tx("Move out of submenu"),
                 type: "button",
               },
             });
@@ -867,7 +866,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
 
         const removeBtn = actions.createEl("button", {
           cls: "butter-layout-action clickable-icon mod-danger",
-          attr: { "aria-label": "Remove from toolbar", type: "button" },
+          attr: { "aria-label": tx("Remove from toolbar"), type: "button" },
         });
         setIcon(removeBtn, "x");
         removeBtn.addEventListener("click", (e) => {
@@ -905,7 +904,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
             });
             empty.createDiv({
               cls: "butter-layout-empty",
-              text: "Empty submenu - add buttons via their Move actions.",
+              text: tx("Empty submenu - add buttons via their Move actions."),
             });
           }
         }
@@ -924,7 +923,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         });
         const iconWrap = btn.createSpan({ cls: "butter-layout-add-btn-icon" });
         setIcon(iconWrap, icon);
-        btn.createSpan({ text: label });
+        btn.createSpan({ text: txKnown(label) });
         btn.addEventListener("click", onClick);
       };
       buildAddBtn("folder", "Submenu", (e) => {
@@ -957,7 +956,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         const availWrap = wrap.createDiv({ cls: "butter-layout-list" });
         availWrap.createEl("div", {
           cls: "butter-layout-list-label",
-          text: "Available",
+          text: tx("Available"),
         });
         const availList = availWrap.createDiv({ cls: "butter-layout-rows" });
         for (const def of available) {
@@ -966,10 +965,10 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           });
           const icon = row.createDiv({ cls: "butter-layout-icon" });
           setIcon(icon, def.icon);
-          row.createDiv({ cls: "butter-layout-label", text: def.label });
+          row.createDiv({ cls: "butter-layout-label", text: txKnown(def.label) });
           const addBtn = row.createEl("button", {
             cls: "butter-layout-action clickable-icon mod-add",
-            attr: { "aria-label": `Add ${def.label}`, type: "button" },
+            attr: { "aria-label": `${tx("Add")} ${txKnown(def.label)}`, type: "button" },
           });
           setIcon(addBtn, "plus");
           addBtn.addEventListener("click", (e) => {
@@ -995,7 +994,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       setIcon(icn, sub.icon || "more-horizontal");
       item.createDiv({
         cls: "butter-layout-popup-menu-label",
-        text: sub.label || "Submenu",
+        text: sub.label ? txKnown(sub.label) : tx("Submenu"),
       });
       item.addEventListener("click", (e) => {
         e.preventDefault();
