@@ -27,6 +27,28 @@ await esbuild.build({
   sourcemap: false,
   minify: true,
   treeShaking: true,
+  tsconfigRaw: {
+  "compilerOptions": {
+    "target": "ES2018",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "lib": [
+      "ES2018",
+      "DOM"
+    ],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",
+    "sourceMap": true,
+    "declaration": false,
+    "noEmitOnError": false
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+},
   platform: "browser",
   logLevel: "info",
 });
