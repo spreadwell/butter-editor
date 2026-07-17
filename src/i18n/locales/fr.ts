@@ -371,6 +371,8 @@ export const fr = {
   "Too many attempts in a short window. Wait a minute and try again.": "Trop de tentatives dans une courte fenêtre. Attendez une minute et réessayez.",
   "Couldn't reach the licensing server. Check your internet connection.": "Impossible d'atteindre le serveur de licences. Vérifiez votre connexion Internet.",
   "The licensing service is temporarily unavailable. Try again in a minute.": "Le service de licence est temporairement indisponible. Réessayez dans une minute.",
+  "Update Butter Editor to continue using this license.": "Mettez à jour Butter Editor pour continuer à utiliser cette licence.",
+  "This license requires a newer version of Butter Editor.": "Cette licence nécessite une version plus récente de Butter Editor.",
   "Input was rejected by the server. Double-check email + key formatting.": "L'entrée a été rejetée par le serveur. Vérifiez à nouveau le formatage des e-mails et des clés.",
   "Something went wrong. Try again in a moment.": "Quelque chose s'est mal passé. Réessayez dans un instant.",
   "Toolbar platform": "Plateforme de barre d'outils",

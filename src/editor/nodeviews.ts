@@ -230,13 +230,13 @@ export function showLangPopover(
   current: string,
   onChange: (lang: string) => void,
 ): { close: () => void } {
-  const popover = activeDocument.createElement("div");
+  const popover = activeWindow.createDiv();
   popover.className = "butter-code-lang-popover";
 
   let isOpen = true;
   const outsideHandler = (e: MouseEvent) => {
     if (!isOpen) return;
-    if (popover.contains(e.target as Node)) return;
+    if (popover.contains(e.target as Node | null)) return;
     close();
   };
   const close = () => {
@@ -246,13 +246,13 @@ export function showLangPopover(
     activeDocument.removeEventListener("mousedown", outsideHandler);
   };
 
-  const input = activeDocument.createElement("input");
+  const input = activeWindow.createEl("input");
   input.type = "text";
   input.placeholder = tx("Search languages...");
   input.className = "butter-code-lang-search";
   popover.appendChild(input);
 
-  const list = activeDocument.createElement("div");
+  const list = activeWindow.createDiv();
   list.className = "butter-code-lang-list";
   popover.appendChild(list);
 
@@ -284,17 +284,17 @@ export function showLangPopover(
     }
 
     for (const opt of options) {
-      const row = activeDocument.createElement("div");
+      const row = activeWindow.createDiv();
       row.className = "butter-code-lang-item";
       if (opt.lang === current || (opt.lang === "plain" && !current)) {
         row.addClass("is-selected");
       }
-      const labelText = activeDocument.createElement("span");
+      const labelText = activeWindow.createSpan();
       labelText.className = "butter-code-lang-item-label";
       labelText.textContent = opt.lang;
       row.appendChild(labelText);
       if (opt.isCustom) {
-        const hint = activeDocument.createElement("span");
+        const hint = activeWindow.createSpan();
         hint.className = "butter-code-lang-hint";
         hint.textContent = tx("Custom");
         row.appendChild(hint);
@@ -368,7 +368,7 @@ export function codeBlockView(
     // The two modes live side-by-side in the DOM; CSS toggles which is
     // visible. contentDOM is always the editable `<code>`, so PM's text
     // model stays intact regardless of which view is showing.
-    const dom = activeDocument.createElement("div");
+    const dom = activeWindow.createDiv();
     dom.classList.add("butter-code-block-shell");
     if (!editable) {
       dom.classList.add("butter-obsidian-block");
@@ -385,10 +385,10 @@ export function codeBlockView(
     if (!editable) dom.dataset.butterWidget = "widget";
 
     // ── View wrap (MarkdownRenderer output - plugin widgets land here) ──
-    const viewWrap = activeDocument.createElement("div");
+    const viewWrap = activeWindow.createDiv();
     viewWrap.classList.add("butter-code-view-wrap");
     viewWrap.contentEditable = "false";
-    const mount = activeDocument.createElement("div");
+    const mount = activeWindow.createDiv();
     mount.classList.add("obsidian-render-mount");
     if (butterView) {
       (mount as WidgetInfoHost).__butterWidgetInfo = { view, getPos, butterView, node };
@@ -397,7 +397,7 @@ export function codeBlockView(
     dom.appendChild(viewWrap);
 
     // ── Edit wrap (editable PM code shell - contentDOM lives here) ──
-    const editWrap = activeDocument.createElement("div");
+    const editWrap = activeWindow.createDiv();
     editWrap.classList.add("butter-code-edit-wrap");
 
     // ── Floating edit toolbar (delegated langs only) ──
@@ -410,7 +410,7 @@ export function codeBlockView(
     let editToolbar: HTMLElement | null = null;
     let snapshotSource: string | null = null;
     if (!editable) {
-      editToolbar = activeDocument.createElement("div");
+      editToolbar = activeWindow.createDiv();
       editToolbar.className = "butter-code-edit-toolbar";
       editToolbar.contentEditable = "false";
       editToolbar.setAttribute("role", "toolbar");
@@ -420,21 +420,21 @@ export function codeBlockView(
       // ("mermaid", "dataviewjs", "chart", etc.). Positioned first in
       // the toolbar, separated from the action buttons by a vertical
       // divider matching the table toolbar's divider style.
-      const langLabel = activeDocument.createElement("span");
+      const langLabel = activeWindow.createSpan();
       langLabel.className = "butter-code-edit-toolbar-lang";
       langLabel.textContent = language;
 
-      const divider = activeDocument.createElement("div");
+      const divider = activeWindow.createDiv();
       divider.className = "butter-code-edit-toolbar-divider";
 
-      const cancelBtn = activeDocument.createElement("button");
+      const cancelBtn = activeWindow.createEl("button");
       cancelBtn.type = "button";
       cancelBtn.className = "butter-code-edit-toolbar-btn clickable-icon";
       cancelBtn.setAttribute("aria-label", tx("Cancel (discard edits)"));
       cancelBtn.title = tx("Cancel");
       setIcon(cancelBtn, "x");
 
-      const saveBtn = activeDocument.createElement("button");
+      const saveBtn = activeWindow.createEl("button");
       saveBtn.type = "button";
       saveBtn.className = "butter-code-edit-toolbar-btn clickable-icon";
       saveBtn.setAttribute("aria-label", tx("Save edits"));
@@ -469,9 +469,9 @@ export function codeBlockView(
       });
     }
 
-    const pre = activeDocument.createElement("pre");
+    const pre = activeWindow.createEl("pre");
     pre.classList.add("butter-code-block");
-    const code = activeDocument.createElement("code");
+    const code = activeWindow.createEl("code");
     if (language) code.classList.add(`language-${language}`);
     pre.appendChild(code);
     editWrap.appendChild(pre);
@@ -488,7 +488,7 @@ export function codeBlockView(
       // happens to be clickable. role="button" + title + aria-label
       // keep it accessible. Keyboard affordance is deliberately
       // omitted - users have the drag-handle Copy item for that.
-      const langTag = activeDocument.createElement("span");
+      const langTag = activeWindow.createSpan();
       langTag.className = "butter-code-lang-tag";
       langTag.textContent = language;
       langTag.contentEditable = "false";
@@ -802,9 +802,9 @@ export function embedView(
     getPos: () => number | undefined,
   ): NodeView => {
     const src = safeEmbedSrc(attrStr(node, "src"));
-    const dom = activeDocument.createElement("div");
+    const dom = activeWindow.createDiv();
     dom.classList.add("butter-obsidian-embed");
-    const mount = activeDocument.createElement("div");
+    const mount = activeWindow.createDiv();
     mount.classList.add("obsidian-render-mount");
     if (butterView) {
       (mount as WidgetInfoHost).__butterWidgetInfo = { view, getPos, butterView, node };
@@ -897,9 +897,9 @@ export function embedInlineView(
     getPos: () => number | undefined,
   ): NodeView => {
     const src = safeEmbedSrc(attrStr(node, "src"));
-    const dom = activeDocument.createElement("span");
+    const dom = activeWindow.createSpan();
     dom.classList.add("butter-obsidian-embed", "butter-obsidian-embed-inline");
-    const mount = activeDocument.createElement("span");
+    const mount = activeWindow.createSpan();
     mount.classList.add("obsidian-render-mount");
     if (butterView) {
       (mount as WidgetInfoHost).__butterWidgetInfo = { view, getPos, butterView, node };
@@ -1004,7 +1004,7 @@ export function calloutView(
     view: EditorView,
     getPos: () => number | undefined,
   ): NodeView => {
-    const dom = activeDocument.createElement("div");
+    const dom = activeWindow.createDiv();
     // Add Obsidian's native callout classes + data attrs alongside
     // our own. Theme CSS targeting `.callout[data-callout="note"]`
     // (Minimal / AnuPpuccin / Catppuccin / etc.) cascades through,
@@ -1019,11 +1019,11 @@ export function calloutView(
       dom.setAttribute("data-callout-fold", attrStr(node, "foldState"));
     }
 
-    const header = activeDocument.createElement("div");
+    const header = activeWindow.createDiv();
     header.className = "butter-callout-header callout-title";
     header.contentEditable = "false";
 
-    const icon = activeDocument.createElement("span");
+    const icon = activeWindow.createSpan();
     icon.className = "butter-callout-icon callout-icon";
     setIcon(icon, calloutIcon(attrStr(node, "calloutType")));
     header.appendChild(icon);
@@ -1041,7 +1041,7 @@ export function calloutView(
     // NodeView's `stopEvent` (below) blocks events from bubbling
     // into PM. `ignoreMutation` keeps PM from reacting to our DOM
     // text changes as if they were editor-content edits.
-    const label = activeDocument.createElement("span");
+    const label = activeWindow.createSpan();
     label.className = "butter-callout-title callout-title-inner";
     label.contentEditable = "true";
     label.spellcheck = false;
@@ -1177,7 +1177,7 @@ export function calloutView(
 
     // Editable content lives in contentDOM; PM fills this with the
     // callout's child blocks (paragraphs, lists, code, etc.).
-    const contentDOM = activeDocument.createElement("div");
+    const contentDOM = activeWindow.createDiv();
     contentDOM.className = "butter-callout-content callout-content";
     dom.appendChild(contentDOM);
 
@@ -1226,7 +1226,7 @@ export function calloutView(
       // into PM's event-handling pipeline. The header is non-PM
       // chrome; the title is a node attribute, not PM content.
       stopEvent(event: Event) {
-        return header.contains(event.target as Node);
+        return header.contains(event.target as Node | null);
       },
       ignoreMutation(m) {
         const target = m.target as Node | null | undefined;
@@ -1249,9 +1249,9 @@ export function mathBlockView(
     view: EditorView,
     getPos: () => number | undefined,
   ): NodeView => {
-    const dom = activeDocument.createElement("div");
+    const dom = activeWindow.createDiv();
     dom.classList.add("butter-math-block-view");
-    const mount = activeDocument.createElement("div");
+    const mount = activeWindow.createDiv();
     mount.classList.add("obsidian-render-mount");
     if (butterView) {
       (mount as WidgetInfoHost).__butterWidgetInfo = { view, getPos, butterView, node };
@@ -1319,9 +1319,9 @@ export function inlineMathView(
     view: EditorView,
     getPos: () => number | undefined,
   ): NodeView => {
-    const dom = activeDocument.createElement("span");
+    const dom = activeWindow.createSpan();
     dom.classList.add("butter-inline-math-view");
-    const mount = activeDocument.createElement("span");
+    const mount = activeWindow.createSpan();
     mount.classList.add("obsidian-render-mount");
     if (butterView) {
       (mount as WidgetInfoHost).__butterWidgetInfo = { view, getPos, butterView, node };
@@ -1364,7 +1364,7 @@ export function wikilinkView(app: App, getSourcePath: () => string) {
   return (node: PMNode): NodeView => {
     const target = attrStr(node, "target");
     const alias = attrStr(node, "alias");
-    const dom = activeDocument.createElement("a");
+    const dom = activeWindow.createEl("a");
     dom.classList.add("butter-wikilink", "internal-link");
     dom.contentEditable = "false";
     dom.textContent = alias || target;
@@ -1402,7 +1402,7 @@ export function wikilinkView(app: App, getSourcePath: () => string) {
 export function tagView(app: App) {
   return (node: PMNode): NodeView => {
     const tag = attrStr(node, "tag");
-    const dom = activeDocument.createElement("a");
+    const dom = activeWindow.createEl("a");
     dom.classList.add("butter-tag", "tag");
     dom.contentEditable = "false";
     dom.textContent = `#${tag}`;
@@ -1425,7 +1425,7 @@ export function tagView(app: App) {
 
 export function blockCommentView() {
   return (node: PMNode): NodeView => {
-    const dom = activeDocument.createElement("div");
+    const dom = activeWindow.createDiv();
     dom.classList.add("butter-block-comment-view");
     dom.textContent = `%%${node.attrs.value ?? ""}%%`;
     return { dom };
@@ -1440,24 +1440,24 @@ export function blockCommentView() {
  */
 export function rawBlockView() {
   return (node: PMNode): NodeView => {
-    const dom = activeDocument.createElement("div");
+    const dom = activeWindow.createDiv();
     dom.classList.add("butter-raw-block-view");
 
-    const banner = activeDocument.createElement("div");
+    const banner = activeWindow.createDiv();
     banner.classList.add("butter-raw-block-banner");
     banner.setAttribute("contenteditable", "false");
-    const icon = activeDocument.createElement("span");
+    const icon = activeWindow.createSpan();
     icon.classList.add("butter-raw-block-icon");
     icon.textContent = "\u26A0"; // ⚠ warning sign
     banner.appendChild(icon);
-    const msg = activeDocument.createElement("span");
+    const msg = activeWindow.createSpan();
     msg.classList.add("butter-raw-block-msg");
     const reason = attrStr(node, "reason") || "unparseable region";
     msg.textContent = `Unparseable: ${reason} - source preserved byte-for-byte.`;
     banner.appendChild(msg);
     dom.appendChild(banner);
 
-    const pre = activeDocument.createElement("pre");
+    const pre = activeWindow.createEl("pre");
     pre.classList.add("butter-raw-block-content");
     pre.setAttribute("contenteditable", "false");
     pre.textContent = attrStr(node, "raw") || "";
@@ -1471,12 +1471,12 @@ export function rawBlockView() {
 
 export function inlineFootnoteView() {
   return (node: PMNode): NodeView => {
-    const dom = activeDocument.createElement("sup");
+    const dom = activeWindow.createEl("sup");
     dom.classList.add("butter-footnote-ref");
     dom.setAttribute("data-footnote-inline", "");
     dom.title = attrStr(node, "content");
 
-    const link = activeDocument.createElement("a");
+    const link = activeWindow.createEl("a");
     link.classList.add("footnote-link");
     link.textContent = "*";
     link.href = "#";
@@ -1491,11 +1491,11 @@ export function inlineFootnoteView() {
 
 export function footnoteRefView() {
   return (node: PMNode): NodeView => {
-    const dom = activeDocument.createElement("sup");
+    const dom = activeWindow.createEl("sup");
     dom.classList.add("butter-footnote-ref");
     dom.setAttribute("data-footnote-id", attrStr(node, "label"));
 
-    const link = activeDocument.createElement("a");
+    const link = activeWindow.createEl("a");
     link.classList.add("footnote-link");
     link.textContent = attrStr(node, "label");
     link.href = "#";
@@ -1514,18 +1514,18 @@ export function footnoteDefView(
   manager: NodeViewManager,
 ) {
   return (node: PMNode): NodeView => {
-    const dom = activeDocument.createElement("div");
+    const dom = activeWindow.createDiv();
     dom.classList.add("butter-footnote-def-view");
     dom.setAttribute("data-footnote-label", attrStr(node, "label"));
 
     // Back-reference label
-    const labelEl = activeDocument.createElement("sup");
+    const labelEl = activeWindow.createEl("sup");
     labelEl.classList.add("butter-footnote-label");
     labelEl.textContent = attrStr(node, "label");
     dom.appendChild(labelEl);
 
     // Content - render via MarkdownRenderer (but as plain paragraph, not as footnote def syntax)
-    const mount = activeDocument.createElement("span");
+    const mount = activeWindow.createSpan();
     mount.classList.add("butter-footnote-content");
     dom.appendChild(mount);
 
@@ -1546,7 +1546,7 @@ export function footnoteDefView(
 
 export function blockIdView() {
   return (node: PMNode): NodeView => {
-    const dom = activeDocument.createElement("span");
+    const dom = activeWindow.createSpan();
     dom.classList.add("butter-block-id-view");
     dom.textContent = `^${attrStr(node, "id")}`;
     return { dom, stopEvent: () => true };

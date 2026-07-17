@@ -23,13 +23,13 @@ import {
 import type ButterEditorPlugin from "../main";
 import { LicenseClientError } from "../integration/license/client";
 import type { DeviceWireRecord } from "../integration/license/client";
-import type { ButterSettings, ToolbarLayoutItem } from "../main";
+import type { ToolbarLayoutItem } from "../main";
 import { tx, tv } from "../i18n";
 
 
 import { renderLicense, computeLicensePhase, renderRowsFor, renderUnlicensedRows, renderPollingRows, renderTrialRows, renderLifetimeRows, renderDeactivatedRows, renderInvalidatedRows, reasonCopyFor, renderExpiredRows, renderUnknownRows, trialHeadlineFor, trialStatLineFor, formatActivationDate, formatRelativeTime, renderKeyRow, renderPasteKeyRow, renderRecoveryRow, renderDevicesSection, renderDeviceListSkeleton, renderDeviceRow, renderCurrentDeviceFallback, renderDeviceUtilities, renderSupportSection, computeRemaining, scheduleTrialPoll, friendlyError } from "./settings/license-tab";
 import { renderGeneral, renderGeneralIntroSections, renderBehavior, renderAdvanced, renderStartTrialCardIfApplicable } from "./settings/general-tab";
-import { TRIAL_LENGTH_DAYS } from "../integration/license/policy";
+import { MAX_DEVICES_PER_CUSTOMER, TRIAL_LENGTH_DAYS } from "../integration/license/policy";
 import { renderToolbar, renderLayoutSection, renderPresetColorsSection, createSettingGroup, renderPrimaryToolbarSection, renderTableToolbarSection, renderLayoutEditor, openMoveToSubmenuMenu, openSubmenuEditModal, wireDrag } from "./settings/toolbar-tab";
 import { renderOutlineSection } from "./settings/outline-tab";
 import { renderDragSection } from "./settings/drag-tab";
@@ -348,9 +348,10 @@ export class ButterSettingTab extends PluginSettingTab {
     // there's at least one device - "1 device" doubles as the hint
     // that you can add more.
     const count = devices.length;
+    const limit = this.plugin.settings.deviceLimit || MAX_DEVICES_PER_CUSTOMER;
     const summary = count === 1
-      ? "1 device · paste your key on another machine to add it here."
-      : `${count} devices on this license.`;
+      ? `1 of ${limit} devices · paste your key on another machine to add it here.`
+      : `${count} of ${limit} devices on this license.`;
     listEl.createDiv({ cls: "butter-license-devices-hint", text: summary });
   }
 
@@ -396,7 +397,11 @@ export class ButterSettingTab extends PluginSettingTab {
     this.plugin.settings.licenseKey = "";
     this.plugin.settings.customerId = "";
     this.plugin.settings.customerEmail = "";
+    this.plugin.settings.licenseType = "";
+    this.plugin.settings.licenseStartedAt = 0;
     this.plugin.settings.licenseExpiresAt = 0;
+    this.plugin.settings.trialLengthDays = TRIAL_LENGTH_DAYS;
+    this.plugin.settings.deviceLimit = MAX_DEVICES_PER_CUSTOMER;
     this.plugin.settings.activatedAt = 0;
     this.plugin.settings.wasDeactivated = false;
     this.plugin.settings.wasInvalidated = false;
@@ -441,51 +446,6 @@ export class ButterSettingTab extends PluginSettingTab {
 
 
 
-  /** Apply a fake license-settings shape and re-render. Starts from
-   *  a fully-cleared base so partial patches don't leave stale fields
-   *  (e.g. forcing Polling shouldn't leave a stale licenseKey). The
-   *  deviceId is preserved across forces - only the explicit Reset
-   *  action regenerates it. */
-  public async forceLicenseState(state: {
-    licenseKey?: string;
-    sessionToken?: string;
-    sessionExpiresAt?: number;
-    customerId?: string;
-    customerEmail?: string;
-    tier?: "v1" | "v2";
-    everValidated?: boolean;
-    lastValidatedAt?: number;
-    licenseExpiresAt?: number;
-    pendingTrialActivation?: ButterSettings["pendingTrialActivation"];
-    activatedAt?: number;
-    wasDeactivated?: boolean;
-    wasInvalidated?: boolean;
-    lastReason?: string;
-  }, saveToDisk = true) {
-    this.plugin.settings.licenseKey = "";
-    this.plugin.settings.sessionToken = "";
-    this.plugin.settings.sessionExpiresAt = 0;
-    this.plugin.settings.customerId = "";
-    this.plugin.settings.customerEmail = "";
-    this.plugin.settings.tier = "v1";
-    this.plugin.settings.everValidated = false;
-    this.plugin.settings.lastValidatedAt = 0;
-    this.plugin.settings.licenseExpiresAt = 0;
-    this.plugin.settings.pendingTrialActivation = null;
-    this.plugin.settings.activatedAt = 0;
-    this.plugin.settings.wasDeactivated = false;
-    this.plugin.settings.wasInvalidated = false;
-    this.plugin.settings.lastReason = "";
-    Object.assign(this.plugin.settings, state);
-    if (saveToDisk) {
-      await this.plugin.saveSettings();
-    }
-    await this.plugin.refreshLicenseStatus();
-    (this as unknown as { display: () => void }).display();
-  }
-
-
-
   // ── Inline trial activation (replaces TrialPollingModal) ────
 
   /** Tap-to-trial: hits `/trial/instant` and keeps the License section
@@ -512,7 +472,9 @@ export class ButterSettingTab extends PluginSettingTab {
       this.plugin.settings.activatedAt = Date.now();
       await this.plugin.saveSettings();
       await this.plugin.refreshLicenseStatus();
-      new Notice(tv("Trial activated! You have {days} days of full access.", { days: TRIAL_LENGTH_DAYS }), 5000);
+      new Notice(tv("Trial activated! You have {days} days of full access.", {
+        days: this.plugin.settings.trialLengthDays || TRIAL_LENGTH_DAYS,
+      }), 5000);
       import("canvas-confetti").then((module) => {
         const confetti = module.default || module;
         void confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
@@ -626,27 +588,23 @@ export class ButterSettingTab extends PluginSettingTab {
   ): Promise<void> {
     if (errorEl) errorEl.addClass("butter-hidden");
     try {
-      const session = await this.plugin.licenseClient.validateAndIssueSession(
+      let session = await this.plugin.licenseClient.validateAndIssueSession(
         licenseKey,
         this.plugin.settings.deviceId,
+        "activate",
       );
-      this.plugin.settings.licenseKey = licenseKey;
-      this.plugin.settings.sessionToken = session.sessionToken;
-      this.plugin.settings.sessionExpiresAt = Date.parse(session.expiresAt);
-      this.plugin.settings.lastValidatedAt = Date.now();
-      if (session.customerId) this.plugin.settings.customerId = session.customerId;
-      if (session.email) this.plugin.settings.customerEmail = session.email;
-      if (session.tier) this.plugin.settings.tier = session.tier;
-      this.plugin.settings.everValidated = true;
-      if (!this.plugin.settings.activatedAt) {
-        this.plugin.settings.activatedAt = Date.now();
+      let validatedKey = licenseKey;
+      if (session.upgrade) {
+        validatedKey = session.upgrade.licenseKey;
+        this.plugin.settings.customerId = session.upgrade.customerId;
+        session = await this.plugin.licenseClient.validateAndIssueSession(
+          validatedKey,
+          this.plugin.settings.deviceId,
+          "activate",
+        );
       }
-      // Fresh activation clears any sticky failure flags from a
-      // prior state so the License tab doesn't briefly show
-      // "deactivated"/"invalidated" between save + re-render.
-      this.plugin.settings.wasDeactivated = false;
-      this.plugin.settings.wasInvalidated = false;
-      this.plugin.settings.lastReason = "";
+      if (session.upgrade) throw new Error("unexpected repeated license upgrade");
+      this.plugin.applyLicenseSession(session, validatedKey);
       await this.plugin.saveSettings();
       await this.plugin.refreshLicenseStatus();
       (this as unknown as { display: () => void }).display();
@@ -1025,7 +983,7 @@ export class SubmenuEditModal extends Modal {
     // so plugin-registered custom icons (including Butter's own
     // `butter-delete-row` etc.) show up alongside Lucide.
     const iconWrap = contentEl.createDiv({ cls: "butter-icon-picker" });
-    iconWrap.createEl("div", {
+    iconWrap.createDiv({
       cls: "butter-icon-picker-label",
       text: tx("Icon"),
     });
@@ -1075,13 +1033,13 @@ export class SubmenuEditModal extends Modal {
         });
       }
       if (matches.length > cap) {
-        grid.createEl("div", {
+        grid.createDiv({
           cls: "butter-icon-picker-overflow",
           text: tv("Showing first {shown} of {total} matches - refine your search.", { shown: cap, total: matches.length }),
         });
       }
       if (matches.length === 0) {
-        grid.createEl("div", {
+        grid.createDiv({
           cls: "butter-icon-picker-empty",
           text: tx("No icons match."),
         });

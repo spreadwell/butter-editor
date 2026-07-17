@@ -174,7 +174,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
     // Discoverability: palette commands for one-shot cleanup that
     // apply regardless of the global toggles above.
     const commandNote = normSection.createDiv({ cls: "setting-item-description" });
-    commandNote.createEl("div", {
+    commandNote.createDiv({
       text:
         tx("Three commands (find them in the command palette) clean files on demand. 'tidy whitespace' applies the cleanup options above. 'rewrite current note' reformats the whole note with your marker choices. 'rewrite entire vault' does the same across all notes (back up with Git first)."),
     });

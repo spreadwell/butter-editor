@@ -289,7 +289,9 @@ export class WelcomeModal extends Modal {
         panel,
         "circle-check",
         tx("Free trial active"),
-        tv("Your {days}-day free trial is currently active. You're all set.", { days: TRIAL_LENGTH_DAYS }),
+        tv("Your {days}-day free trial is currently active. You're all set.", {
+          days: this.plugin.settings.trialLengthDays || TRIAL_LENGTH_DAYS,
+        }),
       );
       return;
     }

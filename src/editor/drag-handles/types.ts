@@ -32,6 +32,11 @@ export interface DragHandlesConfig {
   chromeBottom?: () => number;
 }
 
+export interface DragStyleSheet {
+  replaceSync(css: string): void;
+  remove(): void;
+}
+
 /** Motion curves per dragMotion setting. Drag engine sets these as
  *  CSS vars on body when a drag starts, so the reflow + drop-filler
  *  transitions (in styles.css) pick up whichever curve the user
@@ -196,7 +201,7 @@ export interface LiveDragState {
    *  the cascade direction (down vs up) for the trigger. */
   prevPointerY: number;
   startScrollTop: number;
-  styleEl: HTMLStyleElement;
+  styleSheet: DragStyleSheet;
   /** Top "gap zone" of the first dragged block — sum of its
    *  computed `margin-top` and `padding-top`. The drop filler trims
    *  this off the top so the placeholder represents the visible

@@ -38,7 +38,7 @@ export class ErrorLogModal extends Modal {
     for (let i = this.entries.length - 1; i >= 0; i--) {
       const e = this.entries[i];
       const row = list.createDiv({ cls: "butter-error-log-entry" });
-      const meta = row.createEl("div", {
+      const meta = row.createDiv({
         cls: "butter-error-log-meta",
       });
       const ts = new Date(e.timestamp);

@@ -18,8 +18,26 @@ import {
   parseInstantTrialResponse,
   type InstantTrialResponse,
 } from "./trial-response";
+import {
+  LICENSE_PROTOCOL_HEADER,
+  LICENSE_PROTOCOL_VERSION,
+  parseSessionResponse,
+  type ActivationIntent,
+  type SessionResponse,
+} from "./session-contract";
+import {
+  classifyLicenseError,
+  type LicenseClientErrorKind,
+  type WorkerErrorBody,
+} from "./errors";
 
 export type { InstantTrialResponse } from "./trial-response";
+export type {
+  ActivationIntent,
+  LicenseType,
+  SessionResponse,
+} from "./session-contract";
+export type { LicenseClientErrorKind } from "./errors";
 
 export const WORKER_BASE = "https://api.buttereditor.com";
 
@@ -35,23 +53,14 @@ function detectPlatform(): string {
   return "unknown";
 }
 
-/** Hard cap on each Worker call. The Worker itself has 8s timeouts on
- * its upstream Polar/Resend calls, so 10s leaves a small margin. */
+/** Hard cap on each Worker call. The Worker itself has bounded provider
+ * calls, so 10s leaves a small margin. */
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface TrialPollResponse {
   status: "pending" | "ready";
   licenseKey?: string;
   expiresAt?: string;
-}
-
-export interface SessionResponse {
-  sessionToken: string;
-  expiresAt: string;
-  customerId?: string;
-  email?: string;
-  tier?: "v1" | "v2";
-  upgrade?: { licenseKey: string; customerId: string };
 }
 
 /** Per-device payload returned by `GET /devices`. */
@@ -71,19 +80,6 @@ export interface DevicesListResponse {
   devices: DeviceWireRecord[];
 }
 
-export type LicenseClientErrorKind =
-  | "network"             // request timed out, DNS failed, etc.
-  | "rate_limited"        // 429 from Worker
-  | "license_invalid"     // 403 from /session - key revoked or never existed
-  | "device_deactivated"  // 403 from /session or /devices - this device was deactivated
-  | "device_cap"          // 403 from /session or /trial/poll - customer at the 5-device cap and this is a new device
-  | "unauthorized"        // 401 - missing/expired session token
-  | "trial_used"          // 409 from /trial - email or device already used
-  | "invalid_input"       // 400 - caller bug or malformed input
-  | "invalid_token"       // 410 - magic-link or trial-poll token expired/used
-  | "polar_error"         // 502 - Worker reached but Polar upstream failed
-  | "unknown";            // 5xx other than 502, or unexpected shape
-
 export class LicenseClientError extends Error {
   constructor(
     public kind: LicenseClientErrorKind,
@@ -94,25 +90,6 @@ export class LicenseClientError extends Error {
     super(message);
     this.name = "LicenseClientError";
   }
-}
-
-interface WorkerErrorBody {
-  error?: string;
-  code?: string;
-}
-
-function classifyError(status: number, body: WorkerErrorBody | null): LicenseClientErrorKind {
-  if (status === 0) return "network";
-  if (status === 429) return "rate_limited";
-  if (status === 401) return "unauthorized";
-  if (status === 409 && body?.code === "trial_used") return "trial_used";
-  if (status === 403 && body?.code === "device_deactivated") return "device_deactivated";
-  if (status === 403 && body?.code === "device_cap") return "device_cap";
-  if (status === 403 && body?.code === "license_invalid") return "license_invalid";
-  if (status === 400) return "invalid_input";
-  if (status === 410) return "invalid_token";
-  if (status === 502) return "polar_error";
-  return "unknown";
 }
 
 /** Wrap a promise in a timeout. Resolves to a sentinel `null` if the
@@ -144,6 +121,7 @@ async function call(
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "accept": "application/json",
+    [LICENSE_PROTOCOL_HEADER]: LICENSE_PROTOCOL_VERSION,
   };
   if (_pluginVersion) headers["x-butter-version"] = _pluginVersion;
   if (init.bearer) headers.authorization = `Bearer ${init.bearer}`;
@@ -179,7 +157,7 @@ function expectOk<T>(path: string, res: RawResponse): T {
   }
   const errBody = (res.body as WorkerErrorBody | null) ?? null;
   throw new LicenseClientError(
-    classifyError(res.status, errBody),
+    classifyLicenseError(res.status, errBody),
     res.status,
     errBody?.error ?? `Worker call to ${path} failed (${res.status})`,
     errBody,
@@ -219,7 +197,7 @@ export class LicenseClient {
 
   /**
    * Poll for trial-key issuance. Returns `{status: "pending"}` until
-   * the customer completes Polar's hosted checkout, then
+   * the legacy hosted checkout completes, then
    * `{status: "ready", licenseKey, expiresAt}`.
    *
    * Token is HMAC-signed by the Worker (2-hour TTL). Polling cadence
@@ -234,7 +212,7 @@ export class LicenseClient {
   }
 
   /**
-   * Validate a license key against Polar and mint a 7-day signed
+   * Validate a license key against the licensing service and mint a signed
    * session token. Plugin caches the token in `data.json` and
    * re-validates on a daily cadence (with indefinite offline grace).
    *
@@ -244,19 +222,34 @@ export class LicenseClient {
   async validateAndIssueSession(
     licenseKey: string,
     deviceId: string,
+    activationIntent: ActivationIntent = "refresh",
   ): Promise<SessionResponse> {
     const res = await call("/session", {
       method: "POST",
-      body: { licenseKey, deviceId, platform: detectPlatform() },
+      body: {
+        licenseKey,
+        deviceId,
+        platform: detectPlatform(),
+        activationIntent,
+      },
     });
-    return expectOk<SessionResponse>("/session", res);
+    const body = expectOk<unknown>("/session", res);
+    const session = parseSessionResponse(body);
+    if (!session) {
+      throw new LicenseClientError(
+        "unknown",
+        res.status,
+        "Worker returned an invalid session response",
+      );
+    }
+    return session;
   }
 
   /**
    * Request a magic-link recovery email. The Worker always returns
    * `{ok: true}` regardless of whether the email is on file - that's
    * intentional (no email enumeration). The actual send only happens
-   * when a Polar customer matches.
+   * when a licensing account matches.
    *
    * Resolves on success or no-customer; throws only on network / rate
    * limit / Worker errors.

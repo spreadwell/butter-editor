@@ -342,7 +342,7 @@ const HANDLE_GUTTER = 30;
 const DWELL_MS = 115;
 
 function mountClickToSpawnView(editorView: EditorView): { update(): void; destroy(): void } {
-  const hint = activeDocument.createElement("div");
+  const hint = activeWindow.createDiv();
   hint.className = "butter-spawn-hint";
   hint.setAttribute("aria-hidden", "true");
   activeDocument.body.appendChild(hint);

@@ -512,7 +512,7 @@ export function buildInputRules(
 
   // ── Flat-list input rules ──
   //
-  // PMX 0.18.37+ flat schema: typing `- `, `* `, `1. ` at the start of
+  // Butter's flat schema: typing `- `, `* `, `1. ` at the start of
   // a paragraph CONVERTS that paragraph into a `list_item` with the
   // appropriate `kind`/`start` attrs. No `bullet_list`/`ordered_list`
   // wrapper. Subsequent items typed below become flat siblings; their

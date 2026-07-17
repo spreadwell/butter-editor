@@ -87,7 +87,7 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
 
   // ── Lists ───────────────────────────────────────────────────
-  // Flat-list schema (PMX 0.18.37+): each entry inserts ONE
+  // In Butter's flat-list schema, each entry inserts one
   // list_item with the appropriate `kind`. Visual list emergence
   // happens automatically when subsequent items are typed below.
   {
@@ -431,7 +431,7 @@ class SlashMenuPopover {
     private triggerPos: number,
     private onDismiss: () => void,
   ) {
-    this.dom = activeDocument.createElement("div");
+    this.dom = activeWindow.createDiv();
     this.dom.className =
       "butter-surface butter-surface--command butter-slash-menu";
     // ARIA listbox pattern. Editor focus stays in the document so

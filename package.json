@@ -1,6 +1,6 @@
 {
   "name": "butter-editor",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Butter Editor — WYSIWYG editing mode for Obsidian (ProseMirror + markdown-it, custom bridge)",
   "main": "main.js",
   "license": "UNLICENSED",
@@ -13,7 +13,6 @@
     "canvas-confetti": "^1.9.4",
     "markdown-it": "^14.2.0",
     "nanoid": "^5.1.11",
-    "prosemirror-collab": "^1.3.1",
     "prosemirror-commands": "^1.6.2",
     "prosemirror-dropcursor": "^1.8.1",
     "prosemirror-gapcursor": "^1.3.2",
@@ -21,7 +20,6 @@
     "prosemirror-inputrules": "^1.4.0",
     "prosemirror-keymap": "^1.2.2",
     "prosemirror-model": "^1.24.1",
-    "prosemirror-schema-list": "^1.5.0",
     "prosemirror-state": "^1.4.3",
     "prosemirror-tables": "^1.6.1",
     "prosemirror-transform": "^1.12.0",
@@ -31,13 +29,7 @@
     "@types/canvas-confetti": "^1.9.0",
     "@types/markdown-it": "^14.1.2",
     "esbuild": "^0.27.1",
-    "eslint": "^10.4.0",
-    "eslint-plugin-obsidianmd": "^0.3.0",
-    "linkedom": "^0.18.12",
-    "obsidian": "latest",
-    "postcss": "^8.5.15",
-    "postcss-selector-parser": "^7.1.1",
-    "typescript": "^5.0.0",
-    "typescript-eslint": "^8.59.4"
+    "obsidian": "1.13.1",
+    "typescript": "^5.0.0"
   }
 }

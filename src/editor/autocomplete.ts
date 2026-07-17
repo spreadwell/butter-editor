@@ -98,7 +98,7 @@ export function autocompletePlugin(app: App, schema: Schema) {
   // ── Popover lifecycle ──
 
   function createPopover(newMode: Mode): HTMLDivElement {
-    const el = activeDocument.createElement("div");
+    const el = activeWindow.createDiv();
     el.classList.add(
       "butter-surface",
       "butter-surface--compact",
@@ -183,7 +183,7 @@ export function autocompletePlugin(app: App, schema: Schema) {
     popover.innerHTML = "";
 
     if (items.length === 0) {
-      const empty = activeDocument.createElement("div");
+      const empty = activeWindow.createDiv();
       empty.classList.add("butter-surface-empty");
       empty.textContent = tx("No matches");
       popover.appendChild(empty);
@@ -192,7 +192,7 @@ export function autocompletePlugin(app: App, schema: Schema) {
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      const el = activeDocument.createElement("div");
+      const el = activeWindow.createDiv();
       el.classList.add(
         "butter-surface-row",
         "butter-surface-row--compact",
@@ -204,20 +204,20 @@ export function autocompletePlugin(app: App, schema: Schema) {
       el.toggleClass("is-selected", selected);
       el.setAttribute("aria-selected", selected ? "true" : "false");
 
-      const iconEl = activeDocument.createElement("div");
+      const iconEl = activeWindow.createDiv();
       iconEl.classList.add("butter-surface-icon");
       setIcon(iconEl, itemIcon());
       el.appendChild(iconEl);
 
-      const meta = activeDocument.createElement("div");
+      const meta = activeWindow.createDiv();
       meta.classList.add("butter-surface-meta");
-      const title = activeDocument.createElement("div");
+      const title = activeWindow.createDiv();
       title.classList.add("butter-surface-label");
       title.textContent = itemLabel(item);
       meta.appendChild(title);
       const desc = itemDesc(item);
       if (desc) {
-        const note = activeDocument.createElement("div");
+        const note = activeWindow.createDiv();
         note.classList.add("butter-surface-detail");
         note.textContent = desc;
         meta.appendChild(note);

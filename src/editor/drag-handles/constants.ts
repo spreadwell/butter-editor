@@ -43,12 +43,12 @@ const HANDLE_DOT_POSITIONS: ReadonlyArray<readonly [number, number]> = [
  *  DOM rather than an innerHTML string so it satisfies the Obsidian
  *  plugin-review guideline against writing markup to innerHTML. */
 export function buildHandleDotsSvg(): SVGElement {
-  const svg = activeDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const svg = activeWindow.createSvg("svg");
   svg.setAttribute("class", "butter-drag-handle-svg");
   svg.setAttribute("viewBox", "0 0 6 10");
   svg.setAttribute("aria-hidden", "true");
   for (const [cx, cy] of HANDLE_DOT_POSITIONS) {
-    const dot = activeDocument.createElementNS("http://www.w3.org/2000/svg", "circle");
+    const dot = activeWindow.createSvg("circle");
     dot.setAttribute("cx", String(cx));
     dot.setAttribute("cy", String(cy));
     dot.setAttribute("r", "1");

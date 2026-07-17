@@ -120,7 +120,7 @@ interface UIRefs {
 }
 
 function buildUI(): UIRefs {
-  const root = activeDocument.createElement("div");
+  const root = activeWindow.createDiv();
   root.className = "butter-search-bar";
   root.setAttribute("role", "search");
 

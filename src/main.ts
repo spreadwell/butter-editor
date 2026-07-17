@@ -58,6 +58,17 @@ import { setPresetColorsProvider } from "./ui/toolbar";
 import { installWordCountBridge } from "./ui/wordcount-bridge";
 import { WelcomeModal } from "./ui/welcome-modal";
 import { LicenseClient, LicenseClientError, setPluginVersion } from "./integration/license/client";
+import {
+  DEFAULT_STORED_LICENSE_METADATA,
+  resolveSessionLicenseMetadata,
+  sanitizeStoredLicenseMetadata,
+  type IssuedSessionResponse,
+  type LicenseType,
+} from "./integration/license/session-contract";
+import {
+  canUseCachedLicenseSession,
+  decideLicenseRefreshFailure,
+} from "./integration/license/refresh-policy";
 import { LINKS } from "./integration/license/links";
 import {
   resolveI18nLanguage,
@@ -108,7 +119,7 @@ function swapButterToMarkdown(view: ButterEditorView) {
  *   source  → MarkdownView in Source mode (raw markdown text)
  *   live    → MarkdownView in Live Preview
  *   reading → MarkdownView in Reading view
- *   butter  → ButterEditorView (our PMX view type)
+ *   butter  → ButterEditorView (Butter editing view)
  */
 export type ButterViewMode = "source" | "live" | "reading" | "butter";
 
@@ -384,8 +395,7 @@ export interface ButterSettings {
    *   • detached: body-width floating card with backdrop blur, sits
    *     inside the editor content with sticky positioning. Visually
    *     "above" the document like a HUD.
-   *   • integrated: TBD - merge toolbar controls into the view-header
-   *     row itself for the densest chrome (design pending).
+   *   • integrated: reserve the view-header row for a compact toolbar.
    */
   toolbarStyle: "attached" | "detached" | "integrated";
   /**
@@ -606,8 +616,8 @@ export interface ButterSettings {
    *  string when no license is active. */
   licenseKey: string;
 
-  /** Polar customer ID associated with the license. Set when the
-   *  Worker's /session call returns. Used for the License tab UI. */
+  /** Licensing account ID associated with the license. Legacy sessions
+   *  may still return a Polar customer ID. */
   customerId: string;
 
   /** HMAC-signed session payload returned by /session. Cached so
@@ -624,8 +634,17 @@ export interface ButterSettings {
 
   /** Sticky flag set the first time /session ever succeeded. Enables
    *  indefinite offline grace: a customer who was once licensed never
-   *  gets locked out by Worker / Polar outages. */
+   *  gets locked out by licensing-service or provider outages. */
   everValidated: boolean;
+
+  /** Entitlement kind reported by protocol-v2 `/session`. Empty means
+   *  an older Worker response, in which case key-prefix inference keeps
+   *  existing installs compatible. */
+  licenseType: LicenseType | "";
+
+  /** ms-epoch when the entitlement began. Distinct from `activatedAt`,
+   *  which is when this particular device first activated it. */
+  licenseStartedAt: number;
 
   /** ms-epoch when the active license expires. Captured from
    *  `/trial/poll`'s `expiresAt` on activation; refreshed on every
@@ -633,6 +652,14 @@ export interface ButterSettings {
    *  means unknown - UI falls back to `sessionExpiresAt`. Drives the
    *  trial countdown ("Trial · 6 days left") + the day-progress bar. */
   licenseExpiresAt: number;
+
+  /** Server-reported trial length. Defaults to the public 15-day policy
+   *  for old responses, but supports custom and extended trial grants. */
+  trialLengthDays: number;
+
+  /** Server-reported active-device cap for this entitlement (1-100).
+   *  Defaults to five for old responses and offline display. */
+  deviceLimit: number;
 
   /** In-flight trial activation. Set when `/trial` returns; cleared
    *  when `/trial/poll` returns ready (or invalid_token / 30-min
@@ -657,13 +684,13 @@ export interface ButterSettings {
    *  `lastValidatedAt` when this is 0. */
   activatedAt: number;
 
-  /** Customer's email on the Polar account. Returned by /session
-   *  (Worker 1.8.0+) and cached for display on the Lifetime state's
+  /** Customer's email on the licensing account. Returned by /session
+   *  and cached for display on the Lifetime state's
    *  "Holder" line. Empty when unknown / not yet fetched. */
   customerEmail: string;
 
   /** License tier - `"v1"` for current Butter, `"v2"` once v2
-   *  ships and the customer has a v2 benefit grant on Polar.
+   *  ships and the customer has a corresponding entitlement.
    *  Returned by /session; cached for offline display. Defaults
    *  to `"v1"`. */
   tier: "v1" | "v2";
@@ -786,7 +813,11 @@ const DEFAULT_SETTINGS: ButterSettings = {
   sessionExpiresAt: 0,
   lastValidatedAt: 0,
   everValidated: false,
+  licenseType: DEFAULT_STORED_LICENSE_METADATA.licenseType,
+  licenseStartedAt: DEFAULT_STORED_LICENSE_METADATA.licenseStartedAt,
   licenseExpiresAt: 0,
+  trialLengthDays: DEFAULT_STORED_LICENSE_METADATA.trialLengthDays,
+  deviceLimit: DEFAULT_STORED_LICENSE_METADATA.deviceLimit,
   pendingTrialActivation: null,
   activatedAt: 0,
   customerEmail: "",
@@ -874,6 +905,71 @@ export default class ButterEditorPlugin extends Plugin {
    *  instance directly. Mirror of `settings.sessionExpiresAt`. */
   get sessionExpiresAt(): number {
     return this.settings?.sessionExpiresAt ?? 0;
+  }
+
+  /**
+   * Apply one validated `/session` response to persisted license state.
+   * Every online activation path calls this method so entitlement expiry,
+   * trial length, and device limits cannot drift between refresh, paste-key,
+   * recovery, and automatic trial-to-lifetime upgrade flows.
+   */
+  applyLicenseSession(
+    session: IssuedSessionResponse,
+    licenseKey: string,
+    now = Date.now(),
+  ): void {
+    const keyChanged = this.settings.licenseKey !== licenseKey;
+    const current = keyChanged
+      ? DEFAULT_STORED_LICENSE_METADATA
+      : sanitizeStoredLicenseMetadata({
+          licenseType: this.settings.licenseType,
+          licenseStartedAt: this.settings.licenseStartedAt,
+          licenseExpiresAt: this.settings.licenseExpiresAt,
+          trialLengthDays: this.settings.trialLengthDays,
+          deviceLimit: this.settings.deviceLimit,
+        });
+    const inferredType: LicenseType = this.isTrialKey(licenseKey)
+      ? "trial"
+      : "lifetime";
+    const metadata = resolveSessionLicenseMetadata(
+      current,
+      session,
+      inferredType,
+      now,
+    );
+    if (!metadata) {
+      throw new LicenseClientError(
+        "client_upgrade_required",
+        426,
+        "Trial session did not include a valid entitlement expiry",
+      );
+    }
+    const sessionExpiresAt = Date.parse(session.expiresAt);
+    if (!Number.isFinite(sessionExpiresAt)) {
+      throw new Error("malformed expiresAt from server");
+    }
+
+    this.settings.licenseKey = licenseKey;
+    this.settings.sessionToken = session.sessionToken;
+    this.settings.sessionExpiresAt = sessionExpiresAt;
+    this.settings.lastValidatedAt = now;
+    this.settings.licenseType = metadata.licenseType;
+    this.settings.licenseStartedAt = metadata.licenseStartedAt;
+    this.settings.licenseExpiresAt = metadata.licenseExpiresAt;
+    this.settings.trialLengthDays = metadata.trialLengthDays;
+    this.settings.deviceLimit = metadata.deviceLimit;
+    this.settings.customerId = session.customerId
+      ?? (keyChanged ? "" : this.settings.customerId);
+    this.settings.customerEmail = session.email
+      ?? (keyChanged ? "" : this.settings.customerEmail);
+    this.settings.tier = session.tier
+      ?? (keyChanged ? "v1" : this.settings.tier);
+    this.settings.pendingTrialActivation = null;
+    this.settings.everValidated = true;
+    if (!this.settings.activatedAt) this.settings.activatedAt = now;
+    this.settings.wasDeactivated = false;
+    this.settings.wasInvalidated = false;
+    this.settings.lastReason = "";
   }
 
   /** Open Obsidian Settings to Butter's tab, optionally jumping to a
@@ -1016,6 +1112,10 @@ export default class ButterEditorPlugin extends Plugin {
       }
     } else if (
       !force &&
+      canUseCachedLicenseSession(
+        this.settings.lastReason,
+        this.settings.wasInvalidated,
+      ) &&
       this.deriveLocalLicenseStatus(this.settings.licenseKey, now) !== "expired" &&
       this.settings.sessionToken &&
       this.settings.sessionExpiresAt > now + ONE_DAY_MS
@@ -1027,12 +1127,20 @@ export default class ButterEditorPlugin extends Plugin {
         const session = await this.licenseClient.validateAndIssueSession(
           this.settings.licenseKey,
           this.settings.deviceId,
+          "refresh",
         );
         // Auto-upgrade: trial device purchased a paid license
         if (session.upgrade) {
           this.settings.licenseKey = session.upgrade.licenseKey;
           this.settings.customerId = session.upgrade.customerId;
           this.settings.customerEmail = "";
+          this.settings.sessionToken = "";
+          this.settings.sessionExpiresAt = 0;
+          this.settings.licenseType = "";
+          this.settings.licenseStartedAt = 0;
+          this.settings.licenseExpiresAt = 0;
+          this.settings.trialLengthDays = DEFAULT_STORED_LICENSE_METADATA.trialLengthDays;
+          this.settings.deviceLimit = DEFAULT_STORED_LICENSE_METADATA.deviceLimit;
           this.settings.pendingTrialActivation = null;
           await this.saveSettings();
           new Notice(tx("Your license has been upgraded!"), 5000);
@@ -1041,37 +1149,12 @@ export default class ButterEditorPlugin extends Plugin {
           }).catch(() => {});
           return this._refreshLicenseStatusInner(true);
         }
-        this.settings.sessionToken = session.sessionToken;
-        const parsedExpiry = Date.parse(session.expiresAt);
-        if (Number.isNaN(parsedExpiry)) throw new Error("malformed expiresAt from server");
-        this.settings.sessionExpiresAt = parsedExpiry;
-        this.settings.lastValidatedAt = now;
-        if (session.customerId) this.settings.customerId = session.customerId;
-        if (session.email) this.settings.customerEmail = session.email;
-        if (session.tier) this.settings.tier = session.tier;
-        this.settings.everValidated = true;
-        if (!this.settings.activatedAt) this.settings.activatedAt = now;
-        // Successful validation clears any sticky failure flags from a
-        // prior session - the user has demonstrably come back.
-        this.settings.wasDeactivated = false;
-        this.settings.wasInvalidated = false;
-        this.settings.lastReason = "";
+        this.applyLicenseSession(session, this.settings.licenseKey, now);
         await this.saveSettings();
         this.licenseStatus = this.deriveLocalLicenseStatus(this.settings.licenseKey, now);
       } catch (err) {
         const kind = err instanceof LicenseClientError ? err.kind : "unknown";
-        if (err instanceof LicenseClientError && err.kind === "license_invalid") {
-          // Distinguish refund/chargeback/revoked (customer was once
-          // valid → wasInvalidated) from a natural trial expiry
-          // (just expired). Both clear the in-flight session.
-          this.settings.lastReason = kind;
-          const isTrial = this.isTrialKey(this.settings.licenseKey);
-          if (this.settings.everValidated && !isTrial) {
-            this.settings.wasInvalidated = true;
-            await this.saveSettings();
-          }
-          this.licenseStatus = "expired";
-        } else if (err instanceof LicenseClientError && err.kind === "device_deactivated") {
+        if (err instanceof LicenseClientError && err.kind === "device_deactivated") {
           // Device was deactivated remotely (from another device on
           // the same license). Preserve a sticky `wasDeactivated`
           // flag + last reason BEFORE we clear the rest of the
@@ -1085,17 +1168,53 @@ export default class ButterEditorPlugin extends Plugin {
           this.settings.lastValidatedAt = 0;
           this.settings.licenseKey = "";
           this.settings.customerId = "";
+          this.settings.customerEmail = "";
+          this.settings.licenseType = "";
+          this.settings.licenseStartedAt = 0;
           this.settings.licenseExpiresAt = 0;
+          this.settings.trialLengthDays = DEFAULT_STORED_LICENSE_METADATA.trialLengthDays;
+          this.settings.deviceLimit = DEFAULT_STORED_LICENSE_METADATA.deviceLimit;
           this.settings.activatedAt = 0;
           await this.saveSettings();
           this.licenseStatus = "unlicensed";
         } else {
-          // network / polar_error / unknown - apply offline grace if
-          // the customer was ever validated; otherwise hold "unknown"
-          // (treated as unlicensed by the editor gate but distinct in
-          // the settings UI so we can show "Couldn't check, retrying…"
-          // instead of "License required").
-          this.licenseStatus = this.settings.everValidated ? this.deriveLocalLicenseStatus(this.settings.licenseKey) : "unknown";
+          const decision = decideLicenseRefreshFailure({
+            kind,
+            persistedLastReason: this.settings.lastReason,
+            wasInvalidated: this.settings.wasInvalidated,
+            everValidated: this.settings.everValidated,
+            localStatus: this.deriveLocalLicenseStatus(
+              this.settings.licenseKey,
+              now,
+            ),
+          });
+          let shouldSave = decision.persist;
+          if (this.settings.lastReason !== decision.lastReason) {
+            this.settings.lastReason = decision.lastReason;
+            shouldSave = true;
+          }
+          if (
+            decision.clearCachedSession
+            && (this.settings.sessionToken || this.settings.sessionExpiresAt)
+          ) {
+            this.settings.sessionToken = "";
+            this.settings.sessionExpiresAt = 0;
+            shouldSave = true;
+          }
+          if (kind === "license_invalid") {
+            const isTrial = this.settings.licenseType === "trial"
+              || (!this.settings.licenseType && this.isTrialKey(this.settings.licenseKey));
+            if (
+              this.settings.everValidated
+              && !isTrial
+              && !this.settings.wasInvalidated
+            ) {
+              this.settings.wasInvalidated = true;
+              shouldSave = true;
+            }
+          }
+          if (shouldSave) await this.saveSettings();
+          this.licenseStatus = decision.status;
         }
       }
     }
@@ -1122,7 +1241,9 @@ export default class ButterEditorPlugin extends Plugin {
   }
 
   private deriveLocalLicenseStatus(key: string, now = Date.now()): "valid" | "trial" | "expired" {
-    if (!this.isTrialKey(key)) return "valid";
+    const isTrial = this.settings.licenseType === "trial"
+      || (!this.settings.licenseType && this.isTrialKey(key));
+    if (!isTrial) return "valid";
     const expiresAt = this.settings.licenseExpiresAt || 0;
     if (expiresAt > 0 && expiresAt <= now) return "expired";
     return "trial";
@@ -1215,10 +1336,10 @@ export default class ButterEditorPlugin extends Plugin {
    *
    * Trust model: the user already proved they control the email by
    * being able to click the link from inside their inbox. The plugin
-   * still validates the key against Polar via /session before
+   * still validates the key against the licensing service via /session before
    * unlocking - no blind trust. So an attacker who somehow forged a
    * deep-link (URL phishing) can't unlock anything because /session
-   * would reject a key that isn't on Polar's records.
+   * would reject a key that isn't in the authoritative licensing records.
    *
    * UX: silently auto-fills + validates. On success: opens settings
    * to the License tab + toast. On failure: opens to the License tab so
@@ -1233,18 +1354,26 @@ export default class ButterEditorPlugin extends Plugin {
       return;
     }
     // Email is informational only; we don't enforce it here. The
-    // Worker checks the key against Polar's records.
+    // Worker checks the key against the authoritative licensing records.
     try {
       const session = await this.licenseClient.validateAndIssueSession(
         key,
         this.settings.deviceId,
+        "activate",
       );
-      this.settings.licenseKey = key;
-      this.settings.sessionToken = session.sessionToken;
-      this.settings.sessionExpiresAt = Date.parse(session.expiresAt);
-      this.settings.lastValidatedAt = Date.now();
-      if (session.customerId) this.settings.customerId = session.customerId;
-      this.settings.everValidated = true;
+      let validatedKey = key;
+      let issuedSession = session;
+      if (issuedSession.upgrade) {
+        validatedKey = issuedSession.upgrade.licenseKey;
+        this.settings.customerId = issuedSession.upgrade.customerId;
+        issuedSession = await this.licenseClient.validateAndIssueSession(
+          validatedKey,
+          this.settings.deviceId,
+          "activate",
+        );
+      }
+      if (issuedSession.upgrade) throw new Error("unexpected repeated license upgrade");
+      this.applyLicenseSession(issuedSession, validatedKey);
       await this.saveSettings();
       await this.refreshLicenseStatus();
       this.openSettings("license");
@@ -1252,7 +1381,9 @@ export default class ButterEditorPlugin extends Plugin {
     } catch (err) {
       const msg = err instanceof LicenseClientError && err.kind === "license_invalid"
         ? tx("Recovery link's key is not valid (revoked, expired, or unrecognized).")
-        : tx("Couldn't validate the recovered license. Try again from Settings > License.");
+        : err instanceof LicenseClientError && err.kind === "client_upgrade_required"
+          ? tx("Update Butter Editor to continue using this license.")
+          : tx("Couldn't validate the recovered license. Try again from Settings > License.");
       new Notice(msg, 8000);
       this.openSettings("license");
     }
@@ -2441,7 +2572,7 @@ export default class ButterEditorPlugin extends Plugin {
       let out = frontmatter + canonical;
       out = out.replace(/\r\n/g, "\n"); // normalize first
       if (isCRLF) out = out.replace(/\n/g, "\r\n");
-      if (hasBOM) out = "﻿" + out;
+      if (hasBOM) out = String.fromCharCode(0xfeff) + out;
 
       if (out === original) return { changed: false };
 
@@ -2791,6 +2922,23 @@ export default class ButterEditorPlugin extends Plugin {
       else hadUnknownKeys = true;
     }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, filtered);
+    const sanitizedLicenseMetadata = sanitizeStoredLicenseMetadata({
+      licenseType: this.settings.licenseType,
+      licenseStartedAt: this.settings.licenseStartedAt,
+      licenseExpiresAt: this.settings.licenseExpiresAt,
+      trialLengthDays: this.settings.trialLengthDays,
+      deviceLimit: this.settings.deviceLimit,
+    });
+    if (
+      this.settings.licenseType !== sanitizedLicenseMetadata.licenseType
+      || this.settings.licenseStartedAt !== sanitizedLicenseMetadata.licenseStartedAt
+      || this.settings.licenseExpiresAt !== sanitizedLicenseMetadata.licenseExpiresAt
+      || this.settings.trialLengthDays !== sanitizedLicenseMetadata.trialLengthDays
+      || this.settings.deviceLimit !== sanitizedLicenseMetadata.deviceLimit
+    ) {
+      hadUnknownKeys = true;
+    }
+    Object.assign(this.settings, sanitizedLicenseMetadata);
     this.applyI18nLanguage();
     // Migrate legacy mobileToolbarStyle keys ("native" / "butter") to
     // the new names ("detached" / "attached"). Old data.json files

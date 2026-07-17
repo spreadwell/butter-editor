@@ -4,7 +4,8 @@ import { openBlockContextMenu } from "./menu";
 import { DragHandlesConfig, DragPhase, BlockHit, DragContext, LiveDragState, dragVisualTotal } from "./types";
 import { HANDLE_OFFSET_LEFT, HANDLE_WIDTH, DRAG_THRESHOLD, TOUCH_LONGPRESS_MOVE_PX, TOUCH_LONGPRESS_MS, COMPACT_THRESHOLD_PX, DRAG_MOTIONS, AUTOSCROLL_MAX_PX_PER_SECOND, AUTOSCROLL_EDGE_PX } from "./constants";
 import { collectSiblings, handlePlacementFor, listItemHandleInset, isContainer, findBlockUnderPointer, findContainerContext, collectDropSlots, stampDragIndexes, suppressObserver, clearDragIndexes } from "./utils";
-import { createHandleEl, createDragStyleEl, createGhost, positionGhost, createDropFiller, positionDropFiller, predictPostDropDraggedRect } from "./dom";
+import { createHandleEl, createDragStyleSheet, createGhost, positionGhost, createDropFiller, positionDropFiller, predictPostDropDraggedRect } from "./dom";
+import { shouldCompensateUpwardDrop } from "./scroll-compensation";
 import {
   Plugin as PMPlugin,
   PluginKey,
@@ -52,8 +53,8 @@ function findScrollAnchor(view: EditorView, drag: LiveDragState): HTMLElement | 
   let best: HTMLElement | null = null;
   let bestDist = Infinity;
   doc.forEach((child, offset) => {
-    if (draggedSet.has(offset + 1)) return;
-    const dom = view.nodeDOM(offset + 1);
+    if (draggedSet.has(offset)) return;
+    const dom = view.nodeDOM(offset);
     if (dom instanceof HTMLElement) {
       const dist = Math.abs(dom.getBoundingClientRect().top - vpTop);
       if (dist < bestDist) { bestDist = dist; best = dom; }
@@ -71,7 +72,7 @@ export class HandleLayer {
   private activeCount = 0;
 
   constructor() {
-    this.layer = activeDocument.createElement("div");
+    this.layer = activeWindow.createDiv();
     this.layer.className = "butter-drag-handles-layer";
     activeDocument.body.appendChild(this.layer);
   }
@@ -513,7 +514,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           return hoverHandle;
         }
         if (alwaysLayer) {
-          const el = activeDocument.querySelector<HTMLElement>(
+          const el = alwaysLayer.layer.querySelector<HTMLElement>(
             `.butter-drag-handles-layer .butter-drag-handle[data-block-pos="${pos}"]`,
           );
           if (el) return el;
@@ -857,7 +858,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           const cs = getComputedStyle(pmEl);
           // --list-indent is typically `4ch` — resolve to px via a
           // temporary measurement element so we get the real value.
-          const probe = activeDocument.createElement("div");
+          const probe = activeWindow.createDiv();
           probe.style.cssText = `position:absolute;visibility:hidden;width:${cs.getPropertyValue("--list-indent") || "4ch"};`;
           pmEl.appendChild(probe);
           listIndentPx = probe.getBoundingClientRect().width || 32;
@@ -906,7 +907,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         });
 
         // Create injected stylesheet
-        const styleEl = createDragStyleEl();
+        const styleSheet = createDragStyleSheet();
 
         // Create ghost (clamp height to the visual total in compact mode
         // so the ghost, shadow, and reflow gap all match).
@@ -962,7 +963,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           lastPointerY: e.clientY,
           prevPointerY: e.clientY,
           startScrollTop: _scroller ? _scroller.scrollTop : 0,
-          styleEl,
+          styleSheet,
           paddedContextDom: null,
           dropFiller,
           sourceDepth,
@@ -986,7 +987,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
             }
           }
         }
-        styleEl.textContent = styles;
+        styleSheet.replaceSync(styles);
         applySlotReflow(editorView, drag);
 
         // Body state. Set motion curve CSS vars so the reflow +
@@ -1465,8 +1466,12 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           if (draggedIds.length > 0) {
             tr.setMeta(BLOCK_ANIMATOR_SKIP_IDS, draggedIds);
           }
-          const movingUp = drag.targetSlotIdx < drag.sourceSlotIdx;
-          const scroller = movingUp
+          const compensateScroll = shouldCompensateUpwardDrop(
+            Platform.isIosApp,
+            drag.targetSlotIdx,
+            drag.sourceSlotIdx,
+          );
+          const scroller = compensateScroll
             ? editorView.dom.closest(".butter-editor-view") : null;
           const anchorDom = scroller ? findScrollAnchor(editorView, drag) : null;
           const anchorTopBefore = anchorDom?.getBoundingClientRect().top ?? 0;
@@ -1641,7 +1646,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
 
 
       function cleanupReflowStyles(drag: LiveDragState): void {
-        drag.styleEl.remove();
+        drag.styleSheet.remove();
         clearShiftedTransforms(editorView, drag);
       }
 

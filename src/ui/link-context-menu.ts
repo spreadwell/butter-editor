@@ -119,7 +119,7 @@ export interface RichMenuHandle {
 export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
   const parent =
     (activeDocument.body) ?? (activeDocument.documentElement);
-  const dom = activeDocument.createElement("div");
+  const dom = activeWindow.createDiv();
   dom.className = "menu butter-block-context-menu butter-rich-menu";
   dom.setAttribute("role", "dialog");
   dom.addClass("butter-pos-fixed");
@@ -131,35 +131,35 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
   // padding so action items line up with the block menu's items
   // exactly.
   dom.appendChild(buildBlockContextMenuHeaderEl(opts.chrome));
-  const body = activeDocument.createElement("div");
+  const body = activeWindow.createDiv();
   body.className = "butter-rich-menu-body";
   dom.appendChild(body);
 
   // Fields
   const inputEls: Record<string, HTMLInputElement> = {};
   if (opts.fields && opts.fields.length > 0) {
-    const fieldsRoot = activeDocument.createElement("div");
+    const fieldsRoot = activeWindow.createDiv();
     fieldsRoot.className = "butter-rich-menu-fields";
     for (const field of opts.fields) {
       // Layout per field:
       //   [icon] [label]   ← header row, icon next to the label
       //   [        input        ]   ← input alone on its own row, full width
-      const fieldEl = activeDocument.createElement("div");
+      const fieldEl = activeWindow.createDiv();
       fieldEl.className = "butter-rich-menu-field";
-      const headerEl = activeDocument.createElement("div");
+      const headerEl = activeWindow.createDiv();
       headerEl.className = "butter-rich-menu-field-header";
       if (field.icon) {
-        const iconEl = activeDocument.createElement("div");
+        const iconEl = activeWindow.createDiv();
         iconEl.className = "butter-rich-menu-field-icon";
         setIcon(iconEl, field.icon);
         headerEl.appendChild(iconEl);
       }
-      const labelEl = activeDocument.createElement("div");
+      const labelEl = activeWindow.createDiv();
       labelEl.className = "butter-rich-menu-field-label";
     labelEl.textContent = txKnown(field.label);
       headerEl.appendChild(labelEl);
       fieldEl.appendChild(headerEl);
-      const input = activeDocument.createElement("input");
+      const input = activeWindow.createEl("input");
       input.type = "text";
       input.className = "butter-inline-atom-edit-input butter-rich-menu-input";
       input.spellcheck = false;
@@ -210,29 +210,29 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
   const hasFields = opts.fields && opts.fields.length > 0;
   if (opts.actions.length > 0 && hasFields) {
     // Visual separator between the input section and the actions.
-    const sep = activeDocument.createElement("div");
+    const sep = activeWindow.createDiv();
     sep.className = "menu-separator";
     body.appendChild(sep);
   }
   let lastSepEmitted = hasFields; // already added one above
   for (const action of opts.actions) {
     if (action.separatorBefore && !lastSepEmitted) {
-      const sep = activeDocument.createElement("div");
+      const sep = activeWindow.createDiv();
       sep.className = "menu-separator";
       body.appendChild(sep);
       lastSepEmitted = true;
     }
-    const actionEl = activeDocument.createElement("div");
+    const actionEl = activeWindow.createDiv();
     actionEl.className = "menu-item tappable butter-rich-menu-action";
     if (action.warning) actionEl.classList.add("is-warning");
     actionEl.setAttribute("role", "menuitem");
     actionEl.setAttribute("tabindex", "0");
     actionEl.setAttribute("aria-label", txKnown(action.label));
-    const iconEl = activeDocument.createElement("div");
+    const iconEl = activeWindow.createDiv();
     iconEl.className = "menu-item-icon";
     setIcon(iconEl, action.icon);
     actionEl.appendChild(iconEl);
-    const titleEl = activeDocument.createElement("div");
+    const titleEl = activeWindow.createDiv();
     titleEl.className = "menu-item-title";
     titleEl.textContent = txKnown(action.label);
     actionEl.appendChild(titleEl);

@@ -28,6 +28,7 @@
 import { Plugin as PMPlugin, PluginKey, NodeSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { getMultiBlockSelection } from "./multi-block-select";
+import { editorTopChromeBottom } from "../ui/toolbar-layout";
 
 /** Transaction-meta key that marks a NodeSelection as deliberately
  *  user-initiated (drag-handle click, keyboard shortcut, etc).
@@ -53,6 +54,11 @@ const pluginKey = new PluginKey<SelectionOverlayState>(
 
 class SelectionOverlayView {
   view: EditorView;
+  /** The overlay must stay in the same DOM realm as its EditorView.
+   *  Obsidian's global `activeDocument` can point at another pop-out
+   *  window by the time the first block selection lazily creates it. */
+  ownerDocument: Document;
+  ownerWindow: typeof window;
   /** Pool of overlay elements. Index 0 is the primary (NodeSelection),
    *  1..N are the multi-block siblings. Reused across renders so we
    *  don't churn the DOM on every selection change. */
@@ -63,17 +69,23 @@ class SelectionOverlayView {
 
   constructor(view: EditorView) {
     this.view = view;
+    this.ownerDocument = view.dom.ownerDocument;
+    const ownerWindow = this.ownerDocument.defaultView;
+    if (!ownerWindow) {
+      throw new Error("Selection overlay EditorView document has no window");
+    }
+    this.ownerWindow = ownerWindow;
 
     this.scrollListener = () => this.scheduleUpdate();
     this.resizeListener = () => this.scheduleUpdate();
     // Capture-phase scroll listener so internal scrollers (the
     // editor itself, modals, etc.) trigger the recompute even
     // though scroll events don't bubble.
-    window.addEventListener("scroll", this.scrollListener, {
+    this.ownerWindow.addEventListener("scroll", this.scrollListener, {
       passive: true,
       capture: true,
     });
-    window.addEventListener("resize", this.resizeListener);
+    this.ownerWindow.addEventListener("resize", this.resizeListener);
 
     this.update();
   }
@@ -81,9 +93,9 @@ class SelectionOverlayView {
   /** Get an overlay element from the pool, creating one if needed. */
   private acquireOverlay(idx: number): HTMLElement {
     while (this.overlays.length <= idx) {
-      const el = activeDocument.createElement("div");
+      const el = this.ownerDocument.win.createDiv();
       el.className = "butter-selection-overlay";
-      activeDocument.body.appendChild(el);
+      this.ownerDocument.body.appendChild(el);
       this.overlays.push(el);
     }
     return this.overlays[idx];
@@ -98,7 +110,7 @@ class SelectionOverlayView {
 
   scheduleUpdate(): void {
     if (this.rafHandle != null) return;
-    this.rafHandle = window.requestAnimationFrame(() => {
+    this.rafHandle = this.ownerWindow.requestAnimationFrame(() => {
       this.rafHandle = null;
       this.repaint();
     });
@@ -129,7 +141,7 @@ class SelectionOverlayView {
     let firstDom: HTMLElement | null = null;
     for (const pos of positions) {
       const dom = this.view.nodeDOM(pos);
-      if (!(dom instanceof HTMLElement)) continue;
+      if (!(dom instanceof this.ownerWindow.HTMLElement)) continue;
       if (!firstDom) firstDom = dom;
       const rect = dom.getBoundingClientRect();
       if (rect.top < minTop) minTop = rect.top;
@@ -146,7 +158,15 @@ class SelectionOverlayView {
     const hb = header?.getBoundingClientRect().bottom ?? 0;
     const sb = stack?.getBoundingClientRect().bottom ?? 0;
     const tb = tableBar?.getBoundingClientRect().bottom ?? 0;
-    const chromeBottom = Math.max(hb, sb, tb);
+    const toolbarPosition = leaf?.getAttribute("data-toolbar-pos") === "bottom"
+      ? "bottom"
+      : "top";
+    const chromeBottom = editorTopChromeBottom(
+      toolbarPosition,
+      hb,
+      sb,
+      tb,
+    );
 
     const inset = 9;
     const rawTop = minTop - inset;
@@ -160,7 +180,7 @@ class SelectionOverlayView {
     overlay.style.width = `${maxRight - minLeft + inset * 2}px`;
     overlay.style.height = `${clippedHeight}px`;
     if (positions.length === 1) {
-      const computed = getComputedStyle(firstDom);
+      const computed = this.ownerWindow.getComputedStyle(firstDom);
       if (computed.borderRadius && computed.borderRadius !== "0px") {
         overlay.style.borderRadius = `calc(${computed.borderRadius} + ${inset}px)`;
       } else {
@@ -260,11 +280,11 @@ class SelectionOverlayView {
   destroy(): void {
     for (const o of this.overlays) o.remove();
     this.overlays = [];
-    window.removeEventListener("scroll", this.scrollListener, {
+    this.ownerWindow.removeEventListener("scroll", this.scrollListener, {
       capture: true,
     });
-    window.removeEventListener("resize", this.resizeListener);
-    if (this.rafHandle != null) cancelAnimationFrame(this.rafHandle);
+    this.ownerWindow.removeEventListener("resize", this.resizeListener);
+    if (this.rafHandle != null) this.ownerWindow.cancelAnimationFrame(this.rafHandle);
   }
 }
 

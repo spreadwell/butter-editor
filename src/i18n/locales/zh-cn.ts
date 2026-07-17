@@ -369,6 +369,8 @@ export const zhCN = {
   "Too many attempts in a short window. Wait a minute and try again.": "短时间内尝试次数过多。请等一分钟再试。",
   "Couldn't reach the licensing server. Check your internet connection.": "无法连接许可证服务器。请检查网络连接。",
   "The licensing service is temporarily unavailable. Try again in a minute.": "许可证服务暂时不可用。请稍后再试。",
+  "Update Butter Editor to continue using this license.": "请更新 Butter Editor 以继续使用此许可证。",
+  "This license requires a newer version of Butter Editor.": "此许可证需要更新版本的 Butter Editor。",
   "Input was rejected by the server. Double-check email + key formatting.": "输入被服务器拒绝。请检查邮箱和密钥格式。",
   "Something went wrong. Try again in a moment.": "出现问题。请稍后再试。",
   "Toolbar platform": "工具栏平台",

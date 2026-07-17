@@ -41,11 +41,11 @@ function buildDecorations(state: EditorState): DecorationSet {
           // caret lands AFTER the padding. That gives a clear visual
           // gap between the checkbox and the cursor when the task
           // content is empty.
-          const wrap = activeDocument.createElement("span");
+          const wrap = activeWindow.createSpan();
           wrap.className = "butter-task-checkbox-wrap";
           wrap.setAttribute("contenteditable", "false");
 
-          const input = activeDocument.createElement("input");
+          const input = activeWindow.createEl("input");
           input.type = "checkbox";
           input.className = "butter-task-checkbox task-list-item-checkbox";
           input.checked = checked;

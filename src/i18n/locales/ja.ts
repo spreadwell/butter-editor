@@ -371,6 +371,8 @@ export const ja = {
   "Too many attempts in a short window. Wait a minute and try again.": "短い時間枠内での試行回数が多すぎます。しばらく待ってからもう一度試してください。",
   "Couldn't reach the licensing server. Check your internet connection.": "ライセンスサーバーに接続できませんでした。インターネット接続を確認してください。",
   "The licensing service is temporarily unavailable. Try again in a minute.": "ライセンス サービスは一時的に利用できなくなります。 1分後にもう一度試してください。",
+  "Update Butter Editor to continue using this license.": "このライセンスを引き続き使用するには、Butter Editor を更新してください。",
+  "This license requires a newer version of Butter Editor.": "このライセンスには、新しいバージョンの Butter Editor が必要です。",
   "Input was rejected by the server. Double-check email + key formatting.": "入力はサーバーによって拒否されました。電子メールとキーの形式を再確認してください。",
   "Something went wrong. Try again in a moment.": "何か問題が発生しました。しばらくしてからもう一度試してください。",
   "Toolbar platform": "ツールバープラットフォーム",

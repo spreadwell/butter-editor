@@ -172,7 +172,7 @@ export function suggestBridgePlugin(
             const items = await suggest.getSuggestions(info);
             const arr = Array.isArray(items) ? items.slice(0, 50) : [];
             if (!arr.length) continue;
-            const popover = activeDocument.createElement("div");
+            const popover = activeWindow.createDiv();
             popover.className =
               "butter-surface butter-surface--compact suggestion-container butter-suggest-ext";
             popover.addEventListener("butter-dismiss", close);

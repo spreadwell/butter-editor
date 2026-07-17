@@ -574,7 +574,7 @@ function createTablePicker(
 ): HTMLElement {
   const ROWS = 6;
   const COLS = 8;
-  const picker = activeDocument.createElement("div");
+  const picker = activeWindow.createDiv();
   picker.classList.add("butter-table-picker");
   // Treat the picker itself as the focusable + ARIA-named region so
   // keyboard users can arrow-navigate the grid as a single widget,
@@ -584,11 +584,11 @@ function createTablePicker(
   picker.setAttribute("aria-label", tx("Pick table size"));
   picker.tabIndex = 0;
 
-  const grid = activeDocument.createElement("div");
+  const grid = activeWindow.createDiv();
   grid.classList.add("grid");
   picker.appendChild(grid);
 
-  const label = activeDocument.createElement("div");
+  const label = activeWindow.createDiv();
   label.classList.add("label");
   label.textContent = tx("Hover or arrow-key to size");
   picker.appendChild(label);
@@ -606,8 +606,8 @@ function createTablePicker(
     const c = hoverC >= 0 ? hoverC : (kbdActive ? kbdC : -1);
     const cells = grid.querySelectorAll<HTMLElement>(".cell");
     cells.forEach((cell) => {
-      const cr = parseInt(cell.getAttribute("data-r")!);
-      const cc = parseInt(cell.getAttribute("data-c")!);
+      const cr = parseInt(cell.getAttribute("data-r") ?? "-1");
+      const cc = parseInt(cell.getAttribute("data-c") ?? "-1");
       cell.classList.toggle("is-hot", cr <= r && cc <= c);
     });
     label.textContent =
@@ -616,7 +616,7 @@ function createTablePicker(
 
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      const cell = activeDocument.createElement("div");
+      const cell = activeWindow.createDiv();
       cell.classList.add("cell");
       cell.setAttribute("data-r", String(r));
       cell.setAttribute("data-c", String(c));
@@ -1055,7 +1055,7 @@ function createColorPalette(
   onClose: () => void,
   activeStyle: string = "filled",
 ): HTMLElement {
-  const wrap = activeDocument.createElement("div") as ColorPaletteElement;
+  const wrap = activeWindow.createDiv() as ColorPaletteElement;
   wrap.classList.add("butter-toolbar-submenu-popup", "butter-color-palette");
   wrap.dataset.kind = kind;
   wrap.dataset.activeStyle = activeStyle;
@@ -1068,12 +1068,12 @@ function createColorPalette(
   const currentIsCustom = Boolean(currentColor && !selectedPreset);
   let committed = false;
 
-  const grid = activeDocument.createElement("div");
+  const grid = activeWindow.createDiv();
   grid.classList.add("butter-color-grid");
   wrap.appendChild(grid);
 
   const makeCell = (label: string, title = label) => {
-    const cell = activeDocument.createElement("button");
+    const cell = activeWindow.createEl("button");
     cell.type = "button";
     cell.classList.add("butter-color-cell");
     cell.setAttribute("aria-label", label);
@@ -1082,7 +1082,7 @@ function createColorPalette(
   };
 
   const appendCheck = (cell: HTMLElement) => {
-    const selected = activeDocument.createElement("span");
+    const selected = activeWindow.createSpan();
     selected.classList.add("butter-color-cell-check");
     setIcon(selected, "check");
     cell.appendChild(selected);
@@ -1111,7 +1111,7 @@ function createColorPalette(
   const customBtn = makeCell("Custom color", "Custom color");
   customBtn.classList.add("butter-color-custom");
   customBtn.classList.add("butter-btn", "clickable-icon");
-  const customFill = activeDocument.createElement("span");
+  const customFill = activeWindow.createSpan();
   customFill.classList.add("butter-color-cell-fill");
   if (currentIsCustom && currentColor) {
     customFill.style.backgroundColor = currentColor;
@@ -1121,7 +1121,7 @@ function createColorPalette(
     customBtn.classList.add("is-empty");
   }
   customBtn.appendChild(customFill);
-  const customIcon = activeDocument.createElement("span");
+  const customIcon = activeWindow.createSpan();
   customIcon.classList.add("butter-color-cell-icon");
   setIcon(customIcon, "pipette");
   customBtn.appendChild(customIcon);
@@ -1137,7 +1137,7 @@ function createColorPalette(
     }
     cell.setAttribute("aria-label", swatchName);
     cell.title = swatchName;
-    const fill = activeDocument.createElement("span");
+    const fill = activeWindow.createSpan();
     fill.classList.add("butter-color-cell-fill");
     fill.style.backgroundColor = sw.value;
     cell.appendChild(fill);
@@ -1240,38 +1240,38 @@ function createCustomColorPicker(args: {
     : 1;
   let restoredOrCommitted = false;
 
-  const picker = activeDocument.createElement("div");
+  const picker = activeWindow.createDiv();
   picker.classList.add("butter-color-custom-panel");
 
-  const pickerHeader = activeDocument.createElement("div");
+  const pickerHeader = activeWindow.createDiv();
   pickerHeader.classList.add("butter-color-custom-header");
-  const pickerTitle = activeDocument.createElement("span");
+  const pickerTitle = activeWindow.createSpan();
   pickerTitle.classList.add("butter-color-custom-title");
   pickerTitle.textContent = tx("Custom");
   pickerHeader.appendChild(pickerTitle);
-  const pickerValue = activeDocument.createElement("span");
+  const pickerValue = activeWindow.createSpan();
   pickerValue.classList.add("butter-color-custom-value");
   pickerHeader.appendChild(pickerValue);
   picker.appendChild(pickerHeader);
 
-  const sv = activeDocument.createElement("div");
+  const sv = activeWindow.createDiv();
   sv.classList.add("butter-color-sv");
   sv.tabIndex = 0;
   sv.setAttribute("role", "slider");
   sv.setAttribute("aria-label", tx("Saturation and brightness"));
-  const svThumb = activeDocument.createElement("div");
+  const svThumb = activeWindow.createDiv();
   svThumb.classList.add("butter-color-sv-thumb");
   sv.appendChild(svThumb);
   picker.appendChild(sv);
 
-  const hue = activeDocument.createElement("div");
+  const hue = activeWindow.createDiv();
   hue.classList.add("butter-color-hue");
   hue.tabIndex = 0;
   hue.setAttribute("role", "slider");
   hue.setAttribute("aria-label", tx("Hue"));
   hue.setAttribute("aria-valuemin", "0");
   hue.setAttribute("aria-valuemax", "360");
-  const hueThumb = activeDocument.createElement("div");
+  const hueThumb = activeWindow.createDiv();
   hueThumb.classList.add("butter-color-hue-thumb");
   hue.appendChild(hueThumb);
   picker.appendChild(hue);
@@ -1280,14 +1280,14 @@ function createCustomColorPicker(args: {
   let alphaSlider: HTMLInputElement | null = null;
   let alphaValue: HTMLElement | null = null;
   if (kind === "highlight") {
-    alphaWrap = activeDocument.createElement("label");
+    alphaWrap = activeWindow.createEl("label");
     alphaWrap.classList.add("butter-color-alpha");
-    const alphaLabel = activeDocument.createElement("span");
+    const alphaLabel = activeWindow.createSpan();
     alphaLabel.classList.add("butter-color-alpha-label");
     alphaLabel.textContent = tx("Opacity");
     alphaWrap.appendChild(alphaLabel);
 
-    alphaSlider = activeDocument.createElement("input");
+    alphaSlider = activeWindow.createEl("input");
     alphaSlider.type = "range";
     alphaSlider.min = "0.1";
     alphaSlider.max = "1";
@@ -1296,25 +1296,25 @@ function createCustomColorPicker(args: {
     alphaSlider.classList.add("butter-color-alpha-slider");
     alphaWrap.appendChild(alphaSlider);
 
-    alphaValue = activeDocument.createElement("span");
+    alphaValue = activeWindow.createSpan();
     alphaValue.classList.add("butter-color-alpha-value");
     alphaWrap.appendChild(alphaValue);
     picker.appendChild(alphaWrap);
   }
 
-  const controls = activeDocument.createElement("div");
+  const controls = activeWindow.createDiv();
   controls.classList.add("butter-color-custom-controls");
   picker.appendChild(controls);
 
-  const preview = activeDocument.createElement("div");
+  const preview = activeWindow.createDiv();
   preview.classList.add("butter-color-preview");
   preview.setAttribute("aria-hidden", "true");
-  const previewFill = activeDocument.createElement("div");
+  const previewFill = activeWindow.createDiv();
   previewFill.classList.add("butter-color-preview-fill");
   preview.appendChild(previewFill);
   controls.appendChild(preview);
 
-  const hexInput = activeDocument.createElement("input");
+  const hexInput = activeWindow.createEl("input");
   hexInput.type = "text";
   hexInput.classList.add("butter-color-hex-input");
   hexInput.spellcheck = false;
@@ -1322,29 +1322,29 @@ function createCustomColorPicker(args: {
   hexInput.setAttribute("aria-label", tx("Hex color"));
   controls.appendChild(hexInput);
 
-  const actions = activeDocument.createElement("div");
+  const actions = activeWindow.createDiv();
   actions.classList.add("butter-color-custom-actions");
   picker.appendChild(actions);
 
-  const cancelBtn = activeDocument.createElement("button");
+  const cancelBtn = activeWindow.createEl("button");
   cancelBtn.type = "button";
   cancelBtn.classList.add("butter-btn", "clickable-icon", "butter-color-control");
   cancelBtn.setAttribute("aria-label", tx("Cancel"));
   cancelBtn.title = tx("Cancel");
   setIcon(cancelBtn, "x");
-  const cancelLabel = activeDocument.createElement("span");
+  const cancelLabel = activeWindow.createSpan();
   cancelLabel.classList.add("butter-color-control-label");
   cancelLabel.textContent = tx("Cancel");
   cancelBtn.appendChild(cancelLabel);
   actions.appendChild(cancelBtn);
 
-  const applyBtn = activeDocument.createElement("button");
+  const applyBtn = activeWindow.createEl("button");
   applyBtn.type = "button";
   applyBtn.classList.add("butter-btn", "clickable-icon", "butter-color-control", "is-active");
   applyBtn.setAttribute("aria-label", tx("Apply"));
   applyBtn.title = tx("Apply");
   setIcon(applyBtn, "check");
-  const applyLabel = activeDocument.createElement("span");
+  const applyLabel = activeWindow.createSpan();
   applyLabel.classList.add("butter-color-control-label");
   applyLabel.textContent = tx("Apply");
   applyBtn.appendChild(applyLabel);
@@ -1771,7 +1771,7 @@ function openColorDrawer(target: ColorTarget): void {
   activeDocument.body.classList.add(MOBILE_DRAWER_BODY_CLASS);
 
   // ── Drawer shell ──
-  const drawer = activeDocument.createElement("div");
+  const drawer = activeWindow.createDiv();
   drawer.className = "butter-mobile-insert-drawer butter-mobile-color-drawer";
   drawer.dataset.role = "drawer";
   drawer.dataset.kind = kind;
@@ -1783,29 +1783,29 @@ function openColorDrawer(target: ColorTarget): void {
   // the menu layer (65) is below it, so go one above the modal layer.
   if (target.elevated) drawer.setCssStyles({ zIndex: "calc(var(--layer-modal, 100) + 1)" });
 
-  const shell = activeDocument.createElement("div");
+  const shell = activeWindow.createDiv();
   shell.classList.add("butter-mobile-color-shell");
   drawer.appendChild(shell);
 
   // Bare header: just a back affordance, shown only on the Precise page.
-  const header = activeDocument.createElement("div");
+  const header = activeWindow.createDiv();
   header.classList.add("butter-mobile-drawer-header", "butter-mobile-color-header");
   header.hidden = true;
   shell.appendChild(header);
-  const backBtn = activeDocument.createElement("button");
+  const backBtn = activeWindow.createEl("button");
   backBtn.type = "button";
   backBtn.classList.add("butter-mobile-color-back", "clickable-icon");
   backBtn.setAttribute("aria-label", tx("Back to presets"));
   setIcon(backBtn, "chevron-left");
   header.appendChild(backBtn);
-  const backLabel = activeDocument.createElement("span");
+  const backLabel = activeWindow.createSpan();
   backLabel.classList.add("butter-mobile-color-back-label");
   backLabel.textContent = tx("Presets");
   header.appendChild(backLabel);
 
   // Explicit close affordance (shown in slot/settings mode, where there's
   // no editor to tap back into). Sits at the top-right of the drawer.
-  const closeBtn = activeDocument.createElement("button");
+  const closeBtn = activeWindow.createEl("button");
   closeBtn.type = "button";
   closeBtn.classList.add("butter-mobile-color-close", "clickable-icon");
   closeBtn.setAttribute("aria-label", tx("Close"));
@@ -1814,7 +1814,7 @@ function openColorDrawer(target: ColorTarget): void {
   closeBtn.addEventListener("click", () => closeAndRefocus());
   header.appendChild(closeBtn);
 
-  const body = activeDocument.createElement("div");
+  const body = activeWindow.createDiv();
   body.classList.add("butter-mobile-color-body");
   shell.appendChild(body);
 
@@ -1823,33 +1823,33 @@ function openColorDrawer(target: ColorTarget): void {
   //    colours, row 2 = shades of the selected preset, row 3 = Clear /
   //    Custom. Pure flexbox (rows flex:1, cells flex:1) so it always fills:
   //    no gaps, no padding, no rounded corners, no whitespace. ──
-  const page1 = activeDocument.createElement("div");
+  const page1 = activeWindow.createDiv();
   page1.classList.add("butter-mobile-color-page", "butter-mobile-color-grid");
   body.appendChild(page1);
 
   const makeRow = (): HTMLElement => {
-    const row = activeDocument.createElement("div");
+    const row = activeWindow.createDiv();
     row.classList.add("butter-mobile-color-row");
     page1.appendChild(row);
     return row;
   };
 
   const makeCell = (extraClass?: string): { cell: HTMLButtonElement; fill: HTMLElement } => {
-    const cell = activeDocument.createElement("button");
+    const cell = activeWindow.createEl("button");
     cell.type = "button";
     cell.classList.add("butter-mobile-color-cell");
     if (extraClass) cell.classList.add(extraClass);
-    const fill = activeDocument.createElement("span");
+    const fill = activeWindow.createSpan();
     fill.classList.add("butter-mobile-color-cell-fill");
     cell.appendChild(fill);
-    const check = activeDocument.createElement("span");
+    const check = activeWindow.createSpan();
     check.classList.add("butter-mobile-color-cell-check");
     setIcon(check, "check");
     cell.appendChild(check);
     return { cell, fill };
   };
 
-  const notice = activeDocument.createElement("div");
+  const notice = activeWindow.createDiv();
   notice.classList.add("butter-mobile-color-notice");
   notice.textContent = target.allowDefault
     ? kind === "text"
@@ -1895,35 +1895,35 @@ function openColorDrawer(target: ColorTarget): void {
   actionRow.classList.add("butter-mobile-color-action-row");
   let eraser: HTMLButtonElement | null = null;
   if (target.allowDefault) {
-    eraser = activeDocument.createElement("button");
+    eraser = activeWindow.createEl("button");
     eraser.type = "button";
     eraser.classList.add("butter-mobile-color-action");
     eraser.setAttribute("aria-label", tx(kind === "text" ? "Clear text color" : "Clear highlight"));
-    const eraserIcon = activeDocument.createElement("span");
+    const eraserIcon = activeWindow.createSpan();
     eraserIcon.classList.add("butter-mobile-color-action-icon");
     setIcon(eraserIcon, "eraser");
     eraser.appendChild(eraserIcon);
-    const eraserLabel = activeDocument.createElement("span");
+    const eraserLabel = activeWindow.createSpan();
     eraserLabel.textContent = tx("Clear");
     eraser.appendChild(eraserLabel);
     eraser.addEventListener("click", () => selectDefault());
     actionRow.appendChild(eraser);
   }
 
-  const preciseLink = activeDocument.createElement("button");
+  const preciseLink = activeWindow.createEl("button");
   preciseLink.type = "button";
   preciseLink.classList.add("butter-mobile-color-action", "butter-mobile-color-action-custom");
-  const preciseIcon = activeDocument.createElement("span");
+  const preciseIcon = activeWindow.createSpan();
   preciseIcon.classList.add("butter-mobile-color-action-icon");
   setIcon(preciseIcon, "pipette");
   preciseLink.appendChild(preciseIcon);
-  const preciseLabel = activeDocument.createElement("span");
+  const preciseLabel = activeWindow.createSpan();
   preciseLabel.textContent = tx("Custom");
   preciseLink.appendChild(preciseLabel);
   actionRow.appendChild(preciseLink);
 
   // ── Page 2 (precise): H / S / V sliders (+ opacity) ──
-  const page2 = activeDocument.createElement("div");
+  const page2 = activeWindow.createDiv();
   page2.classList.add("butter-mobile-color-page", "butter-mobile-color-page-custom");
   page2.hidden = true;
   body.appendChild(page2);
@@ -1959,20 +1959,20 @@ function openColorDrawer(target: ColorTarget): void {
     onFraction: (fraction: number) => void,
     onStep: (delta: number) => void,
   ): { track: HTMLElement; thumb: HTMLElement } => {
-    const section = activeDocument.createElement("div");
+    const section = activeWindow.createDiv();
     section.classList.add("butter-mobile-color-section");
-    const label = activeDocument.createElement("div");
+    const label = activeWindow.createDiv();
     label.classList.add("butter-mobile-color-section-label");
     label.textContent = txKnown(labelText);
     section.appendChild(label);
-    const track = activeDocument.createElement("div");
+    const track = activeWindow.createDiv();
     track.classList.add("butter-mobile-color-slider");
     track.tabIndex = 0;
     track.setAttribute("role", "slider");
     track.setAttribute("aria-label", txKnown(labelText));
     track.setAttribute("aria-valuemin", "0");
     track.setAttribute("aria-valuemax", String(max));
-    const thumb = activeDocument.createElement("div");
+    const thumb = activeWindow.createDiv();
     thumb.classList.add("butter-mobile-color-slider-thumb");
     track.appendChild(thumb);
     section.appendChild(track);
@@ -2020,36 +2020,36 @@ function openColorDrawer(target: ColorTarget): void {
     );
   }
 
-  const customNavRow = activeDocument.createElement("div");
+  const customNavRow = activeWindow.createDiv();
   customNavRow.classList.add(
     "butter-mobile-color-row",
     "butter-mobile-color-action-row",
     "butter-mobile-color-custom-nav-row",
   );
   page2.appendChild(customNavRow);
-  const customBackBtn = activeDocument.createElement("button");
+  const customBackBtn = activeWindow.createEl("button");
   customBackBtn.type = "button";
   customBackBtn.classList.add("butter-mobile-color-action");
   customBackBtn.setAttribute("aria-label", tx("Back to presets"));
-  const customBackIcon = activeDocument.createElement("span");
+  const customBackIcon = activeWindow.createSpan();
   customBackIcon.classList.add("butter-mobile-color-action-icon");
   setIcon(customBackIcon, "palette");
   customBackBtn.appendChild(customBackIcon);
-  const customBackLabel = activeDocument.createElement("span");
+  const customBackLabel = activeWindow.createSpan();
   customBackLabel.textContent = tx("Presets");
   customBackBtn.appendChild(customBackLabel);
   customNavRow.appendChild(customBackBtn);
   let customizePresetsBtn: HTMLButtonElement | null = null;
   if (target.openPresetSettings) {
-    customizePresetsBtn = activeDocument.createElement("button");
+    customizePresetsBtn = activeWindow.createEl("button");
     customizePresetsBtn.type = "button";
     customizePresetsBtn.classList.add("butter-mobile-color-action");
     customizePresetsBtn.setAttribute("aria-label", tx("Customize presets"));
-    const customizePresetsIcon = activeDocument.createElement("span");
+    const customizePresetsIcon = activeWindow.createSpan();
     customizePresetsIcon.classList.add("butter-mobile-color-action-icon");
     setIcon(customizePresetsIcon, "settings");
     customizePresetsBtn.appendChild(customizePresetsIcon);
-    const customizePresetsLabel = activeDocument.createElement("span");
+    const customizePresetsLabel = activeWindow.createSpan();
     customizePresetsLabel.textContent = tx("Customize presets");
     customizePresetsBtn.appendChild(customizePresetsLabel);
     customNavRow.appendChild(customizePresetsBtn);
@@ -2394,7 +2394,7 @@ export interface RenderCtx {
 }
 
 function makeSep(): HTMLElement {
-  const s = activeDocument.createElement("div");
+  const s = activeWindow.createDiv();
   s.classList.add("butter-toolbar-separator");
   return s;
 }
@@ -2471,7 +2471,7 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
   const htmlOk = isHtmlFormattingEnabled(ctx);
   if (HTML_ONLY_BUTTON_IDS.has(id) && !htmlOk) return null;
 
-  const el = activeDocument.createElement("button");
+  const el = activeWindow.createEl("button");
   el.classList.add("butter-btn", "clickable-icon");
   el.setAttribute(
     "aria-label",
@@ -2481,7 +2481,7 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
   setIcon(el, def.icon);
   if (def.id === "text-color" || (def.id === "highlight" && htmlOk)) {
     el.setAttribute("aria-haspopup", "menu");
-    const dot = activeDocument.createElement("span");
+    const dot = activeWindow.createSpan();
     dot.classList.add("butter-submenu-dot");
     el.appendChild(dot);
   }
@@ -2566,7 +2566,7 @@ function renderSubmenuButton(
   item: Extract<LayoutItem, { type: "submenu" }>,
   ctx: RenderCtx,
 ): HTMLElement {
-  const el = activeDocument.createElement("button");
+  const el = activeWindow.createEl("button");
   el.classList.add("butter-btn", "clickable-icon", "butter-btn-submenu");
   el.setAttribute("aria-label", item.label ? txKnown(item.label) : tx("Submenu"));
   el.setAttribute("aria-haspopup", "menu");
@@ -2576,7 +2576,7 @@ function renderSubmenuButton(
   ctx.submenuMap.set(item.id, el);
   ctx.submenuChildMap.set(item.id, collectButtonIds(item.children));
   // Indicator dot
-  const dot = activeDocument.createElement("span");
+  const dot = activeWindow.createSpan();
   dot.classList.add("butter-submenu-dot");
   el.appendChild(dot);
 
@@ -2584,7 +2584,7 @@ function renderSubmenuButton(
     e.preventDefault();
     ctx.closePopover();
 
-    const popup = activeDocument.createElement("div");
+    const popup = activeWindow.createDiv();
     popup.classList.add("butter-toolbar-submenu-popup");
     popup.dataset.activeStyle =
       el.closest<HTMLElement>(".butter-toolbar")?.dataset.activeStyle ?? "filled";
@@ -2610,7 +2610,7 @@ function renderSubmenuButton(
       }
     };
     if (popup.children.length === 0) {
-      const empty = activeDocument.createElement("div");
+      const empty = activeWindow.createDiv();
       empty.classList.add("butter-toolbar-submenu-empty");
       empty.textContent = tx("Empty");
       popup.appendChild(empty);
@@ -2780,14 +2780,14 @@ function installToolbarOverflowIndicators(
   scrollEl: HTMLElement,
 ): () => void {
   const doc = scrollEl.ownerDocument;
-  const leftInd = doc.createElement("div");
+  const leftInd = doc.win.createDiv();
   leftInd.classList.add("butter-toolbar-overflow-indicator", "is-left");
   leftInd.setAttribute("role", "button");
   leftInd.setAttribute("tabindex", "0");
   leftInd.setAttribute("aria-label", tx("Scroll toolbar left"));
   setIcon(leftInd, "chevron-left");
 
-  const rightInd = doc.createElement("div");
+  const rightInd = doc.win.createDiv();
   rightInd.classList.add("butter-toolbar-overflow-indicator", "is-right");
   rightInd.setAttribute("role", "button");
   rightInd.setAttribute("tabindex", "0");
@@ -3040,7 +3040,7 @@ export function createToolbar(
 
   // Outer wrapper is stable - rebuilds replace its children only.
   // This way main.ts's `this.toolbarDom` reference stays valid.
-  const dom = activeDocument.createElement("div");
+  const dom = activeWindow.createDiv();
   let toolbarOverflowCleanup: (() => void) | null = null;
 
   const renderDesktop = () => {
@@ -3057,7 +3057,7 @@ export function createToolbar(
     dom.setAttribute("data-active-style", activeStyle);
     dom.setAttribute("data-bg", "chrome");
     dom.setAttribute("data-grouping", "separators");
-    const scrollEl = activeDocument.createElement("div");
+    const scrollEl = activeWindow.createDiv();
     scrollEl.classList.add("butter-toolbar-scroll");
     dom.appendChild(scrollEl);
     for (const item of getLayout()) {

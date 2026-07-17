@@ -229,7 +229,7 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
           }
           closePopover();
 
-          const popover = activeDocument.createElement("div");
+          const popover = activeWindow.createDiv();
           popover.classList.add(
             "butter-toolbar-submenu-popup",
             "butter-color-palette",
@@ -677,7 +677,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       const host = settingsRoot ?? root;
       let toast = host.querySelector<HTMLElement>(":scope > .butter-toolbar-update-toast");
       if (!toast) {
-        toast = activeDocument.createElement("div");
+        toast = activeWindow.createDiv();
         toast.classList.add("butter-toolbar-update-toast");
         const chip = toast.createDiv({ cls: "butter-toolbar-update-toast__chip" });
         const icon = chip.createSpan({ cls: "butter-toolbar-update-toast__icon" });
@@ -746,7 +746,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
 
       // ── ON TOOLBAR list ──
       const onWrap = wrap.createDiv({ cls: "butter-layout-list" });
-      onWrap.createEl("div", {
+      onWrap.createDiv({
         cls: "butter-layout-list-label",
         text: tx("On toolbar"),
       });
@@ -954,7 +954,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       const available = defs.filter((d) => !used.has(d.id));
       if (available.length > 0) {
         const availWrap = wrap.createDiv({ cls: "butter-layout-list" });
-        availWrap.createEl("div", {
+        availWrap.createDiv({
           cls: "butter-layout-list-label",
           text: tx("Available"),
         });
@@ -986,7 +986,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
 /** Open a small floating menu anchored to `anchor` listing each
    *  available submenu. Tap a row to invoke `onPick(submenuId)`. */
   export function openMoveToSubmenuMenu(this: ButterSettingTab, anchor: HTMLElement, submenus: Array<Extract<ToolbarLayoutItem, { type: "submenu" }>>, onPick: (submenuId: string) => void | Promise<void>) {
-    const menu = activeDocument.createElement("div");
+    const menu = activeWindow.createDiv();
     menu.classList.add("butter-layout-popup-menu");
     for (const sub of submenus) {
       const item = menu.createDiv({ cls: "butter-layout-popup-menu-item" });
@@ -1010,7 +1010,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
     });
     activeDocument.body.appendChild(menu);
     const dismiss = (e: MouseEvent) => {
-      if (!menu.contains(e.target as Node)) cleanup();
+      if (!menu.contains(e.target as Node | null)) cleanup();
     };
     // Close on any scroll - the menu is position:fixed so it would
     // otherwise stay glued to the viewport while its anchor button
@@ -1090,7 +1090,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         }
       }
 
-      const placeholder = activeDocument.createElement("div");
+      const placeholder = activeWindow.createDiv();
       placeholder.className = "butter-layout-row-placeholder";
       if (row.classList.contains("is-nested")) placeholder.classList.add("is-nested");
 
@@ -1098,7 +1098,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       sourceRows.forEach(r => totalHeight += r.offsetHeight);
       placeholder.style.height = `${totalHeight}px`;
 
-      const ghost = activeDocument.createElement("div");
+      const ghost = activeWindow.createDiv();
       ghost.classList.add("butter-layout-row-ghost");
       ghost.setCssProps({
         "--butter-pos-width": `${startRect.width}px`,

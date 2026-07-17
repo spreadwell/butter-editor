@@ -1,4 +1,5 @@
 import { LiveDragState, dragVisualTotal, dragVisualAt, dragIsCompact } from "./types";
+import type { DragStyleSheet } from "./types";
 import { buildHandleDotsSvg } from "./constants";
 
 
@@ -14,7 +15,7 @@ import { gapAbove, EXCLUDED_BLOCK_TYPES } from "../block-spacing";
 
 
 export function createHandleEl(): HTMLElement {
-  const el = activeDocument.createElement("div");
+  const el = activeWindow.createDiv();
   el.className = "butter-drag-handle";
   el.setAttribute("role", "button");
   el.setAttribute("tabindex", "-1");
@@ -37,7 +38,7 @@ export function createHandleEl(): HTMLElement {
  *
  *  Returns 0 for non-list blocks and for depth-0 list items. */
 export function createDropFiller(): HTMLElement {
-  const el = activeDocument.createElement("div");
+  const el = activeWindow.createDiv();
   el.className = "butter-drop-filler";
   activeDocument.body.appendChild(el);
   return el;
@@ -181,7 +182,7 @@ function resolveGapPx(
   }
   const hit = cache.get(css);
   if (hit != null) return hit;
-  const probe = parent.ownerDocument.createElement("div");
+  const probe = parent.ownerDocument.win.createDiv();
   probe.className = "butter-gap-probe";
   parent.appendChild(probe);
   probe.style.marginTop = css;
@@ -461,9 +462,9 @@ export function createGhost(
   doms: HTMLElement[],
   editorDom: HTMLElement,
 ): HTMLElement {
-  const ghost = activeDocument.createElement("div");
+  const ghost = activeWindow.createDiv();
   ghost.className = "butter-drag-ghost";
-  const inner = activeDocument.createElement("div");
+  const inner = activeWindow.createDiv();
   inner.className = "butter-drag-ghost-inner";
 
   // Replicate the editor's class chain so cloned blocks get the
@@ -482,10 +483,10 @@ export function createGhost(
     s.setProperty("box-shadow", "none", "important");
     s.setProperty("display", "block", "important");
   };
-  const viewWrap = activeDocument.createElement("div");
+  const viewWrap = activeWindow.createDiv();
   viewWrap.className = "butter-editor-view";
   resetBox(viewWrap);
-  const pmWrap = activeDocument.createElement("div");
+  const pmWrap = activeWindow.createDiv();
   pmWrap.className = "ProseMirror";
   resetBox(pmWrap);
   for (const c of ["markdown-rendered", "markdown-preview-view"]) {
@@ -577,11 +578,20 @@ export function positionGhost(
 // attributes, classes). The hot-path reflow uses an injected
 // stylesheet instead, which PM's observer can't see.
 
-export function createDragStyleEl(): HTMLStyleElement {
-  const el = activeDocument.createElement("style");
-  el.id = "butter-drag-transforms";
-  activeDocument.head.appendChild(el);
-  return el;
+export function createDragStyleSheet(): DragStyleSheet {
+  const ownerDocument = activeDocument;
+  const sheet = new activeWindow.CSSStyleSheet();
+  ownerDocument.adoptedStyleSheets = [...ownerDocument.adoptedStyleSheets, sheet];
+  return {
+    replaceSync(css: string) {
+      sheet.replaceSync(css);
+    },
+    remove() {
+      ownerDocument.adoptedStyleSheets = ownerDocument.adoptedStyleSheets.filter(
+        (candidate) => candidate !== sheet,
+      );
+    },
+  };
 }
 
 // All injected rules are scoped to .ProseMirror so they never

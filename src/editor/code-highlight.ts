@@ -176,7 +176,7 @@ function collectLangs(doc: EditorState["doc"]): string[] {
  */
 async function loadGrammars(app: App, langs: string[]): Promise<void> {
   if (!langs.length) return;
-  const hidden = activeDocument.createElement("div");
+  const hidden = activeWindow.createDiv();
   hidden.addClass("butter-prism-loader");
   activeDocument.body.appendChild(hidden);
   const comp = new Component();

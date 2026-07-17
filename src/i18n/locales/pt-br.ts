@@ -371,6 +371,8 @@ export const ptBR = {
   "Too many attempts in a short window. Wait a minute and try again.": "Muitas tentativas em um curto espaço de tempo. Espere um minuto e tente novamente.",
   "Couldn't reach the licensing server. Check your internet connection.": "Não foi possível acessar o servidor de licenciamento. Verifique sua conexão com a Internet.",
   "The licensing service is temporarily unavailable. Try again in a minute.": "O serviço de licenciamento está temporariamente indisponível. Tente novamente em um minuto.",
+  "Update Butter Editor to continue using this license.": "Atualize o Butter Editor para continuar usando esta licença.",
+  "This license requires a newer version of Butter Editor.": "Esta licença requer uma versão mais recente do Butter Editor.",
   "Input was rejected by the server. Double-check email + key formatting.": "A entrada foi rejeitada pelo servidor. Verifique novamente o e-mail + a formatação da chave.",
   "Something went wrong. Try again in a moment.": "Algo deu errado. Tente novamente em alguns instantes.",
   "Toolbar platform": "Plataforma da barra de ferramentas",

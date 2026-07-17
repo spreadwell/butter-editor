@@ -91,7 +91,7 @@ export const parser = {
 export const serializer = {
   ...bridgeSerializer,
   /** Plain serialize - used for round-trip tests and anywhere the
-   *  caller wants PMX to re-synthesize the entire doc from scratch.
+   *  caller wants Butter to re-synthesize the entire doc from scratch.
    *  Optional `options` configure canonical-form preferences (bullet
    *  marker, italic/bold style, fence/HR character). */
   serialize(doc: PMNode, options?: CanonicalFormOptions): string {

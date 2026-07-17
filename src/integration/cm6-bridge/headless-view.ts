@@ -55,7 +55,7 @@ export function createHeadlessMirror(
   const { initialMarkdown, extensions, onExternalChange, getCoordBridge } =
     options;
 
-  const container = activeDocument.createElement("div");
+  const container = activeWindow.createDiv();
   container.className = "butter-cm6-mirror";
   container.addClass("butter-cm6-mirror-hidden");
   container.setAttribute("aria-hidden", "true");

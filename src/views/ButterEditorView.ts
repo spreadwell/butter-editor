@@ -35,6 +35,7 @@ import {
   type LayoutItem as ToolbarLayoutItem,
   defaultMainLayout,
   defaultTableLayout,
+  editorTopChromeBottom,
   mobileLayoutDefault,
   mobileTableLayoutDefault,
 } from "../ui/toolbar-layout";
@@ -611,7 +612,7 @@ export class ButterEditorView extends TextFileView {
         ":scope > .butter-toolbar-stack",
       );
       if (!stack) {
-        stack = activeDocument.createElement("div");
+        stack = activeWindow.createDiv();
         stack.className = "butter-toolbar-stack";
         content.insertBefore(stack, editorRoot);
       }
@@ -646,7 +647,7 @@ export class ButterEditorView extends TextFileView {
       ":scope > .butter-toolbar-stack",
     );
     if (!stack) {
-      stack = activeDocument.createElement("div");
+      stack = activeWindow.createDiv();
       stack.className = "butter-toolbar-stack";
       leaf.insertBefore(stack, content);
     }
@@ -1281,7 +1282,6 @@ export class ButterEditorView extends TextFileView {
       }
     });
     this.inlineTitleEl = inlineTitle;
-    (this as unknown as { titleEl: HTMLElement }).titleEl = inlineTitle;
 
     // Properties
     this.propertiesEl = container.createDiv({
@@ -1559,7 +1559,10 @@ export class ButterEditorView extends TextFileView {
           const hb = header?.getBoundingClientRect().bottom ?? 0;
           const sb = stack?.getBoundingClientRect().bottom ?? 0;
           const tb = tableBar?.getBoundingClientRect().bottom ?? 0;
-          return Math.max(hb, sb, tb);
+          const toolbarPosition = this.containerEl?.getAttribute("data-toolbar-pos") === "bottom"
+            ? "bottom"
+            : "top";
+          return editorTopChromeBottom(toolbarPosition, hb, sb, tb);
         },
       }),
       // Cell-range drag MUST register BEFORE tableEditing() so its
@@ -2297,6 +2300,7 @@ export class ButterEditorView extends TextFileView {
     this.renderProperties();
     if (this.inlineTitleEl && this.file) {
       this.inlineTitleEl.textContent = this.file.basename;
+      if (clear) (this.leaf as unknown as { updateHeader?: () => void }).updateHeader?.();
       if (clear && !body.trim()) {
         window.requestAnimationFrame(() => {
           const el = this.inlineTitleEl;

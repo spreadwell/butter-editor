@@ -32,6 +32,18 @@ export type LayoutItem =
 
 export type Layout = LayoutItem[];
 
+/** The lower edge of chrome that can cover block-level UI at the top
+ *  of the editor, including drag handles and selection overlays. */
+export function editorTopChromeBottom(
+  toolbarPosition: "top" | "bottom",
+  headerBottom: number,
+  toolbarBottom: number,
+  tableToolbarBottom: number,
+): number {
+  if (toolbarPosition === "bottom") return headerBottom;
+  return Math.max(headerBottom, toolbarBottom, tableToolbarBottom);
+}
+
 // ── ID generation ──────────────────────────────────────────────
 //
 // Separator + submenu items need unique ids so the settings UI

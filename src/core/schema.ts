@@ -775,7 +775,7 @@ const extNodes = getExtensionNodeSpecs();
 const allNodes = { ...extNodes, ...basicNodes, ...tNodes };
 
 /**
- * Source preservation is a first-class property of the PMX schema.
+ * Source preservation is a first-class property of Butter's editor schema.
  *
  * Every block-level node and inline-atom node carries a `sourceRange`
  * attribute - `{ start: number, end: number }` character offsets into

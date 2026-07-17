@@ -37,6 +37,7 @@
 import { Plugin as PMPlugin, PluginKey } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import type { Fragment, Node as PMNode } from "prosemirror-model";
+import { editorTopChromeBottom } from "../ui/toolbar-layout";
 import {
   CellSelection,
   TableMap,
@@ -221,18 +222,18 @@ class SelectionFrameView {
   constructor(view: EditorView) {
     this.view = view;
 
-    this.sourceFrame = activeDocument.createElement("div");
+    this.sourceFrame = activeWindow.createDiv();
     this.sourceFrame.className = "butter-cell-selection-frame";
 
     for (const side of ["top", "right", "bottom", "left"] as const) {
-      const edge = activeDocument.createElement("div");
+      const edge = activeWindow.createDiv();
       edge.className = `butter-cell-frame-edge butter-cell-frame-edge-${side}`;
       edge.addEventListener("mousedown", (e) => this.onEdgeMouseDown(e));
       this.sourceFrame.appendChild(edge);
       this.edges.push(edge);
     }
 
-    this.destFrame = activeDocument.createElement("div");
+    this.destFrame = activeWindow.createDiv();
     this.destFrame.className = "butter-cell-dest-outline";
 
     activeDocument.body.appendChild(this.sourceFrame);
@@ -295,7 +296,15 @@ class SelectionFrameView {
     const hb = header?.getBoundingClientRect().bottom ?? 0;
     const sb = stack?.getBoundingClientRect().bottom ?? 0;
     const tb = tableBar?.getBoundingClientRect().bottom ?? 0;
-    const chromeBottom = Math.max(hb, sb, tb);
+    const toolbarPosition = leaf?.getAttribute("data-toolbar-pos") === "bottom"
+      ? "bottom"
+      : "top";
+    const chromeBottom = editorTopChromeBottom(
+      toolbarPosition,
+      hb,
+      sb,
+      tb,
+    );
     const clippedTop = Math.max(vr.top, chromeBottom);
     const clippedHeight = vr.height - (clippedTop - vr.top);
     if (clippedHeight <= 0) {

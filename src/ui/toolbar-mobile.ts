@@ -69,14 +69,14 @@ export function installMobileToolbarOverflowIndicators(
 ): void {
   cleanupMobileToolbarOverflowIndicators(root);
 
-  const leftInd = activeDocument.createElement("div");
+  const leftInd = activeWindow.createDiv();
   leftInd.classList.add("butter-mobile-overflow-indicator", "is-left");
   leftInd.setAttribute("role", "button");
   leftInd.setAttribute("tabindex", "0");
   leftInd.setAttribute("aria-label", tx("Scroll toolbar left"));
   setIcon(leftInd, "chevron-left");
 
-  const rightInd = activeDocument.createElement("div");
+  const rightInd = activeWindow.createDiv();
   rightInd.classList.add("butter-mobile-overflow-indicator", "is-right");
   rightInd.setAttribute("role", "button");
   rightInd.setAttribute("tabindex", "0");
@@ -323,7 +323,7 @@ function openMobileInsertImageDialog(
         text: tx("Pick from device"),
       });
       pickBtn.addEventListener("click", () => {
-        const input = activeDocument.createElement("input");
+        const input = activeWindow.createEl("input");
         input.type = "file";
         input.accept = "image/*";
         input.addClass("butter-mobile-file-input");
@@ -406,7 +406,7 @@ async function insertImageFromFile(
 
 function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   if (item.type === "separator") {
-    const sep = activeDocument.createElement("div");
+    const sep = activeWindow.createDiv();
     sep.classList.add("mobile-toolbar-separator");
     list.appendChild(sep);
     return;
@@ -419,7 +419,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
     // viewport. The "long-press for variants" framing comes for
     // free since tap and long-press both fire `click` after the
     // touch ends.
-    const el = activeDocument.createElement("div");
+    const el = activeWindow.createDiv();
     el.classList.add(
       "mobile-toolbar-option",
       "clickable-icon",
@@ -440,7 +440,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
     // auto-injected button at the end of `renderMobile`; an
     // explicit one here just reserves a spot in the user's layout
     // so they can position the More button mid-bar if they want.
-    const el = activeDocument.createElement("div");
+    const el = activeWindow.createDiv();
     el.classList.add(
       "mobile-toolbar-option",
       "clickable-icon",
@@ -465,7 +465,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   // applyToolbarButtonVisibility rebuilds the mobile bar on toggle.
   const htmlOk = isMobileHtmlFormattingEnabled(ctx);
   if (def.id === "text-color" && !htmlOk) return;
-  const el = activeDocument.createElement("div");
+  const el = activeWindow.createDiv();
   // `.clickable-icon` carries Obsidian's hover / active / focused
   // icon-color cascade - pulling the bar into the host app's theme
   // automatically. With it, "detached" style mirrors Obsidian's own
@@ -592,11 +592,11 @@ function openMobileVariantsPopover(
   ctx: RenderCtx,
 ) {
   ctx.closePopover();
-  const popup = activeDocument.createElement("div");
+  const popup = activeWindow.createDiv();
   popup.classList.add("butter-mobile-variants-popover");
   for (const child of item.children) {
     if (child.type === "separator") {
-      const sep = activeDocument.createElement("div");
+      const sep = activeWindow.createDiv();
       sep.classList.add("butter-mobile-variants-sep");
       popup.appendChild(sep);
       continue;
@@ -608,12 +608,12 @@ function openMobileVariantsPopover(
     }
     const def = BUTTON_REGISTRY.get(child.id);
     if (!def) continue;
-    const row = activeDocument.createElement("div");
+    const row = activeWindow.createDiv();
     row.classList.add("butter-mobile-variant-row");
-    const icon = activeDocument.createElement("span");
+    const icon = activeWindow.createSpan();
     icon.classList.add("butter-mobile-variant-icon");
     setIcon(icon, def.icon);
-    const label = activeDocument.createElement("span");
+    const label = activeWindow.createSpan();
     label.classList.add("butter-mobile-variant-label");
     label.textContent = tx(def.label);
     row.appendChild(icon);
@@ -680,18 +680,18 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
   }
   const layout = ctx.getLayout();
 
-  const backdrop = activeDocument.createElement("div");
+  const backdrop = activeWindow.createDiv();
   backdrop.classList.add("butter-mobile-sheet-backdrop");
-  const sheet = activeDocument.createElement("div");
+  const sheet = activeWindow.createDiv();
   sheet.classList.add("butter-mobile-sheet");
   sheet.setAttribute("role", "dialog");
 
-  const title = activeDocument.createElement("div");
+  const title = activeWindow.createDiv();
   title.classList.add("butter-mobile-sheet-title");
   title.textContent = tx("More actions");
   sheet.appendChild(title);
 
-  const list = activeDocument.createElement("div");
+  const list = activeWindow.createDiv();
   list.classList.add("butter-mobile-sheet-list");
 
   // Defined here so callbacks (addRow.click) capture a stable
@@ -716,12 +716,12 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
   };
 
   const addRow = (def: BtnDef) => {
-    const row = activeDocument.createElement("div");
+    const row = activeWindow.createDiv();
     row.classList.add("butter-mobile-sheet-row");
-    const icon = activeDocument.createElement("span");
+    const icon = activeWindow.createSpan();
     icon.classList.add("butter-mobile-sheet-icon");
     setIcon(icon, def.icon);
-    const label = activeDocument.createElement("span");
+    const label = activeWindow.createSpan();
     label.classList.add("butter-mobile-sheet-label");
     label.textContent = tx(def.label);
     row.appendChild(icon);
@@ -736,7 +736,7 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
   const addItems = (items: LayoutItem[]) => {
     for (const item of items) {
       if (item.type === "separator") {
-        const sep = activeDocument.createElement("div");
+        const sep = activeWindow.createDiv();
         sep.classList.add("butter-mobile-sheet-sep");
         list.appendChild(sep);
         continue;
@@ -826,17 +826,17 @@ function renderNativeMain(
   ctx: RenderCtx,
   getLayout: () => Layout,
 ): void {
-  const container = activeDocument.createElement("div");
+  const container = activeWindow.createDiv();
   container.classList.add("mobile-toolbar-options-container");
   dom.appendChild(container);
 
   // Main pill - scrollable list of formatting buttons.
-  const listWrap = activeDocument.createElement("div");
+  const listWrap = activeWindow.createDiv();
   listWrap.classList.add(
     "mobile-toolbar-options-list-container",
     "butter-mobile-overflow-host",
   );
-  const list = activeDocument.createElement("div");
+  const list = activeWindow.createDiv();
   list.classList.add("mobile-toolbar-options-list");
   listWrap.appendChild(list);
   container.appendChild(listWrap);
@@ -853,13 +853,13 @@ function renderNativeMain(
   // body-class state machine.
   const hasExplicitOverflow = layout.some((i) => i.type === "overflow");
   if (!hasExplicitOverflow) {
-    const rightFloat = activeDocument.createElement("div");
+    const rightFloat = activeWindow.createDiv();
     rightFloat.classList.add(
       "mobile-toolbar-floating-options",
       "butter-mobile-chrome-pill",
     );
 
-    const swapBack = activeDocument.createElement("button");
+    const swapBack = activeWindow.createEl("button");
     swapBack.className =
       "mobile-toolbar-option clickable-icon butter-mobile-swap-btn";
     swapBack.setAttribute("aria-label", tx("Switch to table toolbar"));
@@ -870,7 +870,7 @@ function renderNativeMain(
     });
     rightFloat.appendChild(swapBack);
 
-    const more = activeDocument.createElement("div");
+    const more = activeWindow.createDiv();
     more.classList.add(
       "mobile-toolbar-option",
       "clickable-icon",
@@ -903,19 +903,19 @@ function renderButterMain(
   ctx: RenderCtx,
   getLayout: () => Layout,
 ): void {
-  const row = activeDocument.createElement("div");
+  const row = activeWindow.createDiv();
   row.classList.add("butter-mobile-bar-row");
   dom.appendChild(row);
 
   // Main button list - scrolls horizontally if too many for the
   // visible width.
-  const listWrap = activeDocument.createElement("div");
+  const listWrap = activeWindow.createDiv();
   listWrap.classList.add(
     "butter-mobile-bar-list-wrap",
     "butter-mobile-overflow-host",
   );
   row.appendChild(listWrap);
-  const list = activeDocument.createElement("div");
+  const list = activeWindow.createDiv();
   list.classList.add("butter-mobile-bar-list", "mobile-toolbar-options-list");
   listWrap.appendChild(list);
   const layout = getLayout();
@@ -934,7 +934,7 @@ function renderButterMain(
     (i) => i.type === "button" && i.id === "insert",
   );
   if (!hasExplicitOverflow && !hasExplicitInsert) {
-    const insertBtn = activeDocument.createElement("div");
+    const insertBtn = activeWindow.createDiv();
     insertBtn.classList.add(
       "mobile-toolbar-option",
       "clickable-icon",
@@ -959,10 +959,10 @@ function renderButterMain(
   //   3. close-keyboard (▽)     - default; dismisses the on-screen
   //                               keyboard by blurring whatever's
   //                               currently focused.
-  const chrome = activeDocument.createElement("div");
+  const chrome = activeWindow.createDiv();
   chrome.classList.add("butter-mobile-bar-chrome");
 
-  const swapBack = activeDocument.createElement("button");
+  const swapBack = activeWindow.createEl("button");
   swapBack.className =
     "mobile-toolbar-option clickable-icon butter-mobile-swap-btn";
   swapBack.setAttribute("aria-label", tx("Switch to table toolbar"));
@@ -973,7 +973,7 @@ function renderButterMain(
   });
   chrome.appendChild(swapBack);
 
-  const closeBtn = activeDocument.createElement("button");
+  const closeBtn = activeWindow.createEl("button");
   closeBtn.className =
     "mobile-toolbar-option clickable-icon butter-mobile-close-btn";
   closeBtn.setAttribute("aria-label", tx("Close drawer"));
@@ -986,7 +986,7 @@ function renderButterMain(
   });
   chrome.appendChild(closeBtn);
 
-  const hideKbBtn = activeDocument.createElement("button");
+  const hideKbBtn = activeWindow.createEl("button");
   hideKbBtn.className =
     "mobile-toolbar-option clickable-icon butter-mobile-hide-kb-btn";
   hideKbBtn.setAttribute("aria-label", tx("Hide keyboard"));

@@ -1,7 +1,7 @@
 /**
  * extensions.ts
  *
- * Extension API for adding new markdown syntax to Butter PMX.
+ * Extension API for adding new markdown syntax to Butter Editor.
  *
  * Third-party code (a community plugin, a future feature module,
  * anyone who wants to teach Butter a new syntax) registers a

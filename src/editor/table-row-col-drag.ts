@@ -195,10 +195,10 @@ const HANDLE_SIZE = 18;
 function makeGripDot(): HTMLElement {
   // Six tiny dots arranged 2×3 - same visual vocabulary as the
   // block drag handle's grip-dots icon.
-  const dot = activeDocument.createElement("span");
+  const dot = activeWindow.createSpan();
   dot.className = "butter-table-handle-dots";
   for (let i = 0; i < 6; i++) {
-    const d = activeDocument.createElement("span");
+    const d = activeWindow.createSpan();
     d.className = "butter-table-handle-dot";
     dot.appendChild(d);
   }
@@ -237,7 +237,7 @@ function makeHandle(axis: "row" | "col", idx: number): HTMLElement {
   // (the drag is pointer-driven, click is handled in the JS), so the
   // accessibility cost of dropping the button element is small
   // role / aria-label / tabindex preserve the rest.
-  const h = activeDocument.createElement("div");
+  const h = activeWindow.createDiv();
   h.className = `butter-table-${axis}-handle`;
   h.dataset.axis = axis;
   h.dataset.idx = String(idx);
@@ -276,12 +276,12 @@ export function tableRowColDragPlugin() {
       // ABOVE editor content (z-index) but with pointer-events: none
       // by default - children individually re-enable pointer-events
       // so they can be clicked / dragged.
-      const layer = activeDocument.createElement("div");
+      const layer = activeWindow.createDiv();
       layer.className = "butter-table-handles-layer";
       host.appendChild(layer);
 
       // Reusable drop indicator (rendered only during a drag).
-      const dropIndicator = activeDocument.createElement("div");
+      const dropIndicator = activeWindow.createDiv();
       dropIndicator.className = "butter-table-drop-indicator";
       layer.appendChild(dropIndicator);
 
@@ -726,7 +726,7 @@ export function tableRowColDragPlugin() {
         // can't see in the indicator's position.
         if (dst !== lastDstIdx) {
           if (dragLive.axis === "row") {
-            const rows = allRowEls(activeCtx?.tableDOM ?? activeDocument.createElement("div"));
+            const rows = allRowEls(activeCtx?.tableDOM ?? activeWindow.createDiv());
             const isNoOp = dst === dragLive.srcIdx || dst === dragLive.srcIdx + 1;
             const targetSnap = dst < rows.length
               ? snapshotRow(rows[dst])
@@ -903,10 +903,10 @@ export function tableRowColDragPlugin() {
         // accept it outside its original parent. Cell widths get
         // copied from the original source row's cell rects so the
         // ghost looks pixel-identical to the row it lifted from.
-        const wrap = activeDocument.createElement("div");
+        const wrap = activeWindow.createDiv();
         wrap.className = "butter-table-row-ghost";
-        const table = activeDocument.createElement("table");
-        const tbody = activeDocument.createElement("tbody");
+        const table = activeWindow.createEl("table");
+        const tbody = activeWindow.createEl("tbody");
         table.appendChild(tbody);
         wrap.appendChild(table);
         const clone = tr.cloneNode(true) as HTMLElement;
@@ -930,10 +930,10 @@ export function tableRowColDragPlugin() {
         // One row per source row, each containing only the source
         // column's cell (cloned, with original width preserved).
         // Heights come naturally from the cloned cells.
-        const wrap = activeDocument.createElement("div");
+        const wrap = activeWindow.createDiv();
         wrap.className = "butter-table-col-ghost";
-        const table = activeDocument.createElement("table");
-        const tbody = activeDocument.createElement("tbody");
+        const table = activeWindow.createEl("table");
+        const tbody = activeWindow.createEl("tbody");
         table.appendChild(tbody);
         wrap.appendChild(table);
         const rows = Array.from(tableDOM.querySelectorAll("tr"));
@@ -941,7 +941,7 @@ export function tableRowColDragPlugin() {
           const cells = Array.from(row.children) as HTMLElement[];
           const cell = cells[colIdx];
           if (!cell) continue;
-          const newTr = activeDocument.createElement("tr");
+          const newTr = activeWindow.createEl("tr");
           const cellClone = cell.cloneNode(true) as HTMLElement;
           const w = cell.getBoundingClientRect().width;
           const h = cell.getBoundingClientRect().height;

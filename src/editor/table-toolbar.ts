@@ -380,7 +380,7 @@ for (const b of ITEMS) TABLE_BUTTON_REGISTRY.set(b.id, b);
  *  Outer keeps `overflow: hidden` for the slide-in animation;
  *  horizontal scroll happens on the inner. */
 function buildShell(): { dom: HTMLElement; inner: HTMLElement } {
-  const dom = activeDocument.createElement("div");
+  const dom = activeWindow.createDiv();
   // Class set in the platform branch below - desktop wears
   // `.butter-table-toolbar` (+ `-inner` on the inner row); mobile
   // wears `.butter-mobile-table-toolbar` (+ `.butter-mobile-bar`
@@ -392,7 +392,7 @@ function buildShell(): { dom: HTMLElement; inner: HTMLElement } {
   // element carrying aria-label, which made hovering the empty
   // toolbar background show a "Table controls" tooltip the user
   // didn't ask for. Tooltips should fire only on the buttons.
-  const inner = activeDocument.createElement("div");
+  const inner = activeWindow.createDiv();
   dom.appendChild(inner);
   return { dom, inner };
 }
@@ -420,8 +420,8 @@ function renderTableButton(
   // visually drift in height, padding, or chrome. Desktop keeps the
   // dedicated `.butter-table-toolbar-btn` chrome.
   const el = isMobile
-    ? activeDocument.createElement("div")
-    : activeDocument.createElement("button");
+    ? activeWindow.createDiv()
+    : activeWindow.createEl("button");
   el.className = isMobile
     ? "mobile-toolbar-option clickable-icon"
     : "butter-table-toolbar-btn clickable-icon";
@@ -449,29 +449,29 @@ function renderTableSubmenu(
 ): HTMLElement {
   const isMobile = Platform.isMobile;
   const el = isMobile
-    ? activeDocument.createElement("div")
-    : activeDocument.createElement("button");
+    ? activeWindow.createDiv()
+    : activeWindow.createEl("button");
   el.className = isMobile
     ? "mobile-toolbar-option clickable-icon butter-btn-submenu"
     : "butter-table-toolbar-btn clickable-icon butter-btn-submenu";
   el.setAttribute("aria-label", item.label ? txKnown(item.label) : tx("Submenu"));
   el.dataset.submenuId = item.id;
   setIcon(el, item.icon || "more-horizontal");
-  const dot = activeDocument.createElement("span");
+  const dot = activeWindow.createSpan();
   dot.classList.add("butter-submenu-dot");
   el.appendChild(dot);
 
   el.addEventListener("click", (e) => {
     e.preventDefault();
     ctx.closePopover();
-    const popup = activeDocument.createElement("div");
+    const popup = activeWindow.createDiv();
     popup.classList.add("butter-toolbar-submenu-popup");
     for (const child of item.children) {
       const childEl = renderTableItem(child, ctx, /* nested */ true);
       if (childEl) popup.appendChild(childEl);
     }
     if (popup.children.length === 0) {
-      const empty = activeDocument.createElement("div");
+      const empty = activeWindow.createDiv();
       empty.classList.add("butter-toolbar-submenu-empty");
       empty.textContent = tx("Empty");
       popup.appendChild(empty);
@@ -488,7 +488,7 @@ function renderTableItem(
   nested = false,
 ): HTMLElement | null {
   if (item.type === "separator") {
-    const d = activeDocument.createElement("div");
+    const d = activeWindow.createDiv();
     // Mobile reuses the main mobile bar's separator class so the
     // shared `.butter-mobile-bar .mobile-toolbar-separator` rule
     // applies; desktop keeps `.butter-table-toolbar-divider` for
@@ -588,7 +588,7 @@ export function tableToolbarPlugin(
         // can't itself open a drawer - keeps the chrome shape
         // identical between main and table bars.
         inner.remove();
-        const swap = activeDocument.createElement("button");
+        const swap = activeWindow.createEl("button");
         swap.className =
           "mobile-toolbar-option clickable-icon butter-mobile-swap-btn";
         swap.setAttribute("aria-label", tx("Switch to main toolbar"));
@@ -597,7 +597,7 @@ export function tableToolbarPlugin(
           e.preventDefault();
           activeDocument.body.classList.add("butter-mobile-prefer-main");
         });
-        const closeBtn = activeDocument.createElement("button");
+        const closeBtn = activeWindow.createEl("button");
         closeBtn.className =
           "mobile-toolbar-option clickable-icon butter-mobile-close-btn";
         closeBtn.setAttribute("aria-label", tx("Close insert drawer"));
@@ -611,9 +611,9 @@ export function tableToolbarPlugin(
         let overflowHost: HTMLElement;
         if (style === "attached") {
           // Solid full-width row: [main list] [right chrome]
-          const row = activeDocument.createElement("div");
+          const row = activeWindow.createDiv();
           row.classList.add("butter-mobile-bar-row");
-          const listWrap = activeDocument.createElement("div");
+          const listWrap = activeWindow.createDiv();
           listWrap.classList.add(
             "butter-mobile-bar-list-wrap",
             "butter-mobile-overflow-host",
@@ -622,7 +622,7 @@ export function tableToolbarPlugin(
           listWrap.appendChild(inner);
           row.appendChild(listWrap);
           overflowHost = listWrap;
-          const chrome = activeDocument.createElement("div");
+          const chrome = activeWindow.createDiv();
           chrome.classList.add("butter-mobile-bar-chrome");
           chrome.appendChild(swap);
           chrome.appendChild(closeBtn);
@@ -630,9 +630,9 @@ export function tableToolbarPlugin(
           dom.appendChild(row);
         } else {
           // Native two-pill: [main list pill] [right chrome pill]
-          const container = activeDocument.createElement("div");
+          const container = activeWindow.createDiv();
           container.classList.add("mobile-toolbar-options-container");
-          const listWrap = activeDocument.createElement("div");
+          const listWrap = activeWindow.createDiv();
           listWrap.classList.add(
             "mobile-toolbar-options-list-container",
             "butter-mobile-overflow-host",
@@ -640,7 +640,7 @@ export function tableToolbarPlugin(
           listWrap.appendChild(inner);
           container.appendChild(listWrap);
           overflowHost = listWrap;
-          const rightFloat = activeDocument.createElement("div");
+          const rightFloat = activeWindow.createDiv();
           rightFloat.classList.add(
             "mobile-toolbar-floating-options",
             "butter-mobile-chrome-pill",

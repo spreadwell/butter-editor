@@ -371,6 +371,8 @@ export const ko = {
   "Too many attempts in a short window. Wait a minute and try again.": "짧은 기간에 시도 횟수가 너무 많습니다. 잠시 기다렸다가 다시 시도해 보세요.",
   "Couldn't reach the licensing server. Check your internet connection.": "라이선스 서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요.",
   "The licensing service is temporarily unavailable. Try again in a minute.": "라이선스 서비스를 일시적으로 사용할 수 없습니다. 잠시 후에 다시 시도해 보세요.",
+  "Update Butter Editor to continue using this license.": "이 라이선스를 계속 사용하려면 Butter Editor를 업데이트하세요.",
+  "This license requires a newer version of Butter Editor.": "이 라이선스에는 최신 버전의 Butter Editor가 필요합니다.",
   "Input was rejected by the server. Double-check email + key formatting.": "서버에서 입력을 거부했습니다. 이메일과 키 형식을 다시 확인하세요.",
   "Something went wrong. Try again in a moment.": "문제가 발생했습니다. 잠시 후에 다시 시도해 보세요.",
   "Toolbar platform": "툴바 플랫폼",

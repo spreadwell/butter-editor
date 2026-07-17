@@ -164,7 +164,7 @@ export function imageView(app: App, getSourcePath: () => string) {
     view: EditorView,
     getPos: () => number | undefined,
   ): NodeView => {
-    const wrap = activeDocument.createElement("span");
+    const wrap = activeWindow.createSpan();
     wrap.className = "butter-image";
     wrap.contentEditable = "false";
 
@@ -195,7 +195,7 @@ export function imageView(app: App, getSourcePath: () => string) {
     };
 
     if (resolved !== null) {
-      img = activeDocument.createElement("img");
+      img = activeWindow.createEl("img");
       img.src = resolved;
       const initAttrs = node.attrs as { alt?: string; title?: string };
       if (initAttrs.alt) img.alt = initAttrs.alt;
@@ -212,7 +212,7 @@ export function imageView(app: App, getSourcePath: () => string) {
       fallToPlaceholder();
     }
 
-    const handle = activeDocument.createElement("span");
+    const handle = activeWindow.createSpan();
     handle.className = "butter-image-resize-handle";
     handle.setAttribute("aria-label", "Drag to resize");
     handle.contentEditable = "false";
@@ -346,7 +346,8 @@ export function imageView(app: App, getSourcePath: () => string) {
         return true;
       },
       stopEvent(event) {
-        return event.target === handle || handle.contains(event.target as Node);
+        const target = event.target as Node | null;
+        return target === handle || handle.contains(target);
       },
       ignoreMutation(mutation) {
         // Size mutations during drag are us, not the editor.
@@ -519,4 +520,3 @@ function truncateSrcForHeader(src: string): string {
   const max = 40;
   return src.length > max ? src.slice(0, max - 1) + "…" : src;
 }
-

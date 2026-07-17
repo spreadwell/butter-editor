@@ -74,6 +74,12 @@ import {
     // Sticky "license was invalidated" (refund / chargeback /
     // revoked). Distinct from a natural trial expiry.
     if (s.wasInvalidated && status === "expired") return "invalidated";
+    // Protocol incompatibility is authoritative, not an outage. Keep it in
+    // the unknown phase so renderUnknownRows can show the update-required UI
+    // even when the last successful validation is more than an hour old.
+    if (status === "unknown" && s.lastReason === "client_upgrade_required") {
+      return "unknown";
+    }
     if (status === "unknown" && s.everValidated) {
       const since = Date.now() - (s.lastValidatedAt || 0);
       if (since > 60 * 60 * 1000) return "offline";
@@ -160,13 +166,14 @@ export function renderPollingRows(this: ButterSettingTab, parent: HTMLElement) {
 export function renderTrialRows(this: ButterSettingTab, parent: HTMLElement) {
     const r = this.computeRemaining();
     const s = this.plugin.settings;
-    const dayN = Math.min(TRIAL_LENGTH_DAYS, r.daysUsed + 1);
+    const trialLengthDays = s.trialLengthDays || TRIAL_LENGTH_DAYS;
+    const dayN = Math.min(trialLengthDays, r.daysUsed + 1);
     const stateName = r.daysLeft <= 0 && r.hoursLeft > 0
       ? tv("Trial - {count} {unit} left", { count: r.hoursLeft, unit: formatI18nUnit("hour", r.hoursLeft) })
       : tv("Trial - {count} {unit} left", { count: r.daysLeft, unit: formatI18nUnit("day", r.daysLeft) });
     const exp = s.licenseExpiresAt
-      ? tv("Day {day} of {total} - ends {date}.", { day: dayN, total: TRIAL_LENGTH_DAYS, date: this.formatActivationDate(s.licenseExpiresAt) })
-      : tv("Day {day} of {total}.", { day: dayN, total: TRIAL_LENGTH_DAYS });
+      ? tv("Day {day} of {total} - ends {date}.", { day: dayN, total: trialLengthDays, date: this.formatActivationDate(s.licenseExpiresAt) })
+      : tv("Day {day} of {total}.", { day: dayN, total: trialLengthDays });
     const row = new Setting(parent)
       .setName(stateName)
       .setDesc(exp)
@@ -192,18 +199,19 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
           .onClick(() => { window.open(LINKS.licensePortal, "_blank"); }),
       );
     this.renderKeyRow(parent);
-    // `customerId` is Polar's internal billing identifier (`cust_xxx`).
-    // It used to render here as a fallback "Customer" row when no
+    // `customerId` is an internal licensing identifier (and may be a
+    // legacy Polar ID). It used to render here as a fallback "Customer" row when no
     // email was on file - opaque to the user, useful to nobody but
     // support, and confusing as a settings row. Removed; if support
     // ever needs it, it stays available in the diagnostic copy under
     // Devices → Copy diagnostics.
     const realEmail = s.customerEmail && !/^trial-[0-9a-f]+@buttereditor\.com$/i.test(s.customerEmail)
       ? s.customerEmail : "";
-    if (s.activatedAt) {
+    const licenseStartedAt = s.licenseStartedAt || s.activatedAt;
+    if (licenseStartedAt) {
       const desc = realEmail
-        ? tv("{email} - Activated {date}", { email: realEmail, date: this.formatActivationDate(s.activatedAt) })
-        : tv("Activated {date}", { date: this.formatActivationDate(s.activatedAt) });
+        ? tv("{email} - Activated {date}", { email: realEmail, date: this.formatActivationDate(licenseStartedAt) })
+        : tv("Activated {date}", { date: this.formatActivationDate(licenseStartedAt) });
       new Setting(parent)
         .setName(tx(realEmail ? "Registered email" : "Activated"))
         .setDesc(desc);
@@ -259,7 +267,10 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
       case "device_deactivated":
         return tx("This device was deactivated from another machine.");
       case "polar_error":
+      case "service_unavailable":
         return tx("The licensing service is temporarily unavailable.");
+      case "client_upgrade_required":
+        return tx("Update Butter Editor to continue using this license.");
       case "network":
         return tx("We couldn't reach the licensing server.");
       default:
@@ -293,6 +304,14 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
 
 
 export function renderUnknownRows(this: ButterSettingTab, parent: HTMLElement) {
+    if (this.plugin.settings.lastReason === "client_upgrade_required") {
+      const row = new Setting(parent)
+        .setName(tx("Update Butter Editor to continue using this license."))
+        .setDesc(tx("This license requires a newer version of Butter Editor."));
+      prependIcon(row, "badge-alert", "butter-license-icon-muted");
+      this.renderPasteKeyRow(parent, /* asUpdate */ false);
+      return;
+    }
     const row = new Setting(parent)
       .setName(tx("Checking license..."))
       .setDesc(tx("Verifying with the licensing server."))
@@ -312,7 +331,8 @@ export function renderUnknownRows(this: ButterSettingTab, parent: HTMLElement) {
     if (remaining.daysLeft <= 0) return tx("Today's the day.");
     if (remaining.daysLeft === 1) return tx("One day left.");
     if (remaining.daysLeft === 2) return tx("Two days left.");
-    const pct = remaining.daysLeft / TRIAL_LENGTH_DAYS;
+    const trialLengthDays = this.plugin.settings.trialLengthDays || TRIAL_LENGTH_DAYS;
+    const pct = remaining.daysLeft / trialLengthDays;
     if (pct <= 0.33) return tx("Closing in.");
     if (pct <= 0.66) return tx("Halfway through.");
     return tx("Settling in.");
@@ -323,16 +343,17 @@ export function renderUnknownRows(this: ButterSettingTab, parent: HTMLElement) {
    *  "· ends in {h}h" on the last day. Plays well against the
    *  italic-serif headline. */
   export function trialStatLineFor(this: ButterSettingTab, remaining: { daysLeft: number; hoursLeft: number; daysUsed: number; expired: boolean }): string {
-    const dayN = Math.min(TRIAL_LENGTH_DAYS, Math.max(1, remaining.daysUsed + 1));
+    const trialLengthDays = this.plugin.settings.trialLengthDays || TRIAL_LENGTH_DAYS;
+    const dayN = Math.min(trialLengthDays, Math.max(1, remaining.daysUsed + 1));
     const exp = this.plugin.settings.licenseExpiresAt
       || this.plugin.settings.sessionExpiresAt
       || 0;
-    if (!exp) return tv("day {day} of {total}", { day: dayN, total: TRIAL_LENGTH_DAYS });
-    if (remaining.expired) return tv("day {day} of {total} - ended", { day: TRIAL_LENGTH_DAYS, total: TRIAL_LENGTH_DAYS });
+    if (!exp) return tv("day {day} of {total}", { day: dayN, total: trialLengthDays });
+    if (remaining.expired) return tv("day {day} of {total} - ended", { day: trialLengthDays, total: trialLengthDays });
     const dateStr = remaining.daysLeft <= 0
       ? tv("ends in {hours}h", { hours: Math.max(1, remaining.hoursLeft) })
       : tv("ends {date}", { date: this.formatActivationDate(exp) });
-    return tv("day {day} of {total} - {date}", { day: dayN, total: TRIAL_LENGTH_DAYS, date: dateStr });
+    return tv("day {day} of {total} - {date}", { day: dayN, total: trialLengthDays, date: dateStr });
   }
 
 /** Compact "Mon DD, YYYY" - Intl.DateTimeFormat with short month.
@@ -642,23 +663,30 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
     daysUsed: number;
     expired: boolean;
   } {
+    const trialLengthDays = this.plugin.settings.trialLengthDays || TRIAL_LENGTH_DAYS;
     const exp = this.plugin.settings.licenseExpiresAt
       || this.plugin.settings.sessionExpiresAt
       || 0;
     if (!exp) {
-      return { daysLeft: TRIAL_LENGTH_DAYS, hoursLeft: TRIAL_LENGTH_DAYS * 24, daysUsed: 0, expired: false };
+      return { daysLeft: trialLengthDays, hoursLeft: trialLengthDays * 24, daysUsed: 0, expired: false };
     }
     const now = Date.now();
     const msLeft = exp - now;
     if (msLeft <= 0) {
-      return { daysLeft: 0, hoursLeft: 0, daysUsed: TRIAL_LENGTH_DAYS, expired: true };
+      return { daysLeft: 0, hoursLeft: 0, daysUsed: trialLengthDays, expired: true };
     }
     const hoursLeft = Math.max(1, Math.ceil(msLeft / (60 * 60 * 1000)));
+    const startedAt = this.plugin.settings.licenseStartedAt || 0;
+    const elapsedDays = startedAt > 0
+      ? Math.floor(Math.max(0, now - startedAt) / (24 * 60 * 60 * 1000))
+      : Number.NaN;
     if (msLeft < 24 * 60 * 60 * 1000) {
-      return { daysLeft: 0, hoursLeft, daysUsed: TRIAL_LENGTH_DAYS - 1, expired: false };
+      return { daysLeft: 0, hoursLeft, daysUsed: trialLengthDays - 1, expired: false };
     }
     const daysLeft = Math.ceil(msLeft / (24 * 60 * 60 * 1000));
-    const daysUsed = Math.max(0, Math.min(TRIAL_LENGTH_DAYS, TRIAL_LENGTH_DAYS - daysLeft));
+    const daysUsed = Number.isFinite(elapsedDays)
+      ? Math.max(0, Math.min(trialLengthDays, elapsedDays))
+      : Math.max(0, Math.min(trialLengthDays, trialLengthDays - daysLeft));
     return { daysLeft, hoursLeft, daysUsed, expired: false };
   }
 
@@ -690,7 +718,9 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
       case "device_deactivated":
         return tx("This device was removed from this license. Paste the key again to add it back.");
       case "device_cap":
-        return tv("This license is active on {count} devices already. Deactivate one at licenses.buttereditor.com to free a slot.", { count: MAX_DEVICES_PER_CUSTOMER });
+        return tv("This license is active on {count} devices already. Deactivate one at licenses.buttereditor.com to free a slot.", {
+          count: this.plugin.settings.deviceLimit || MAX_DEVICES_PER_CUSTOMER,
+        });
       case "unauthorized":
         return tx("Session expired. Re-enter the license key to continue.");
       case "trial_used":
@@ -700,7 +730,10 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
       case "network":
         return tx("Couldn't reach the licensing server. Check your internet connection.");
       case "polar_error":
+      case "service_unavailable":
         return tx("The licensing service is temporarily unavailable. Try again in a minute.");
+      case "client_upgrade_required":
+        return tx("Update Butter Editor to continue using this license.");
       case "invalid_input":
         return tx("Input was rejected by the server. Double-check email + key formatting.");
       default:

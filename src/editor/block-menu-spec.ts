@@ -803,20 +803,20 @@ export interface BlockMenuChrome {
 export function buildBlockContextMenuHeaderEl(
   chrome: BlockMenuChrome,
 ): HTMLElement {
-  const header = activeDocument.createElement("div");
+  const header = activeWindow.createDiv();
   header.className = "butter-block-menu-header";
-  const iconEl = activeDocument.createElement("div");
+  const iconEl = activeWindow.createDiv();
   iconEl.className = "butter-block-menu-header-icon";
   setIcon(iconEl, chrome.icon);
   header.appendChild(iconEl);
-  const textEl = activeDocument.createElement("div");
+  const textEl = activeWindow.createDiv();
   textEl.className = "butter-block-menu-header-text";
-  const titleEl = activeDocument.createElement("div");
+  const titleEl = activeWindow.createDiv();
   titleEl.className = "butter-block-menu-header-title";
   titleEl.textContent = txKnown(chrome.title);
   textEl.appendChild(titleEl);
   if (chrome.sub) {
-    const subEl = activeDocument.createElement("div");
+    const subEl = activeWindow.createDiv();
     subEl.className = "butter-block-menu-header-sub";
     subEl.textContent = txKnown(chrome.sub);
     textEl.appendChild(subEl);

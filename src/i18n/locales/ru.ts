@@ -371,6 +371,8 @@ export const ru = {
   "Too many attempts in a short window. Wait a minute and try again.": "Слишком много попыток за короткое время. Подождите минуту и повторите попытку.",
   "Couldn't reach the licensing server. Check your internet connection.": "Не удалось связаться с сервером лицензирования. Проверьте подключение к Интернету.",
   "The licensing service is temporarily unavailable. Try again in a minute.": "Служба лицензирования временно недоступна. Повторите попытку через минуту.",
+  "Update Butter Editor to continue using this license.": "Обновите Butter Editor, чтобы продолжить использовать эту лицензию.",
+  "This license requires a newer version of Butter Editor.": "Для этой лицензии требуется более новая версия Butter Editor.",
   "Input was rejected by the server. Double-check email + key formatting.": "Ввод отклонен сервером. Дважды проверьте электронную почту и форматирование ключа.",
   "Something went wrong. Try again in a moment.": "Что-то пошло не так. Повторите попытку через минуту.",
   "Toolbar platform": "Платформа панели инструментов",

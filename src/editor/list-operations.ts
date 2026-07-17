@@ -103,7 +103,7 @@ function moveBlockCmd(dir: -1 | 1): Command {
 /**
  * Task state cycles:  bullet/ordered → task-unchecked → task-checked → bullet
  *
- * Flat-list schema (PMX 0.18.37+): a "task" is just a list_item with
+ * In Butter's flat-list schema, a "task" is a list_item with
  * `kind: "task"` and `checked: true | false`. Toggling cycles the kind
  * + checked attrs in place - no structural change. If the caret is in
  * a paragraph (not a list_item), the paragraph is first converted to

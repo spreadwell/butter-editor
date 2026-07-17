@@ -371,6 +371,8 @@ export const zhTW = {
   "Too many attempts in a short window. Wait a minute and try again.": "在短時間內嘗試過多。稍等一下，然後重試。",
   "Couldn't reach the licensing server. Check your internet connection.": "無法存取許可伺服器。檢查您的網路連線。",
   "The licensing service is temporarily unavailable. Try again in a minute.": "許可服務暫時無法使用。請稍後重試。",
+  "Update Butter Editor to continue using this license.": "請更新 Butter Editor 以繼續使用此授權。",
+  "This license requires a newer version of Butter Editor.": "此授權需要較新版本的 Butter Editor。",
   "Input was rejected by the server. Double-check email + key formatting.": "輸入被伺服器拒絕。仔細檢查電子郵件+金鑰格式。",
   "Something went wrong. Try again in a moment.": "出了點問題。稍後再試一次。",
   "Toolbar platform": "工具列平台",

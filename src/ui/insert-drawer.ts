@@ -344,7 +344,7 @@ export function openMobileDrawer(
   try {
     const sel = view.state.selection;
     const coords = view.coordsAtPos(sel.head);
-    fakeCursor = activeDocument.createElement("div");
+    fakeCursor = activeWindow.createDiv();
     fakeCursor.className = "butter-mobile-fake-cursor";
     fakeCursor.style.left = `${coords.left}px`;
     fakeCursor.style.top = `${coords.top}px`;
@@ -375,7 +375,7 @@ export function openMobileDrawer(
   // chrome slot (right side), not inside the drawer - keeps the
   // toolbar-action position predictable. We still render a thin
   // grab handle at the top edge as a visual cue.
-  const drawer = activeDocument.createElement("div");
+  const drawer = activeWindow.createDiv();
   drawer.className = "butter-mobile-insert-drawer";
   drawer.dataset.role = "drawer";
 
@@ -384,7 +384,7 @@ export function openMobileDrawer(
   // separate toolbar buttons (Insert / Turn into / Block actions)
   // each opening their own scoped drawer, an in-drawer toggle is
   // redundant - close the drawer and tap the other button.
-  const grid = activeDocument.createElement("div");
+  const grid = activeWindow.createDiv();
   grid.className = "butter-mobile-insert-drawer-grid";
   drawer.appendChild(grid);
 
@@ -439,7 +439,7 @@ function renderInsertView(
   grid.replaceChildren();
   grid.dataset.mode = "insert";
   for (const group of groupSlashItems()) {
-    const header = activeDocument.createElement("div");
+    const header = activeWindow.createDiv();
     header.className = "butter-mobile-insert-drawer-category";
     header.textContent = txKnown(group.name);
     grid.appendChild(header);
@@ -508,7 +508,7 @@ function renderTurnIntoView(
   if (otherSubs.length > 0) buckets.push({ name: "Other", items: otherSubs });
   for (const bucket of buckets) {
     if (bucket.items.length === 0) continue;
-    const header = activeDocument.createElement("div");
+    const header = activeWindow.createDiv();
     header.className = "butter-mobile-insert-drawer-category";
     header.textContent = txKnown(bucket.name);
     grid.appendChild(header);
@@ -567,7 +567,7 @@ function renderBlockActionsView(
   for (const item of items) {
     if (item.id === "turn-into") continue;
     if (item.submenu) {
-      const header = activeDocument.createElement("div");
+      const header = activeWindow.createDiv();
       header.className = "butter-mobile-insert-drawer-category";
       header.textContent = txKnown(item.title);
       grid.appendChild(header);
@@ -583,7 +583,7 @@ function renderBlockActionsView(
   // Universal lifecycle actions - same set as the desktop block
   // context menu (`drag-handles.ts:openBlockContextMenu`), shaped
   // as `BlockMenuItem`s so the renderer treats them identically.
-  const headerUniversal = activeDocument.createElement("div");
+  const headerUniversal = activeWindow.createDiv();
   headerUniversal.className = "butter-mobile-insert-drawer-category";
   headerUniversal.textContent = tx("Block");
   grid.appendChild(headerUniversal);
@@ -639,7 +639,7 @@ function renderBlockActionsView(
 }
 
 function renderEmptyState(grid: HTMLElement, message: string): void {
-  const empty = activeDocument.createElement("div");
+  const empty = activeWindow.createDiv();
   empty.className = "butter-mobile-insert-drawer-empty";
   empty.textContent = txKnown(message);
   grid.appendChild(empty);
@@ -652,13 +652,13 @@ function renderInsertTile(
   schema: Schema,
   app: App,
 ): void {
-  const tile = activeDocument.createElement("button");
+  const tile = activeWindow.createEl("button");
   tile.className = "butter-mobile-insert-drawer-tile clickable-icon";
   tile.setAttribute("aria-label", txKnown(item.label));
-  const iconEl = activeDocument.createElement("span");
+  const iconEl = activeWindow.createSpan();
   iconEl.className = "butter-mobile-insert-drawer-tile-icon";
   setIcon(iconEl, item.icon);
-  const labelEl = activeDocument.createElement("span");
+  const labelEl = activeWindow.createSpan();
   labelEl.className = "butter-mobile-insert-drawer-tile-label";
   labelEl.textContent = txKnown(item.label);
   tile.appendChild(iconEl);
@@ -724,14 +724,14 @@ function renderBlockTile(
   view: EditorView,
   ctx: DrawerBlockContext,
 ): void {
-  const tile = activeDocument.createElement("button");
+  const tile = activeWindow.createEl("button");
   tile.className = "butter-mobile-insert-drawer-tile clickable-icon";
   tile.setAttribute("aria-label", txKnown(item.title));
   if (item.warning) tile.dataset.warning = "true";
-  const iconEl = activeDocument.createElement("span");
+  const iconEl = activeWindow.createSpan();
   iconEl.className = "butter-mobile-insert-drawer-tile-icon";
   setIcon(iconEl, item.icon);
-  const labelEl = activeDocument.createElement("span");
+  const labelEl = activeWindow.createSpan();
   labelEl.className = "butter-mobile-insert-drawer-tile-label";
   labelEl.textContent = txKnown(item.title);
   tile.appendChild(iconEl);
@@ -761,14 +761,14 @@ function renderBlockSubTile(
   view: EditorView,
   ctx: DrawerBlockContext,
 ): void {
-  const tile = activeDocument.createElement("button");
+  const tile = activeWindow.createEl("button");
   tile.className = "butter-mobile-insert-drawer-tile clickable-icon";
   tile.setAttribute("aria-label", txKnown(sub.title));
   if (sub.isCurrent) tile.dataset.current = "true";
-  const iconEl = activeDocument.createElement("span");
+  const iconEl = activeWindow.createSpan();
   iconEl.className = "butter-mobile-insert-drawer-tile-icon";
   if (sub.icon) setIcon(iconEl, sub.icon);
-  const labelEl = activeDocument.createElement("span");
+  const labelEl = activeWindow.createSpan();
   labelEl.className = "butter-mobile-insert-drawer-tile-label";
   labelEl.textContent = txKnown(sub.title);
   tile.appendChild(iconEl);
