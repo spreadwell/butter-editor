@@ -125,7 +125,7 @@ const PUBLIC_DEV_DEPENDENCIES = new Set([
 const LOCAL_CONTROL_KEYS = [
   "candidateVerifier",
   "publicExporter",
-  "reviewPush",
+  "releaseOrchestrator",
 ];
 
 const NODE_BUILTINS = new Set([
@@ -140,7 +140,7 @@ const SELF_RULE_DEFINITION_PATHS = new Set([
 
 // verifier-rule-definitions:start
 const PRIVATE_PATH_PATTERNS = [
-  /(?:^|[^A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/])[^\r\n"'`]{1,260}/u,
+  /(?:^|[^A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\[A-Za-z0-9._-]+[\\/][A-Za-z0-9$._-]+[\\/])[^\r\n"'`]{1,260}/u,
   /(?:^|[\\/])(?:workdirs?|worktrees?|workspace)(?:[\\/]|$)/iu,
   /\b[a-z0-9][a-z0-9-]*-(?:private|license-worker|dev-tools|test-driver|dev-vault|release-vault)\b/iu,
   /(?:^|[\\/])\.(?:agents?|worktree|workspace)(?:[\\/]|$)/iu,
@@ -1578,7 +1578,10 @@ function inspectReachability(files, packageJson, findings, textByFile, typescrip
       }
     }
   }
+  const isRequiredAmbientDeclaration = (file) => /\bdeclare\s+(?:global|module\s+["'][^"']+["'])/u
+    .test(textByFile.get(file) ?? "");
   for (const file of sourceFiles.filter((path) => /\.d\.ts$/u.test(path) && !typeNeeded.has(path))) {
+    if (isRequiredAmbientDeclaration(file)) continue;
     findings.push(makeFinding(
       "unreachable-declaration",
       file,

@@ -1,36 +1,35 @@
-# BOOTSTRAP INVARIANT:
-# Install all seven release controls, including the local-control hash manifest,
-# on trusted public master before using this workflow. Always dispatch and run
-# controls from that exact master commit. A candidate is untrusted input and may
-# never supply, modify, or authorize its own gate.
 name: Release
-run-name: Butter Editor trusted release
+run-name: Publish Butter Editor ${{ inputs.version }}
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Bare release version to publish (x.y.z)
+        description: Exact bare release version
         required: true
         type: string
       candidate_sha:
-        description: Exact remote review commit approved for publication
-        required: true
-        type: string
-      expected_master_sha:
-        description: Exact trusted master commit that must parent the candidate
+        description: Exact reviewed commit already promoted to master and the version tag
         required: true
         type: string
       expected_tree_sha:
-        description: Exact Git tree audited before the review push
+        description: Exact reviewed Git tree
         required: true
         type: string
-      authorization_sha256:
-        description: SHA-256 of the exact signed public-release-authorization-v1 evidence
+      release_notes_sha256:
+        description: SHA-256 of the reviewed public release notes
         required: true
         type: string
-      authorization_json_b64:
-        description: Canonical base64 encoding of the exact signed release authorization
+      main_js_sha256:
+        description: SHA-256 of main.js
+        required: true
+        type: string
+      manifest_json_sha256:
+        description: SHA-256 of manifest.json
+        required: true
+        type: string
+      styles_css_sha256:
+        description: SHA-256 of styles.css
         required: true
         type: string
 
@@ -40,988 +39,128 @@ concurrency:
   group: butter-editor-public-release
   cancel-in-progress: false
 
-env:
-  NODE_OPTIONS: ""
-  NODE_PATH: ""
-
 jobs:
-  verify:
-    name: Verify exact candidate
+  publish:
+    name: Verify and publish exact reviewed release
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
-      actions: read
-      contents: read
-    outputs:
-      history_snapshot: ${{ steps.published_history.outputs.snapshot }}
+      contents: write
     steps:
-      - name: Bind exact protected run and release actor
-        id: run_identity
+      - name: Validate dispatch identity and exact inputs
         env:
           ACTOR_ID: ${{ github.actor_id }}
-          EXPECTED_MASTER_SHA: ${{ inputs.expected_master_sha }}
-          GH_TOKEN: ${{ github.token }}
-          REF_PROTECTED: ${{ github.ref_protected }}
+          VERSION: ${{ inputs.version }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_TREE_SHA: ${{ inputs.expected_tree_sha }}
+          RELEASE_NOTES_SHA256: ${{ inputs.release_notes_sha256 }}
+          MAIN_JS_SHA256: ${{ inputs.main_js_sha256 }}
+          MANIFEST_JSON_SHA256: ${{ inputs.manifest_json_sha256 }}
+          STYLES_CSS_SHA256: ${{ inputs.styles_css_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
-          [[ "$GITHUB_ACTOR" == "Giblicious" ]] || fail "Release actor login is not approved."
-          [[ "$ACTOR_ID" == "57109738" ]] || fail "Release actor ID is not approved."
-          [[ "$GITHUB_TRIGGERING_ACTOR" == "Giblicious" ]] || fail "Triggering actor login is not approved."
-          [[ "$GITHUB_REF" == "refs/heads/master" ]] || fail "Release is not running from master."
-          [[ "$REF_PROTECTED" == "true" ]] || fail "Trusted master is not protected by the approved server-side ruleset bootstrap."
-          run_json="$(gh api \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2026-03-10" \
-            "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")"
-          jq -e \
-            --arg actor "$GITHUB_ACTOR" \
-            --arg attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg master "$EXPECTED_MASTER_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            --arg run_id "$GITHUB_RUN_ID" '
-              (.id | tostring) == $run_id
-              and (.run_attempt | tostring) == $attempt
-              and .event == "workflow_dispatch"
-              and .head_branch == "master"
-              and .head_sha == $master
-              and .name == "Release"
-              and .path == ".github/workflows/release.yml@master"
-              and .actor.login == $actor
-              and .actor.id == 57109738
-              and .triggering_actor.login == $actor
-              and .triggering_actor.id == 57109738
-              and .repository.full_name == $repo
-              and .head_repository.full_name == $repo
-              and (.run_started_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"))
-            ' <<<"$run_json" >/dev/null || fail "Current Actions run identity is not exact."
-          user_json="$(gh api \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2026-03-10" \
-            /users/Giblicious)"
-          jq -e '.login == "Giblicious" and .id == 57109738 and .type == "User"' \
-            <<<"$user_json" >/dev/null || fail "Approved GitHub user identity changed."
-          echo "run_started_at=$(jq -r '.run_started_at' <<<"$run_json")" >>"$GITHUB_OUTPUT"
+          [[ "$GITHUB_ACTOR" == "Giblicious" && "$ACTOR_ID" == "57109738" ]] \
+            || fail "The release was not dispatched by the approved owner."
+          [[ "$GITHUB_REF" == "refs/heads/master" ]] \
+            || fail "The release workflow must run from public master."
+          [[ "$GITHUB_SHA" == "$CANDIDATE_SHA" ]] \
+            || fail "The workflow commit differs from the reviewed release candidate."
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+            || fail "version must be canonical bare semver."
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_TREE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || fail "Commit and tree inputs must be full lowercase SHA-1 values."
+          for digest in "$RELEASE_NOTES_SHA256" "$MAIN_JS_SHA256" "$MANIFEST_JSON_SHA256" "$STYLES_CSS_SHA256"; do
+            [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || fail "Artifact inputs must be full lowercase SHA-256 values."
+          done
 
-      - name: Set up pinned verification runtime
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Checkout exact reviewed commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          node-version: 24.13.0
-          check-latest: false
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Validate trusted dispatch and inputs
+      - name: Verify refs, commit identity, notes, and release assets
         env:
           VERSION: ${{ inputs.version }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          EXPECTED_MASTER_SHA: ${{ inputs.expected_master_sha }}
           EXPECTED_TREE_SHA: ${{ inputs.expected_tree_sha }}
-          AUTHORIZATION_SHA256: ${{ inputs.authorization_sha256 }}
-          AUTHORIZATION_JSON_B64: ${{ inputs.authorization_json_b64 }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-
-          [[ "$GITHUB_REF" == "refs/heads/master" ]] \
-            || fail "Release must be dispatched from trusted public master, not $GITHUB_REF."
-          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
-            || fail "version must be canonical bare semver (x.y.z)."
-          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || fail "candidate_sha must be a full lowercase SHA-1."
-          [[ "$EXPECTED_MASTER_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || fail "expected_master_sha must be a full lowercase SHA-1."
-          [[ "$EXPECTED_TREE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || fail "expected_tree_sha must be a full lowercase SHA-1."
-          [[ "$AUTHORIZATION_SHA256" =~ ^[0-9a-f]{64}$ ]] \
-            || fail "authorization_sha256 must be a full lowercase SHA-256."
-          [[ "$GITHUB_SHA" == "$EXPECTED_MASTER_SHA" ]] \
-            || fail "The dispatched master commit does not equal expected_master_sha."
-
-          printf '%s' "$AUTHORIZATION_JSON_B64" | base64 --decode > release-authorization.json \
-            || fail "authorization_json_b64 is not valid base64."
-          [[ "$(base64 -w 0 release-authorization.json)" == "$AUTHORIZATION_JSON_B64" ]] \
-            || fail "authorization_json_b64 is not the canonical encoding of its bytes."
-          [[ "$(sha256sum release-authorization.json | awk '{ print $1 }')" == "$AUTHORIZATION_SHA256" ]] \
-            || fail "Signed release authorization differs from authorization_sha256."
-
-      - name: Verify advertised master and review refs
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          EXPECTED_MASTER_SHA: ${{ inputs.expected_master_sha }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RELEASE_NOTES_SHA256: ${{ inputs.release_notes_sha256 }}
+          MAIN_JS_SHA256: ${{ inputs.main_js_sha256 }}
+          MANIFEST_JSON_SHA256: ${{ inputs.manifest_json_sha256 }}
+          STYLES_CSS_SHA256: ${{ inputs.styles_css_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
           remote_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
           master_actual="$(git ls-remote --refs "$remote_url" refs/heads/master | awk 'NR == 1 { print $1 }')"
+          tag_actual="$(git ls-remote --refs "$remote_url" "refs/tags/$VERSION" | awk 'NR == 1 { print $1 }')"
           review_actual="$(git ls-remote --refs "$remote_url" refs/heads/review | awk 'NR == 1 { print $1 }')"
+          [[ "$master_actual" == "$CANDIDATE_SHA" ]] || fail "Public master is not the reviewed release candidate."
+          [[ "$tag_actual" == "$CANDIDATE_SHA" ]] || fail "The release tag is not the reviewed release candidate."
+          [[ -z "$review_actual" ]] || fail "The temporary review branch still exists."
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_SHA" ]] || fail "Checkout differs from candidate_sha."
+          [[ "$(git rev-parse 'HEAD^{tree}')" == "$EXPECTED_TREE_SHA" ]] || fail "Candidate tree differs from expected_tree_sha."
+          [[ "$(git show -s --format=%s HEAD)" == "Release $VERSION" ]] || fail "Release commit subject changed."
+          [[ -z "$(git show -s --format=%b HEAD)" ]] || fail "Release commit body must be empty."
+          [[ "$(git show -s --format='%an <%ae>' HEAD)" == "Butter Editor <noreply@buttereditor.com>" ]] \
+            || fail "Release commit author changed."
+          [[ "$(git show -s --format='%cn <%ce>' HEAD)" == "Butter Editor <noreply@buttereditor.com>" ]] \
+            || fail "Release commit committer changed."
+          notes="release-notes/$VERSION.md"
+          [[ -f "$notes" && ! -L "$notes" ]] || fail "Release notes are missing or unsafe."
+          [[ "$(sha256sum "$notes" | awk '{ print $1 }')" == "$RELEASE_NOTES_SHA256" ]] \
+            || fail "Release notes differ from the reviewed candidate."
+          [[ "$(sha256sum main.js | awk '{ print $1 }')" == "$MAIN_JS_SHA256" ]] || fail "main.js hash changed."
+          [[ "$(sha256sum manifest.json | awk '{ print $1 }')" == "$MANIFEST_JSON_SHA256" ]] || fail "manifest.json hash changed."
+          [[ "$(sha256sum styles.css | awk '{ print $1 }')" == "$STYLES_CSS_SHA256" ]] || fail "styles.css hash changed."
 
-          [[ -n "$master_actual" ]] || fail "Remote master is missing."
-          [[ "$master_actual" == "$EXPECTED_MASTER_SHA" || "$master_actual" == "$CANDIDATE_SHA" ]] \
-            || fail "Remote master is neither the expected parent nor the exact candidate."
-          if [[ "$master_actual" == "$EXPECTED_MASTER_SHA" ]]; then
-            [[ "$review_actual" == "$CANDIDATE_SHA" ]] \
-              || fail "An initial release run requires the exact remote review ref."
-          else
-            [[ "$RUN_ATTEMPT" =~ ^[2-9][0-9]*$ ]] \
-              || fail "Only a re-run of the original workflow run may resume partial publication."
-          fi
-
-      - name: Checkout trusted master release controls
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.expected_master_sha }}
-          path: control
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Checkout exact candidate without persisted credentials
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.candidate_sha }}
-          path: candidate
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Require bootstrapped, unchanged release controls
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-          verifier=".github/scripts/verify-public-surface.mjs"
-          builder=".github/scripts/build-public-candidate.mjs"
-          export_shape=".github/scripts/public-export-shape.mjs"
-          version_history=".github/scripts/public-version-history.mjs"
-          local_control_manifest=".github/release-control-hashes.json"
-          workflow=".github/workflows/release.yml"
-          build_config="esbuild.config.mjs"
-
-          # Never fall back to a helper from the candidate. If this fails, first
-          # bootstrap the audited helper on public master, then regenerate and
-          # review a candidate whose parent is that trusted master commit.
-          [[ -f "control/$verifier" ]] \
-            || fail "Trusted master is missing $verifier; bootstrap release controls before publishing."
-          [[ -f "candidate/$verifier" ]] \
-            || fail "Candidate would remove the trusted verifier."
-          [[ -f "candidate/$builder" ]] \
-            || fail "Candidate would remove the trusted public builder."
-          [[ -f "candidate/$export_shape" ]] \
-            || fail "Candidate would remove the trusted export-shape control."
-          [[ -f "candidate/$version_history" ]] \
-            || fail "Candidate would remove the trusted version-history control."
-          [[ -f "candidate/$local_control_manifest" ]] \
-            || fail "Candidate would remove the trusted local-control hash manifest."
-          [[ -f "candidate/$workflow" ]] \
-            || fail "Candidate would remove the trusted release workflow."
-          cmp --silent "control/$verifier" "candidate/$verifier" \
-            || fail "Candidate verifier differs from trusted master."
-          cmp --silent "control/$builder" "candidate/$builder" \
-            || fail "Candidate public builder differs from trusted master."
-          cmp --silent "control/$export_shape" "candidate/$export_shape" \
-            || fail "Candidate export-shape control differs from trusted master."
-          cmp --silent "control/$version_history" "candidate/$version_history" \
-            || fail "Candidate version-history control differs from trusted master."
-          cmp --silent "control/$local_control_manifest" "candidate/$local_control_manifest" \
-            || fail "Candidate local-control hash manifest differs from trusted master."
-          cmp --silent "control/$workflow" "candidate/$workflow" \
-            || fail "Candidate release workflow differs from trusted master."
-          cmp --silent "control/$build_config" "candidate/$build_config" \
-            || fail "Candidate executable build configuration differs from trusted master."
-
-          expected_github_files=$'.github/release-control-hashes.json\n.github/scripts/build-public-candidate.mjs\n.github/scripts/public-export-shape.mjs\n.github/scripts/public-version-history.mjs\n.github/scripts/verify-public-surface.mjs\n.github/workflows/release.yml'
-          actual_github_files="$(
-            cd candidate
-            find .github -type f -print | sed 's#^\./##' | LC_ALL=C sort
-          )"
-          [[ "$actual_github_files" == "$expected_github_files" ]] \
-            || fail "Candidate contains an unexpected .github control surface."
-
-      - name: Verify exact signed release authorization
-        env:
-          VERSION: ${{ inputs.version }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          EXPECTED_MASTER_SHA: ${{ inputs.expected_master_sha }}
-          EXPECTED_TREE_SHA: ${{ inputs.expected_tree_sha }}
-          RUN_STARTED_AT: ${{ steps.run_identity.outputs.run_started_at }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node control/.github/scripts/build-public-candidate.mjs \
-            --verify-release-authorization \
-            --file release-authorization.json \
-            --version "$VERSION" \
-            --base "$EXPECTED_MASTER_SHA" \
-            --candidate "$CANDIDATE_SHA" \
-            --tree "$EXPECTED_TREE_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --run-started-at "$RUN_STARTED_AT"
-
-      - name: Verify exact commit, tree, ancestry, and subject
-        env:
-          VERSION: ${{ inputs.version }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          EXPECTED_MASTER_SHA: ${{ inputs.expected_master_sha }}
-          EXPECTED_TREE_SHA: ${{ inputs.expected_tree_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-
-          actual_commit="$(git -C candidate rev-parse HEAD)"
-          actual_tree="$(git -C candidate rev-parse 'HEAD^{tree}')"
-          actual_parent="$(git -C candidate show -s --format=%P HEAD)"
-          actual_subject="$(git -C candidate show -s --format=%s HEAD)"
-          actual_body="$(git -C candidate show -s --format=%b HEAD)"
-          actual_author="$(git -C candidate show -s --format='%an <%ae>' HEAD)"
-          actual_committer="$(git -C candidate show -s --format='%cn <%ce>' HEAD)"
-
-          [[ "$actual_commit" == "$CANDIDATE_SHA" ]] \
-            || fail "Checked-out commit differs from candidate_sha."
-          [[ "$actual_tree" == "$EXPECTED_TREE_SHA" ]] \
-            || fail "Candidate tree differs from the audited expected_tree_sha."
-          [[ "$actual_parent" == "$EXPECTED_MASTER_SHA" ]] \
-            || fail "Candidate must have exactly one parent, expected_master_sha."
-          [[ "$actual_subject" == "Release $VERSION" ]] \
-            || fail "Candidate subject must be exactly: Release $VERSION"
-          [[ -z "$actual_body" ]] \
-            || fail "Candidate commit body must be empty."
-          [[ "$actual_author" == "Butter Editor <noreply@buttereditor.com>" ]] \
-            || fail "Candidate author must use the public Butter Editor identity."
-          [[ "$actual_committer" == "Butter Editor <noreply@buttereditor.com>" ]] \
-            || fail "Candidate committer must use the public Butter Editor identity."
-          git -C candidate cat-file -e "${EXPECTED_MASTER_SHA}^{commit}"
-          git -C candidate merge-base --is-ancestor "$EXPECTED_MASTER_SHA" "$CANDIDATE_SHA" \
-            || fail "expected_master_sha is not an ancestor of the candidate."
-          [[ "$(git -C candidate rev-list --count "${EXPECTED_MASTER_SHA}..${CANDIDATE_SHA}")" == "1" ]] \
-            || fail "Candidate must be exactly one commit ahead of expected master."
-          [[ -z "$(git -C candidate status --porcelain=v1 --untracked-files=all)" ]] \
-            || fail "Candidate checkout is not clean before verification."
-          jq -e --arg version "$VERSION" '.version == $version' candidate/manifest.json >/dev/null \
-            || fail "manifest.json version does not match the requested release."
-          [[ -f "candidate/release-notes/$VERSION.md" ]] \
-            || fail "Current customer-facing release note is missing."
-          [[ "$(sha256sum candidate/main.js | awk '{ print $1 }')" == "$(jq -r '.readiness.devBuildArtifacts.mainJsSha256' release-authorization.json)" ]] \
-            || fail "The Obsidian-reviewed main.js differs from the candidate."
-          [[ "$(sha256sum candidate/manifest.json | awk '{ print $1 }')" == "$(jq -r '.readiness.devBuildArtifacts.manifestSha256' release-authorization.json)" ]] \
-            || fail "The Obsidian-reviewed manifest.json differs from the candidate."
-          [[ "$(sha256sum candidate/styles.css | awk '{ print $1 }')" == "$(jq -r '.readiness.devBuildArtifacts.stylesCssSha256' release-authorization.json)" ]] \
-            || fail "The Obsidian-reviewed styles.css differs from the candidate."
-
-      - name: Validate complete package and lock metadata before npm
-        env:
-          VERSION: ${{ inputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --input-type=module <<'NODE'
-          import { readFileSync } from "node:fs";
-          import { resolve } from "node:path";
-          import { pathToFileURL } from "node:url";
-
-          const {
-            assertSafePublicLockMetadata,
-            assertSafePublicPackageMetadata,
-          } = await import(pathToFileURL(resolve("control/.github/scripts/public-export-shape.mjs")).href);
-          for (const [root, expectedVersion] of [
-            ["control", null],
-            ["candidate", process.env.VERSION],
-          ]) {
-            const packageJson = JSON.parse(readFileSync(`${root}/package.json`, "utf8"));
-            const packageLock = JSON.parse(readFileSync(`${root}/package-lock.json`, "utf8"));
-            const version = expectedVersion ?? packageJson.version;
-            assertSafePublicPackageMetadata(packageJson, version);
-            assertSafePublicLockMetadata(packageLock, version);
-            const lockRoot = packageLock.packages?.[""];
-            for (const field of ["dependencies", "devDependencies"]) {
-              if (JSON.stringify(lockRoot?.[field] ?? {}) !== JSON.stringify(packageJson[field] ?? {})) {
-                throw new Error(`${root} package and lock disagree on ${field}.`);
-              }
-            }
-          }
-          NODE
-
-      - name: Require trusted parser and builder toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-          diff -u \
-            <(jq -S '{esbuild: .devDependencies.esbuild, typescript: .devDependencies.typescript}' control/package.json) \
-            <(jq -S '{esbuild: .devDependencies.esbuild, typescript: .devDependencies.typescript}' candidate/package.json) \
-            || fail "Candidate esbuild/TypeScript specifications differ from trusted master; build-tool updates require control bootstrap."
-          tool_filter='(.packages // {}) | with_entries(select(
-            .key == "node_modules/esbuild"
-            or .key == "node_modules/typescript"
-            or (.key | startswith("node_modules/@esbuild/"))
-          ))'
-          diff -u \
-            <(jq -S "$tool_filter" control/package-lock.json) \
-            <(jq -S "$tool_filter" candidate/package-lock.json) \
-            || fail "Candidate esbuild/TypeScript lock entries differ from trusted master."
-
-      - name: Validate the only permitted public build command
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-          build_script="$(jq -r '.scripts.build // empty' candidate/package.json)"
-          [[ "$build_script" == "node esbuild.config.mjs production" ]] \
-            || fail "Public package build command is not the audited production command."
-          for lifecycle in preinstall install postinstall prepare prebuild postbuild; do
-            jq -e --arg key "$lifecycle" '((.scripts // {}) | has($key)) | not' \
-              candidate/package.json >/dev/null \
-              || fail "Public package defines prohibited lifecycle script: $lifecycle"
-          done
-
-      - name: Install trusted-control dependencies without lifecycle scripts
-        working-directory: control
-        shell: bash
-        run: npm ci --legacy-peer-deps --ignore-scripts
-
-      - name: Audit trusted-control dependencies
-        working-directory: control
-        shell: bash
-        run: npm audit --audit-level=moderate
-
-      - name: Run trusted whole-tree disclosure verifier before candidate install
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          VERSION: ${{ inputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node control/.github/scripts/verify-public-surface.mjs \
-            --root candidate \
-            --version "$VERSION" \
-            --dependency-root control \
-            --git-root candidate \
-            --git-commit "$CANDIDATE_SHA"
-
-      - name: Bind authoritative published-version history
-        id: published_history
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          VERSION: ${{ inputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-          history_json="$(node control/.github/scripts/public-version-history.mjs \
-            --validate candidate "$CANDIDATE_SHA" \
-            --exclude-tag "$VERSION")"
-          jq -e '
-            (.snapshotSha256 | test("^[0-9a-f]{64}$"))
-            and (.tagCount | type == "number" and . >= 1)
-            and (.tags | type == "array" and length > 0)
-          ' <<<"$history_json" >/dev/null \
-            || fail "Trusted version-history control returned an invalid snapshot."
-          actual_history="$(jq -cS . <<<"$history_json")"
-          authorized_history="$(jq -cS '.readiness.publishedHistory' release-authorization.json)"
-          [[ "$actual_history" == "$authorized_history" ]] \
-            || fail "Authoritative published-version history differs from the signed authorization."
-          snapshot="$(jq -r '.snapshotSha256' <<<"$history_json")"
-          echo "snapshot=$snapshot" >>"$GITHUB_OUTPUT"
-
-      - name: Install candidate dependencies without lifecycle scripts
-        working-directory: candidate
-        shell: bash
-        run: npm ci --legacy-peer-deps --ignore-scripts
-
-      - name: Audit all candidate dependencies
-        working-directory: candidate
-        shell: bash
-        run: npm audit --audit-level=moderate
-
-      - name: Rebuild and require byte-for-byte artifact parity
-        env:
-          VERSION: ${{ inputs.version }}
-        working-directory: candidate
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-          hash_file() { sha256sum "$1" | awk '{ print $1 }'; }
-
-          main_before="$(hash_file main.js)"
-          styles_before="$(hash_file styles.css)"
-          manifest_before="$(hash_file manifest.json)"
-          notes_before="$(hash_file "release-notes/$VERSION.md")"
-
-          node ../control/.github/scripts/build-public-candidate.mjs .
-
-          [[ "$(hash_file main.js)" == "$main_before" ]] \
-            || fail "Rebuilt main.js differs from the committed release artifact."
-          [[ "$(hash_file styles.css)" == "$styles_before" ]] \
-            || fail "styles.css changed during verification."
-          [[ "$(hash_file manifest.json)" == "$manifest_before" ]] \
-            || fail "manifest.json changed during verification."
-          [[ "$(hash_file "release-notes/$VERSION.md")" == "$notes_before" ]] \
-            || fail "Release notes changed during verification."
-          git diff --exit-code -- . \
-            || fail "Verification changed tracked candidate files."
-          unexpected="$(git status --porcelain=v1 --untracked-files=all -- . ':(exclude)node_modules' ':(exclude)node_modules/**')"
-          [[ -z "$unexpected" ]] \
-            || fail "Verification created unexpected files outside node_modules: $unexpected"
-
-  attest:
-    name: Attest committed release assets
-    needs: verify
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-      attestations: write
-    steps:
-      - name: Bind exact protected run and release actor
-        id: run_identity
-        env:
-          ACTOR_ID: ${{ github.actor_id }}
-          EXPECTED_MASTER_SHA: ${{ inputs.expected_master_sha }}
-          GH_TOKEN: ${{ github.token }}
-          REF_PROTECTED: ${{ github.ref_protected }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-          [[ "$GITHUB_ACTOR" == "Giblicious" ]] || fail "Release actor login is not approved."
-          [[ "$ACTOR_ID" == "57109738" ]] || fail "Release actor ID is not approved."
-          [[ "$GITHUB_TRIGGERING_ACTOR" == "Giblicious" ]] || fail "Triggering actor login is not approved."
-          [[ "$GITHUB_REF" == "refs/heads/master" ]] || fail "Release is not running from master."
-          [[ "$REF_PROTECTED" == "true" ]] || fail "Trusted master is not protected by the approved server-side ruleset bootstrap."
-          run_json="$(gh api \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2026-03-10" \
-            "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")"
-          jq -e \
-            --arg actor "$GITHUB_ACTOR" \
-            --arg attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg master "$EXPECTED_MASTER_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            --arg run_id "$GITHUB_RUN_ID" '
-              (.id | tostring) == $run_id
-              and (.run_attempt | tostring) == $attempt
-              and .event == "workflow_dispatch"
-              and .head_branch == "master"
-              and .head_sha == $master
-              and .name == "Release"
-              and .path == ".github/workflows/release.yml@master"
-              and .actor.login == $actor
-              and .actor.id == 57109738
-              and .triggering_actor.login == $actor
-              and .triggering_actor.id == 57109738
-              and .repository.full_name == $repo
-              and .head_repository.full_name == $repo
-              and (.run_started_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"))
-            ' <<<"$run_json" >/dev/null || fail "Current Actions run identity is not exact."
-          user_json="$(gh api \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2026-03-10" \
-            /users/Giblicious)"
-          jq -e '.login == "Giblicious" and .id == 57109738 and .type == "User"' \
-            <<<"$user_json" >/dev/null || fail "Approved GitHub user identity changed."
-          echo "run_started_at=$(jq -r '.run_started_at' <<<"$run_json")" >>"$GITHUB_OUTPUT"
-
-      - name: Checkout trusted authorization control
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.expected_master_sha }}
-          path: control
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Set up pinned attestation runtime
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.13.0
-          check-latest: false
-
-      - name: Checkout exact candidate without persisted credentials
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.candidate_sha }}
-          path: candidate
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Reconfirm immutable asset source
-        env:
-          VERSION: ${{ inputs.version }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          EXPECTED_TREE_SHA: ${{ inputs.expected_tree_sha }}
-          AUTHORIZATION_SHA256: ${{ inputs.authorization_sha256 }}
-          AUTHORIZATION_JSON_B64: ${{ inputs.authorization_json_b64 }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git -C candidate rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test "$(git -C candidate rev-parse 'HEAD^{tree}')" = "$EXPECTED_TREE_SHA"
-          jq -e --arg version "$VERSION" '.version == $version' candidate/manifest.json >/dev/null
-          test -f "candidate/release-notes/$VERSION.md"
-          printf '%s' "$AUTHORIZATION_JSON_B64" | base64 --decode > release-authorization.json
-          test "$(base64 -w 0 release-authorization.json)" = "$AUTHORIZATION_JSON_B64"
-          test "$(sha256sum release-authorization.json | awk '{ print $1 }')" = "$AUTHORIZATION_SHA256"
-          test "$(jq -r '.readiness.candidateCommit' release-authorization.json)" = "$CANDIDATE_SHA"
-          test "$(jq -r '.readiness.candidateTree' release-authorization.json)" = "$EXPECTED_TREE_SHA"
-          test "$(sha256sum candidate/main.js | awk '{ print $1 }')" = "$(jq -r '.readiness.devBuildArtifacts.mainJsSha256' release-authorization.json)"
-          test "$(sha256sum candidate/manifest.json | awk '{ print $1 }')" = "$(jq -r '.readiness.devBuildArtifacts.manifestSha256' release-authorization.json)"
-          test "$(sha256sum candidate/styles.css | awk '{ print $1 }')" = "$(jq -r '.readiness.devBuildArtifacts.stylesCssSha256' release-authorization.json)"
-
-      - name: Independently verify signed authorization before attestation
-        env:
-          VERSION: ${{ inputs.version }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          EXPECTED_MASTER_SHA: ${{ inputs.expected_master_sha }}
-          EXPECTED_TREE_SHA: ${{ inputs.expected_tree_sha }}
-          RUN_STARTED_AT: ${{ steps.run_identity.outputs.run_started_at }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node control/.github/scripts/build-public-candidate.mjs \
-            --verify-release-authorization \
-            --file release-authorization.json \
-            --version "$VERSION" \
-            --base "$EXPECTED_MASTER_SHA" \
-            --candidate "$CANDIDATE_SHA" \
-            --tree "$EXPECTED_TREE_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --run-started-at "$RUN_STARTED_AT"
-
-      - name: Attest exact committed release assets
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        with:
-          subject-path: |
-            candidate/main.js
-            candidate/manifest.json
-            candidate/styles.css
-            release-authorization.json
-
-  promote:
-    name: Promote and publish exact candidate
-    needs:
-      - verify
-      - attest
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    environment:
-      name: butter-editor-production
-    permissions:
-      actions: read
-      contents: write
-    steps:
-      # This job deliberately performs no npm operation and executes no file
-      # from the candidate. It executes only the exact trusted public-master
-      # authorization/history controls, reads fixed candidate files, and
-      # publishes after both read-only verification jobs pass.
-      - name: Bind exact protected run and release actor
-        id: run_identity
-        env:
-          ACTOR_ID: ${{ github.actor_id }}
-          EXPECTED_MASTER_SHA: ${{ inputs.expected_master_sha }}
-          GH_TOKEN: ${{ github.token }}
-          REF_PROTECTED: ${{ github.ref_protected }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-          [[ "$GITHUB_ACTOR" == "Giblicious" ]] || fail "Release actor login is not approved."
-          [[ "$ACTOR_ID" == "57109738" ]] || fail "Release actor ID is not approved."
-          [[ "$GITHUB_TRIGGERING_ACTOR" == "Giblicious" ]] || fail "Triggering actor login is not approved."
-          [[ "$GITHUB_REF" == "refs/heads/master" ]] || fail "Release is not running from master."
-          [[ "$REF_PROTECTED" == "true" ]] || fail "Trusted master is not protected by the approved server-side ruleset bootstrap."
-          run_json="$(gh api \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2026-03-10" \
-            "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")"
-          jq -e \
-            --arg actor "$GITHUB_ACTOR" \
-            --arg attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg master "$EXPECTED_MASTER_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            --arg run_id "$GITHUB_RUN_ID" '
-              (.id | tostring) == $run_id
-              and (.run_attempt | tostring) == $attempt
-              and .event == "workflow_dispatch"
-              and .head_branch == "master"
-              and .head_sha == $master
-              and .name == "Release"
-              and .path == ".github/workflows/release.yml@master"
-              and .actor.login == $actor
-              and .actor.id == 57109738
-              and .triggering_actor.login == $actor
-              and .triggering_actor.id == 57109738
-              and .repository.full_name == $repo
-              and .head_repository.full_name == $repo
-              and (.run_started_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"))
-            ' <<<"$run_json" >/dev/null || fail "Current Actions run identity is not exact."
-          user_json="$(gh api \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2026-03-10" \
-            /users/Giblicious)"
-          jq -e '.login == "Giblicious" and .id == 57109738 and .type == "User"' \
-            <<<"$user_json" >/dev/null || fail "Approved GitHub user identity changed."
-          echo "run_started_at=$(jq -r '.run_started_at' <<<"$run_json")" >>"$GITHUB_OUTPUT"
-
-      - name: Checkout trusted history control
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.expected_master_sha }}
-          path: control
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Set up pinned publication runtime
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.13.0
-          check-latest: false
-
-      - name: Checkout exact candidate for publication
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.candidate_sha }}
-          path: candidate
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Verify signed release authorization before publication
-        env:
-          VERSION: ${{ inputs.version }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          EXPECTED_MASTER_SHA: ${{ inputs.expected_master_sha }}
-          EXPECTED_TREE_SHA: ${{ inputs.expected_tree_sha }}
-          AUTHORIZATION_SHA256: ${{ inputs.authorization_sha256 }}
-          AUTHORIZATION_JSON_B64: ${{ inputs.authorization_json_b64 }}
-          RUN_STARTED_AT: ${{ steps.run_identity.outputs.run_started_at }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "::error::$1"; exit 1; }
-
-          [[ "$AUTHORIZATION_SHA256" =~ ^[0-9a-f]{64}$ ]] \
-            || fail "authorization_sha256 is invalid."
-          printf '%s' "$AUTHORIZATION_JSON_B64" | base64 --decode > release-authorization.json \
-            || fail "Signed release authorization is not valid base64."
-          [[ "$(base64 -w 0 release-authorization.json)" == "$AUTHORIZATION_JSON_B64" ]] \
-            || fail "Signed release authorization is not canonically encoded."
-          [[ "$(sha256sum release-authorization.json | awk '{ print $1 }')" == "$AUTHORIZATION_SHA256" ]] \
-            || fail "Signed release authorization changed before publication."
-          node control/.github/scripts/build-public-candidate.mjs \
-            --verify-release-authorization \
-            --file release-authorization.json \
-            --version "$VERSION" \
-            --base "$EXPECTED_MASTER_SHA" \
-            --candidate "$CANDIDATE_SHA" \
-            --tree "$EXPECTED_TREE_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --run-started-at "$RUN_STARTED_AT"
-
-      - name: Recheck refs, promote exact SHA, and create release
+      - name: Create, verify, and publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          EXPECTED_MASTER_SHA: ${{ inputs.expected_master_sha }}
-          EXPECTED_TREE_SHA: ${{ inputs.expected_tree_sha }}
-          EXPECTED_HISTORY_SNAPSHOT: ${{ needs.verify.outputs.history_snapshot }}
-          AUTHORIZATION_SHA256: ${{ inputs.authorization_sha256 }}
-          RELEASE_ENVIRONMENT_GUARD: ${{ secrets.BTR_RELEASE_ENVIRONMENT_GUARD }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
         shell: bash
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
-          git_auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w 0)"
-          authenticated_git() {
-            GIT_CONFIG_COUNT=1 \
-            GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" \
-            GIT_CONFIG_VALUE_0="$git_auth_header" \
-              git -C candidate "$@"
-          }
-
-          [[ "$GITHUB_REF" == "refs/heads/master" ]] \
-            || fail "Release is no longer running from trusted master."
-          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
-            || fail "version must be canonical bare semver."
-          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || fail "candidate_sha is invalid."
-          [[ "$EXPECTED_MASTER_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || fail "expected_master_sha is invalid."
-          [[ "$EXPECTED_TREE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || fail "expected_tree_sha is invalid."
-          [[ "$EXPECTED_HISTORY_SNAPSHOT" =~ ^[0-9a-f]{64}$ ]] \
-            || fail "The read-only verification job did not provide a valid history snapshot."
-          [[ "$AUTHORIZATION_SHA256" =~ ^[0-9a-f]{64}$ ]] \
-            || fail "authorization_sha256 is invalid."
-          [[ "$(printf '%s' "$RELEASE_ENVIRONMENT_GUARD" | sha256sum | awk '{ print $1 }')" == "698fff6ec6330f05e5f0324be10283a5d26ff22c272d33fb77720a9261af5f85" ]] \
-            || fail "The protected butter-editor-production environment guard is missing or incorrect."
-          [[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] \
-            || fail "github.run_attempt is invalid."
-          [[ "$GITHUB_SHA" == "$EXPECTED_MASTER_SHA" ]] \
-            || fail "Publication run is not bound to expected_master_sha."
-
-          [[ "$(sha256sum release-authorization.json | awk '{ print $1 }')" == "$AUTHORIZATION_SHA256" ]] \
-            || fail "Signed release authorization changed after verification."
-          [[ "$(jq -r '.readiness.candidateCommit' release-authorization.json)" == "$CANDIDATE_SHA" ]] \
-            || fail "Signed release authorization names a different candidate."
-          [[ "$(jq -r '.readiness.candidateTree' release-authorization.json)" == "$EXPECTED_TREE_SHA" ]] \
-            || fail "Signed release authorization names a different tree."
-
-          [[ "$(git -C candidate rev-parse HEAD)" == "$CANDIDATE_SHA" ]] \
-            || fail "Publication checkout differs from candidate_sha."
-          [[ "$(git -C candidate rev-parse 'HEAD^{tree}')" == "$EXPECTED_TREE_SHA" ]] \
-            || fail "Publication tree differs from expected_tree_sha."
-          [[ "$(git -C candidate show -s --format=%P HEAD)" == "$EXPECTED_MASTER_SHA" ]] \
-            || fail "Publication candidate parent changed."
-          [[ "$(git -C candidate show -s --format=%s HEAD)" == "Release $VERSION" ]] \
-            || fail "Publication candidate subject changed."
-          [[ -z "$(git -C candidate show -s --format=%b HEAD)" ]] \
-            || fail "Publication candidate body changed."
-          [[ "$(git -C candidate show -s --format='%an <%ae>' HEAD)" == "Butter Editor <noreply@buttereditor.com>" ]] \
-            || fail "Publication candidate author identity changed."
-          [[ "$(git -C candidate show -s --format='%cn <%ce>' HEAD)" == "Butter Editor <noreply@buttereditor.com>" ]] \
-            || fail "Publication candidate committer identity changed."
-          jq -e --arg version "$VERSION" '.version == $version' candidate/manifest.json >/dev/null \
-            || fail "Publication manifest version changed."
-          [[ -f "candidate/release-notes/$VERSION.md" ]] \
-            || fail "Publication release note is missing."
-          for asset in main.js manifest.json styles.css; do
-            [[ -f "candidate/$asset" && ! -L "candidate/$asset" ]] \
-              || fail "Publication asset is missing, linked, or not a regular file: $asset"
-            [[ "$(git -C candidate ls-tree HEAD -- "$asset" | awk 'NR == 1 { print $1 }')" == "100644" ]] \
-              || fail "Publication asset has an unsafe Git mode: $asset"
-          done
-          [[ "$(sha256sum candidate/main.js | awk '{ print $1 }')" == "$(jq -r '.readiness.devBuildArtifacts.mainJsSha256' release-authorization.json)" ]] \
-            || fail "Publication main.js differs from the Obsidian-reviewed artifact."
-          [[ "$(sha256sum candidate/manifest.json | awk '{ print $1 }')" == "$(jq -r '.readiness.devBuildArtifacts.manifestSha256' release-authorization.json)" ]] \
-            || fail "Publication manifest.json differs from the Obsidian-reviewed artifact."
-          [[ "$(sha256sum candidate/styles.css | awk '{ print $1 }')" == "$(jq -r '.readiness.devBuildArtifacts.stylesCssSha256' release-authorization.json)" ]] \
-            || fail "Publication styles.css differs from the Obsidian-reviewed artifact."
-
-          assert_history_snapshot() {
-            local stage="$1"
-            local history_json
-            local actual_history
-            local actual_snapshot
-            local authorized_history
-            history_json="$(node control/.github/scripts/public-version-history.mjs \
-              --snapshot --exclude-tag "$VERSION")"
-            actual_history="$(jq -cS . <<<"$history_json")"
-            actual_snapshot="$(jq -r '.snapshotSha256 // empty' <<<"$history_json")"
-            authorized_history="$(jq -cS '.readiness.publishedHistory' release-authorization.json)"
-            [[ "$actual_snapshot" == "$EXPECTED_HISTORY_SNAPSHOT" ]] \
-              || fail "Authoritative published-version history changed $stage."
-            [[ "$actual_history" == "$authorized_history" ]] \
-              || fail "Authoritative published-version history differs from signed authorization $stage."
-          }
-          assert_history_snapshot "between verification and publication"
-
-          # Publication is an idempotent state machine so a rerun of this same
-          # already-verified job can finish safely after any partial API or
-          # network failure. Every pre-existing object must resolve exactly to
-          # the approved candidate; unrelated state is never replaced.
-          master_actual="$(git -C candidate ls-remote --refs origin refs/heads/master | awk 'NR == 1 { print $1 }')"
-          review_actual="$(git -C candidate ls-remote --refs origin refs/heads/review | awk 'NR == 1 { print $1 }')"
-          [[ "$master_actual" == "$EXPECTED_MASTER_SHA" || "$master_actual" == "$CANDIDATE_SHA" ]] \
-            || fail "Remote master is neither the expected parent nor the approved candidate."
-          if [[ "$master_actual" == "$CANDIDATE_SHA" ]]; then
-            [[ "$RUN_ATTEMPT" =~ ^[2-9][0-9]*$ ]] \
-              || fail "Only a re-run of this original workflow run may resume partial publication."
-          fi
-
-          existing_tag="$(git -C candidate ls-remote --refs origin "refs/tags/$VERSION" | awk 'NR == 1 { print $1 }')"
-          existing_tag_peeled="$(git -C candidate ls-remote origin "refs/tags/$VERSION^{}" | awk 'NR == 1 { print $1 }')"
-          [[ -z "$existing_tag_peeled" ]] \
-            || fail "Annotated or peeled release tags are forbidden; this workflow creates only an exact lightweight tag."
-          existing_tag_target="$existing_tag"
-          [[ -z "$existing_tag_target" || "$existing_tag_target" == "$CANDIDATE_SHA" ]] \
-            || fail "Release tag $VERSION points at an unrelated commit."
-
-          release_exists="false"
-          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            release_exists="true"
-            [[ "$existing_tag_target" == "$CANDIDATE_SHA" ]] \
-              || fail "Existing GitHub Release tag does not resolve to candidate_sha."
-          fi
-
-          if [[ "$master_actual" == "$EXPECTED_MASTER_SHA" ]]; then
-            [[ "$review_actual" == "$CANDIDATE_SHA" ]] \
-              || fail "Fresh publication requires the exact reviewed ref."
-            [[ -z "$existing_tag_target" && "$release_exists" == "false" ]] \
-              || fail "Fresh publication found unexpected pre-existing tag or release state."
-            [[ "$(git -C candidate ls-remote --refs origin refs/heads/review | awk 'NR == 1 { print $1 }')" == "$CANDIDATE_SHA" ]] \
-              || fail "public/review moved before atomic promotion."
-            echo "Promoting audited candidate $CANDIDATE_SHA (tree $EXPECTED_TREE_SHA)."
-            authenticated_git push \
-              --atomic \
-              --force-with-lease="refs/heads/master:$EXPECTED_MASTER_SHA" \
-              --force-with-lease="refs/heads/review:$CANDIDATE_SHA" \
-              --force-with-lease="refs/tags/$VERSION:" \
-              origin \
-              "$CANDIDATE_SHA:refs/heads/master" \
-              "$CANDIDATE_SHA:refs/heads/review" \
-              "$CANDIDATE_SHA:refs/tags/$VERSION"
-          else
-            [[ "$existing_tag_target" == "$CANDIDATE_SHA" ]] \
-              || fail "Resumed publication requires the exact candidate tag created atomically with master."
-            echo "Remote master already equals the approved candidate; resuming publication."
-          fi
-          [[ "$(git -C candidate ls-remote --refs origin refs/heads/master | awk 'NR == 1 { print $1 }')" == "$CANDIDATE_SHA" ]] \
-            || fail "Remote master does not advertise the promoted candidate."
-
-          tag_direct="$(git -C candidate ls-remote --refs origin "refs/tags/$VERSION" | awk 'NR == 1 { print $1 }')"
-          tag_peeled="$(git -C candidate ls-remote origin "refs/tags/$VERSION^{}" | awk 'NR == 1 { print $1 }')"
-          [[ -z "$tag_peeled" && "$tag_direct" == "$CANDIDATE_SHA" ]] \
-            || fail "Published release tag is not the exact lightweight candidate tag."
-          assert_history_snapshot "during atomic promotion"
-
-          if [[ "$release_exists" == "false" ]]; then
+          notes="release-notes/$VERSION.md"
+          assets=(main.js manifest.json styles.css)
+          if ! gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$VERSION" \
               --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
-              --draft \
               --title "$VERSION" \
-              --notes-file "candidate/release-notes/$VERSION.md"
+              --notes-file "$notes" \
+              --draft \
+              "${assets[@]}"
           fi
-
           release_json="$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,name,isDraft,isPrerelease,body,assets,author)"
           jq -e --arg version "$VERSION" '
             .tagName == $version
             and .name == $version
-            and (.isDraft == true or .isDraft == false)
             and .isPrerelease == false
             and .author.login == "github-actions[bot]"
-            and ((.assets | map(.name)) as $names
-              | ($names | length) == ($names | unique | length)
-              and all($names[]; . == "main.js" or . == "manifest.json" or . == "styles.css"))
-          ' <<<"$release_json" >/dev/null \
-            || fail "Existing GitHub Release metadata or partial asset state is not safely resumable."
-          expected_body="$(cat "candidate/release-notes/$VERSION.md")"
-          actual_body="$(jq -r '.body' <<<"$release_json")"
-          [[ "$actual_body" == "$expected_body" ]] \
-            || fail "Existing GitHub Release notes differ from the approved release notes."
-          if [[ "$(jq -r '.isDraft' <<<"$release_json")" == "false" ]]; then
-            jq -e '(.assets | map(.name) | sort) == ["main.js", "manifest.json", "styles.css"]' \
-              <<<"$release_json" >/dev/null \
-              || fail "A published Release is incomplete; only a draft from this workflow may be resumed."
-          fi
-
-          # Resume a partial same-run upload without replacement: an existing
-          # approved-name asset must already be byte-identical, and only a
-          # missing asset may be uploaded.
-          resume_asset_dir="$RUNNER_TEMP/butter-editor-resume-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          rm -rf "$resume_asset_dir"
-          mkdir -p "$resume_asset_dir"
-          for asset in main.js manifest.json styles.css; do
-            if jq -e --arg asset "$asset" '.assets | any(.name == $asset)' <<<"$release_json" >/dev/null; then
-              gh release download "$VERSION" \
-                --repo "$GITHUB_REPOSITORY" \
-                --pattern "$asset" \
-                --dir "$resume_asset_dir"
-              cmp --silent "candidate/$asset" "$resume_asset_dir/$asset" \
-                || fail "Existing $asset is not the approved artifact; replacement is forbidden."
-            else
-              gh release upload "$VERSION" \
-                --repo "$GITHUB_REPOSITORY" \
-                "candidate/$asset"
-            fi
+            and ([.assets[].name] | sort) == ["main.js", "manifest.json", "styles.css"]
+          ' <<<"$release_json" >/dev/null || fail "Draft release metadata, assets, or publisher identity is not exact."
+          [[ "$(jq -r '.body' <<<"$release_json")" == "$(cat "$notes")" ]] || fail "Draft release notes differ from the reviewed notes."
+          download_dir="$(mktemp -d)"
+          gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --dir "$download_dir"
+          for asset in "${assets[@]}"; do
+            cmp --silent "$asset" "$download_dir/$asset" || fail "Uploaded $asset differs from the reviewed candidate."
           done
-
-          release_json="$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,name,isDraft,isPrerelease,body,assets,author)"
-          jq -e --arg version "$VERSION" '
-            .tagName == $version
-            and .name == $version
-            and (.isDraft == true or .isDraft == false)
-            and .isPrerelease == false
-            and .author.login == "github-actions[bot]"
-            and ((.assets | map(.name) | sort) == ["main.js", "manifest.json", "styles.css"])
-          ' <<<"$release_json" >/dev/null \
-            || fail "Published GitHub Release metadata or asset list differs from the approved release."
-          actual_body="$(jq -r '.body' <<<"$release_json")"
-          [[ "$actual_body" == "$expected_body" ]] \
-            || fail "Published GitHub Release notes differ from the approved release notes."
-
-          asset_dir="$RUNNER_TEMP/butter-editor-release-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          rm -rf "$asset_dir"
-          mkdir -p "$asset_dir"
-          gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --dir "$asset_dir"
-          cmp --silent candidate/main.js "$asset_dir/main.js" \
-            || fail "Published main.js differs from the approved candidate."
-          cmp --silent candidate/manifest.json "$asset_dir/manifest.json" \
-            || fail "Published manifest.json differs from the approved candidate."
-          cmp --silent candidate/styles.css "$asset_dir/styles.css" \
-            || fail "Assembled styles.css differs from the approved candidate."
-
-          prepublish_master="$(git -C candidate ls-remote --refs origin refs/heads/master | awk 'NR == 1 { print $1 }')"
-          prepublish_tag="$(git -C candidate ls-remote --refs origin "refs/tags/$VERSION" | awk 'NR == 1 { print $1 }')"
-          prepublish_tag_peeled="$(git -C candidate ls-remote origin "refs/tags/$VERSION^{}" | awk 'NR == 1 { print $1 }')"
-          [[ "$prepublish_master" == "$CANDIDATE_SHA" ]] \
-            || fail "public/master moved before Release publication."
-          [[ -z "$prepublish_tag_peeled" && "$prepublish_tag" == "$CANDIDATE_SHA" ]] \
-            || fail "Release tag moved or became annotated before Release publication."
-          assert_history_snapshot "before Release publication"
-
           if [[ "$(jq -r '.isDraft' <<<"$release_json")" == "true" ]]; then
             gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false
           fi
-          release_json="$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,name,isDraft,isPrerelease,body,assets,author)"
+          final_json="$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,name,isDraft,isPrerelease,body,assets,author,url)"
           jq -e --arg version "$VERSION" '
             .tagName == $version
             and .name == $version
             and .isDraft == false
             and .isPrerelease == false
             and .author.login == "github-actions[bot]"
-            and ((.assets | map(.name) | sort) == ["main.js", "manifest.json", "styles.css"])
-          ' <<<"$release_json" >/dev/null \
-            || fail "Final GitHub Release metadata or asset list differs from the approved release."
-          actual_body="$(jq -r '.body' <<<"$release_json")"
-          [[ "$actual_body" == "$expected_body" ]] \
-            || fail "Final GitHub Release notes differ from the approved release notes."
-
-          final_asset_dir="$RUNNER_TEMP/butter-editor-final-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          rm -rf "$final_asset_dir"
-          mkdir -p "$final_asset_dir"
-          gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --dir "$final_asset_dir"
-          cmp --silent candidate/main.js "$final_asset_dir/main.js" \
-            || fail "Final published main.js differs from the approved candidate."
-          cmp --silent candidate/manifest.json "$final_asset_dir/manifest.json" \
-            || fail "Final published manifest.json differs from the approved candidate."
-          cmp --silent candidate/styles.css "$final_asset_dir/styles.css" \
-            || fail "Final published styles.css differs from the approved candidate."
-
-          final_master="$(git -C candidate ls-remote --refs origin refs/heads/master | awk 'NR == 1 { print $1 }')"
-          final_tag="$(git -C candidate ls-remote --refs origin "refs/tags/$VERSION" | awk 'NR == 1 { print $1 }')"
-          final_tag_peeled="$(git -C candidate ls-remote origin "refs/tags/$VERSION^{}" | awk 'NR == 1 { print $1 }')"
-          [[ "$final_master" == "$CANDIDATE_SHA" ]] \
-            || fail "public/master moved before review cleanup."
-          [[ -z "$final_tag_peeled" && "$final_tag" == "$CANDIDATE_SHA" ]] \
-            || fail "Release tag moved or became annotated before review cleanup."
-          assert_history_snapshot "after Release publication"
-
-          # Delete only the exact reviewed ref. A missing ref means a retry has
-          # already completed cleanup; a newer ref is preserved and reported.
-          review_actual="$(git -C candidate ls-remote --refs origin refs/heads/review | awk 'NR == 1 { print $1 }')"
-          if [[ "$review_actual" == "$CANDIDATE_SHA" ]]; then
-            authenticated_git push \
-              --atomic \
-              --force-with-lease="refs/heads/master:$CANDIDATE_SHA" \
-              --force-with-lease="refs/tags/$VERSION:$CANDIDATE_SHA" \
-              --force-with-lease="refs/heads/review:$CANDIDATE_SHA" \
-              origin \
-              "$CANDIDATE_SHA:refs/heads/master" \
-              "$CANDIDATE_SHA:refs/tags/$VERSION" \
-              ":refs/heads/review"
-          elif [[ -n "$review_actual" ]]; then
-            echo "::notice::A newer public/review ref was preserved: $review_actual"
-          fi
-
-          cleanup_master="$(git -C candidate ls-remote --refs origin refs/heads/master | awk 'NR == 1 { print $1 }')"
-          cleanup_tag="$(git -C candidate ls-remote --refs origin "refs/tags/$VERSION" | awk 'NR == 1 { print $1 }')"
-          cleanup_tag_peeled="$(git -C candidate ls-remote origin "refs/tags/$VERSION^{}" | awk 'NR == 1 { print $1 }')"
-          [[ "$cleanup_master" == "$CANDIDATE_SHA" ]] \
-            || fail "public/master moved during review cleanup."
-          [[ -z "$cleanup_tag_peeled" && "$cleanup_tag" == "$CANDIDATE_SHA" ]] \
-            || fail "Release tag moved or became annotated during review cleanup."
+            and ([.assets[].name] | sort) == ["main.js", "manifest.json", "styles.css"]
+          ' <<<"$final_json" >/dev/null || fail "Published release metadata, assets, or publisher identity is not exact."
+          [[ "$(jq -r '.body' <<<"$final_json")" == "$(cat "$notes")" ]] || fail "Published release notes differ from the reviewed notes."
+          echo "Published $(jq -r '.url' <<<"$final_json") as github-actions[bot]."

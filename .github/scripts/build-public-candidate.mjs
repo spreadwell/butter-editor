@@ -71,13 +71,17 @@ const PUBLIC_SCRIPT_PATHS = new Map([
 const LOCAL_CONTROL_PATHS = new Map([
   ["candidateVerifier", "scripts/verify-public-candidate.mjs"],
   ["publicExporter", "scripts/export-public-source.mjs"],
-  ["reviewPush", "scripts/push-public-review.mjs"],
+  ["releaseOrchestrator", "scripts/release-prep.mjs"],
 ]);
 const CONTROL_TARGETS = new Map([
   ["candidateVerifier", "scripts/verify-public-candidate.mjs"],
   ["publicExporter", "scripts/export-public-source.mjs"],
-  ["reviewPush", "scripts/push-public-review.mjs"],
+  ["releaseOrchestrator", "scripts/release-prep.mjs"],
 ]);
+export const TRUSTED_CONTROL_MATERIALIZATION_PATHS = Object.freeze([...new Set([
+  ...PUBLIC_SCRIPT_PATHS.keys(),
+  ...LOCAL_CONTROL_PATHS.values(),
+])].sort());
 
 function slash(path) {
   return path.replace(/\\/gu, "/");
