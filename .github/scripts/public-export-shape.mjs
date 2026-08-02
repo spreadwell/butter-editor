@@ -86,7 +86,6 @@ const PUBLIC_DEV_DEPENDENCIES = new Set([
   "@types/markdown-it",
   "esbuild",
   "obsidian",
-  "prosemirror-schema-list",
   "typescript",
 ]);
 const PUBLIC_RUNTIME_DEPENDENCIES = new Set([
