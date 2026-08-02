@@ -235,6 +235,9 @@ const BUNDLE_BYPASS_PATTERNS = [
   LOCAL_BACKEND_URL_PATTERN,
   /\b(?:adminBypass|debugLicense|testUser|testDeviceId)\b/u,
 ];
+const AUTHORED_RUNTIME_STRING_EXEMPTIONS = new Map([
+  [".github/scripts/build-public-candidate.mjs", new Set(["scripts/release-prep.mjs"])],
+]);
 // verifier-rule-definitions:end
 
 function slash(path) {
@@ -879,6 +882,10 @@ function inspectAuthoredRuntimeStrings(files, textByFile, typescript, findings) 
       if (value) {
         for (const marker of HUMAN_MARKERS) {
           if (!marker.pattern.test(value)) continue;
+          if (
+            marker.code === "process-marker"
+            && AUTHORED_RUNTIME_STRING_EXEMPTIONS.get(relativePath)?.has(value)
+          ) continue;
           const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
           const message = marker.message.replace(/ in public prose or a source comment$/u, "");
           findings.push(makeFinding(

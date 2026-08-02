@@ -102,7 +102,6 @@ const PUBLIC_RUNTIME_DEPENDENCIES = new Set([
   "prosemirror-inputrules",
   "prosemirror-keymap",
   "prosemirror-model",
-  "prosemirror-schema-list",
   "prosemirror-state",
   "prosemirror-tables",
   "prosemirror-transform",
