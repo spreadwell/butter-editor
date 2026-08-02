@@ -328,12 +328,13 @@ export function assertAuthorizedReleaseEvidence(
   return envelope;
 }
 
-function operatingSystemEnvironment(source = process.env) {
+export function operatingSystemEnvironment(source = process.env) {
   const env = {};
   for (const key of [
     "COMSPEC",
     "LANG",
     "LC_ALL",
+    "LOCALAPPDATA",
     "PATH",
     "Path",
     "PATHEXT",
