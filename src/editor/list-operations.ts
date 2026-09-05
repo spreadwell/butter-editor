@@ -27,6 +27,7 @@ import { Fragment } from "prosemirror-model";
 import { keymap } from "prosemirror-keymap";
 import { TextSelection } from "prosemirror-state";
 import { getMultiBlockSelection } from "./multi-block-select";
+import { shiftListItemDepths } from "./list-depth";
 
 // ═══════════════════════════════════════════
 //  Move block up/down
@@ -110,7 +111,11 @@ function moveBlockCmd(dir: -1 | 1): Command {
  * a task list_item via `setNodeType` (matching the input-rule
  * conversion path).
  */
-const toggleTaskOnCurrentLine: Command = (state, dispatch) => {
+export function toggleTaskOnCurrentLine(
+  state: EditorState,
+  dispatch: ((tr: Transaction) => void) | undefined,
+  cycle = true,
+): boolean {
   const { $from } = state.selection;
 
   let listItemPos = -1;
@@ -167,16 +172,21 @@ const toggleTaskOnCurrentLine: Command = (state, dispatch) => {
   } else if (checked === false) {
     nextAttrs.kind = "task";
     nextAttrs.checked = true;
-  } else {
-    // checked=true → revert to bullet (cycle back to start)
+  } else if (cycle) {
+    // Checked task in cycle mode → bullet (cycle back to start).
     nextAttrs.kind = "bullet";
     nextAttrs.checked = null;
+  } else {
+    // Obsidian's ordinary checklist-status command toggles done/open without
+    // changing the line back into a bullet. Its cycle command passes `true`.
+    nextAttrs.kind = "task";
+    nextAttrs.checked = false;
   }
 
   const tr = state.tr.setNodeMarkup(listItemPos, undefined, nextAttrs);
   dispatch(tr.scrollIntoView());
   return true;
-};
+}
 
 // ═══════════════════════════════════════════
 //  Indent / outdent (Tab / Shift-Tab in lists)
@@ -187,89 +197,6 @@ const toggleTaskOnCurrentLine: Command = (state, dispatch) => {
 // sibling's depth + 1) - matches markdown/Notion's "you can only
 // indent under something that exists at the parent depth" rule.
 // Shift-Tab: depth-1 (clamped at 0).
-
-/**
- * Apply a depth shift (+1 or -1) to a set of list_item positions.
- * Iterates in doc order, clamping each item's max depth to
- * `prev.depth + 1` (using the POST-CHANGE depth of the previous list
- * item if it was already updated this call). Returns true if the doc
- * changed.
- *
- * `singleConvertOnZeroOutdent`: when only one list_item is being
- * outdented and it's at depth 0, replace it with its content (lift
- * out of the list - matches Notion / Apple Notes shift-tab behavior).
- * For multi-item outdent we skip the conversion to keep the operation
- * predictable; depth-0 items just don't outdent further.
- */
-function applyDepthShift(
-  state: EditorState,
-  dispatch: ((tr: Transaction) => void) | undefined,
-  items: { pos: number; node: PMNode }[],
-  delta: 1 | -1,
-  singleConvertOnZeroOutdent: boolean,
-): boolean {
-  if (items.length === 0) return false;
-  const sortedItems = [...items].sort((a, b) => a.pos - b.pos);
-  const tr = state.tr;
-  let modified = false;
-  // Track post-change depth keyed by doc position so the next
-  // sibling's clamp sees the depth WE just wrote (not the stale one
-  // baked into the captured node).
-  const postDepth = new Map<number, number>();
-  for (const it of sortedItems) {
-    const $pos = state.doc.resolve(it.pos);
-    const myIdx = $pos.index(0);
-    const cur = it.node.attrs.depth as number;
-
-    if (delta === 1) {
-      // Find the immediately-previous list_item in doc order. If the
-      // previous top-level child isn't a list_item, this item is the
-      // first of its list and can't indent.
-      let prevDepth = -1;
-      if (myIdx > 0) {
-        const prev = state.doc.child(myIdx - 1);
-        if (prev.type.name === "list_item") {
-          const prevPos = it.pos - prev.nodeSize;
-          prevDepth = postDepth.get(prevPos) ?? (prev.attrs.depth as number);
-        }
-      }
-      if (prevDepth < 0) continue;
-      const target = Math.min(cur + 1, prevDepth + 1);
-      if (target === cur) continue;
-      postDepth.set(it.pos, target);
-      tr.setNodeMarkup(it.pos, undefined, {
-        ...it.node.attrs,
-        depth: target,
-        sourceRange: null,
-      });
-      modified = true;
-    } else {
-      const target = Math.max(0, cur - 1);
-      if (target === cur) {
-        if (singleConvertOnZeroOutdent && sortedItems.length === 1) {
-          const firstChild = it.node.firstChild;
-          if (!firstChild) continue;
-          const replacement: PMNode[] = [];
-          it.node.forEach((c) => replacement.push(c));
-          tr.replaceWith(it.pos, it.pos + it.node.nodeSize, replacement);
-          modified = true;
-        }
-        continue;
-      }
-      postDepth.set(it.pos, target);
-      tr.setNodeMarkup(it.pos, undefined, {
-        ...it.node.attrs,
-        depth: target,
-        sourceRange: null,
-      });
-      modified = true;
-    }
-  }
-  if (!modified) return false;
-  if (!dispatch) return true;
-  dispatch(tr.scrollIntoView());
-  return true;
-}
 
 /**
  * Public entrypoint usable from a non-keymap context (e.g. a document
@@ -285,32 +212,31 @@ export function shiftSelectedListItemDepth(
   return changeListItemDepth(delta)(view.state, view.dispatch.bind(view), view);
 }
 
-function changeListItemDepth(delta: 1 | -1): Command {
+export function changeListItemDepth(delta: 1 | -1): Command {
   return (state, dispatch) => {
     // Multi-block selection wins - every list_item in the set gets
-    // shifted (with per-item clamping inside applyDepthShift). Used
+    // shifted with per-item clamping. Used
     // when the user click-selected a parent that auto-included its
     // subtree, or shift/ctrl-built a custom group.
     const multi = getMultiBlockSelection(state);
     if (multi.positions.length > 0) {
-      const items: { pos: number; node: PMNode }[] = [];
-      for (const p of multi.positions) {
-        const n = state.doc.nodeAt(p);
-        if (n?.type.name === "list_item") items.push({ pos: p, node: n });
-      }
-      if (items.length > 0) {
-        return applyDepthShift(state, dispatch, items, delta, false);
-      }
-      return false;
+      return shiftListItemDepths(
+        state,
+        dispatch,
+        multi.positions,
+        delta,
+        false,
+        true,
+      );
     }
 
     // Single NodeSelection on a list_item - same as cursor-inside.
     const sel = state.selection;
     if (sel instanceof NodeSelection && sel.node.type.name === "list_item") {
-      return applyDepthShift(
+      return shiftListItemDepths(
         state,
         dispatch,
-        [{ pos: sel.from, node: sel.node }],
+        [sel.from],
         delta,
         true,
       );
@@ -326,12 +252,11 @@ function changeListItemDepth(delta: 1 | -1): Command {
       }
     }
     if (liDepth < 0) return false;
-    const liNode = $from.node(liDepth);
     const liPos = $from.before(liDepth);
-    return applyDepthShift(
+    return shiftListItemDepths(
       state,
       dispatch,
-      [{ pos: liPos, node: liNode }],
+      [liPos],
       delta,
       true,
     );
@@ -358,7 +283,8 @@ export function listOperationsPlugin(): PMPlugin {
     "Alt-ArrowDown": moveBlockCmd(1),
     "Mod-Shift-ArrowUp": moveBlockCmd(-1),
     "Mod-Shift-ArrowDown": moveBlockCmd(1),
-    "Mod-l": toggleTaskOnCurrentLine,
+    "Mod-l": (state, dispatch) =>
+      toggleTaskOnCurrentLine(state, dispatch, true),
     Tab: changeListItemDepth(1),
     "Shift-Tab": changeListItemDepth(-1),
   });

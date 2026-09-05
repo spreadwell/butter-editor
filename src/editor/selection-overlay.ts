@@ -12,9 +12,9 @@
  *   • When the selection is a NodeSelection, look up the selected
  *     node's DOM via `view.nodeDOM(pos)` and read its
  *     `getBoundingClientRect()`. Position the overlay div at the
- *     same rect (expanded by `--butter-selection-offset` on each
- *     side for the breathing-room ring). Copy the block's computed
- *     `border-radius` so the overlay's corners match the block's.
+ *     same rect (expanded on each side for the breathing-room ring).
+ *     The overlay owns its radius, independent of the content block,
+ *     so content paint containment cannot clip native text selection.
  *   • When the selection isn't a NodeSelection, hide the overlay.
  *   • Reposition on any scroll bubbling through the document
  *     (capture-phase listener so internal scrollers fire it) and on
@@ -28,7 +28,11 @@
 import { Plugin as PMPlugin, PluginKey, NodeSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { getMultiBlockSelection } from "./multi-block-select";
-import { editorTopChromeBottom } from "../ui/toolbar-layout";
+import {
+  editorTopChromeBottom,
+  visibleContextToolbarBottom,
+} from "../ui/toolbar-layout";
+import { blockSelectionBounds } from "./block-selection-geometry";
 
 /** Transaction-meta key that marks a NodeSelection as deliberately
  *  user-initiated (drag-handle click, keyboard shortcut, etc).
@@ -87,6 +91,9 @@ class SelectionOverlayView {
     });
     this.ownerWindow.addEventListener("resize", this.resizeListener);
 
+    // Keep the primary ring mounted while hidden so even the first block
+    // selection has a painted one-pixel starting state to transition from.
+    this.acquireOverlay(0);
     this.update();
   }
 
@@ -126,10 +133,8 @@ class SelectionOverlayView {
   /** Position a single overlay at the union of the bounding rects of
    *  the blocks in `positions` (which must be a contiguous run in doc
    *  order). Returns true if at least one block resolved, false
-   *  otherwise. The merged shape uses a flat 9px corner radius for
-   *  multi-block groups (per-block radii would clash on the joint
-   *  edges); single-block groups keep the block's own radius for
-   *  visual continuity with that block. */
+   *  otherwise. Every group uses the same native small-control radius so hover
+   *  and selection retain one stable silhouette. */
   private positionGroupAt(
     overlay: HTMLElement,
     positions: number[],
@@ -143,7 +148,7 @@ class SelectionOverlayView {
       const dom = this.view.nodeDOM(pos);
       if (!(dom instanceof this.ownerWindow.HTMLElement)) continue;
       if (!firstDom) firstDom = dom;
-      const rect = dom.getBoundingClientRect();
+      const rect = blockSelectionBounds(dom, this.ownerWindow);
       if (rect.top < minTop) minTop = rect.top;
       if (rect.bottom > maxBottom) maxBottom = rect.bottom;
       if (rect.left < minLeft) minLeft = rect.left;
@@ -154,10 +159,9 @@ class SelectionOverlayView {
     const leaf = this.view.dom.closest(".workspace-leaf-content");
     const header = leaf?.querySelector<HTMLElement>(".view-header");
     const stack = leaf?.querySelector<HTMLElement>(".butter-toolbar-stack");
-    const tableBar = stack?.querySelector<HTMLElement>(".butter-table-toolbar:not(.is-hidden)");
     const hb = header?.getBoundingClientRect().bottom ?? 0;
     const sb = stack?.getBoundingClientRect().bottom ?? 0;
-    const tb = tableBar?.getBoundingClientRect().bottom ?? 0;
+    const cb = visibleContextToolbarBottom(leaf);
     const toolbarPosition = leaf?.getAttribute("data-toolbar-pos") === "bottom"
       ? "bottom"
       : "top";
@@ -165,7 +169,7 @@ class SelectionOverlayView {
       toolbarPosition,
       hb,
       sb,
-      tb,
+      cb,
     );
 
     const inset = 9;
@@ -179,16 +183,6 @@ class SelectionOverlayView {
     overlay.style.top = `${clippedTop}px`;
     overlay.style.width = `${maxRight - minLeft + inset * 2}px`;
     overlay.style.height = `${clippedHeight}px`;
-    if (positions.length === 1) {
-      const computed = this.ownerWindow.getComputedStyle(firstDom);
-      if (computed.borderRadius && computed.borderRadius !== "0px") {
-        overlay.style.borderRadius = `calc(${computed.borderRadius} + ${inset}px)`;
-      } else {
-        overlay.style.borderRadius = `${inset}px`;
-      }
-    } else {
-      overlay.style.borderRadius = `${inset}px`;
-    }
     overlay.classList.add("is-visible");
     return true;
   }

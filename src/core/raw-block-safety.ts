@@ -34,19 +34,15 @@
  */
 
 import { Plugin as PMPlugin } from "prosemirror-state";
-import { Node as PMNode } from "prosemirror-model";
+import type { Node as PMNode } from "prosemirror-model";
 
 /** Meta key carried by trusted transactions (setViewData sync) that
  *  are permitted to remove raw_blocks because a fresh parse already
  *  produced the replacement content. */
 export const RAW_BLOCK_SYNC_META = "butter-raw-block-sync";
 
-function countRawBlocks(doc: PMNode): number {
-  let count = 0;
-  doc.forEach((child) => {
-    if (child.type.name === "raw_block") count++;
-  });
-  return count;
+function isWholeSourceFallback(doc: PMNode): boolean {
+  return doc.childCount === 1 && doc.firstChild?.type.name === "raw_block";
 }
 
 /**
@@ -64,14 +60,14 @@ export function rawBlockSafetyPlugin(
       // the new doc, so any raw_block drop is legitimate.
       if (tr.getMeta(RAW_BLOCK_SYNC_META)) return true;
 
-      const before = countRawBlocks(state.doc);
-      if (before === 0) return true; // nothing to protect
-      const after = countRawBlocks(tr.doc);
-      if (after >= before) return true; // raw_blocks intact
+      // Parser failure is represented only as one whole-file raw block. Lock
+      // that fallback document completely: allowing visible siblings to be
+      // inserted beside it would synthesize new bytes around source Butter
+      // explicitly could not parse. This check is O(1) on every keystroke.
+      if (!isWholeSourceFallback(state.doc)) return true;
 
-      // Transaction would drop a raw_block. Reject and tell the user
-      // why. The block stays, the user's edit is thrown away
-      // preferable to silently destroying their source.
+      // Any local mutation of the fallback is unsafe. Reject and tell the
+      // user why; trusted whole-file synchronization remains the sole exit.
       onReject(
         "Butter can't delete an unparseable block - it holds your " +
           "source bytes verbatim. Open the file in another view " +

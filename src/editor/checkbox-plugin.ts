@@ -3,10 +3,13 @@
  *
  * Task state is stored as a `checked` attribute on `list_item`
  * (see schema.ts + parser.ts post-parse transform). This plugin
- * renders a real `<input type="checkbox">` at the start of any
- * list_item with `checked` set, and toggles the attribute when
- * clicked. Nothing lives in the text content - no `[ ]` / `[x]`
- * characters to escape, no risk of stray brackets.
+ * renders an accessible checkbox control at the start of any list_item
+ * with `checked` set, and toggles the attribute when clicked. The native
+ * input remains in the accessibility tree but is not the painted surface:
+ * Chromium can strand a form-control layer after block-drag reflow. A
+ * plain inline span owns the visible checkbox so it travels with the same
+ * line box as the task text. Nothing lives in the document text content -
+ * no `[ ]` / `[x]` characters to escape, no risk of stray brackets.
  */
 import { Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
@@ -34,13 +37,10 @@ function buildDecorations(state: EditorState): DecorationSet {
       Decoration.widget(
         widgetPos,
         (view: EditorView) => {
-          // Wrap the checkbox in a span with padding-right. CSS margin
-          // on the input alone doesn't push the caret - the browser
-          // places the caret at the widget's content-box edge, inside
-          // the margin. Padding is part of the widget's box, so the
-          // caret lands AFTER the padding. That gives a clear visual
-          // gap between the checkbox and the cursor when the task
-          // content is empty.
+          // The wrapper occupies the same zero-net-width marker column as
+          // bullet and ordered marker widgets. It is deliberately static
+          // inline content: relative positioning or native form-control
+          // paint can retain an obsolete compositor position after reflow.
           const wrap = activeWindow.createSpan();
           wrap.className = "butter-task-checkbox-wrap";
           wrap.setAttribute("contenteditable", "false");
@@ -66,11 +66,17 @@ function buildDecorations(state: EditorState): DecorationSet {
           input.title = checked
             ? "Done. Ctrl+L to mark open"
             : "Open. Ctrl+L to mark done";
-          input.addEventListener("mousedown", (e) => {
-            e.preventDefault();
+          wrap.title = input.title;
+
+          const visual = activeWindow.createSpan();
+          visual.className = "butter-task-checkbox-visual";
+          visual.setAttribute("aria-hidden", "true");
+          visual.textContent = checked ? "\u2713" : "";
+
+          const setChecked = (next: boolean) => {
             const li = view.state.doc.nodeAt(pos);
             if (!li || li.type.name !== "list_item") return;
-            const next = li.attrs.checked === true ? false : true;
+            if (li.attrs.checked === next) return;
             view.dispatch(
               view.state.tr.setNodeMarkup(pos, undefined, {
                 ...li.attrs,
@@ -78,8 +84,18 @@ function buildDecorations(state: EditorState): DecorationSet {
                 sourceRange: null,
               }),
             );
+          };
+          wrap.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            const li = view.state.doc.nodeAt(pos);
+            if (!li || li.type.name !== "list_item") return;
+            setChecked(li.attrs.checked !== true);
+          });
+          input.addEventListener("change", () => {
+            setChecked(input.checked);
           });
           wrap.appendChild(input);
+          wrap.appendChild(visual);
           return wrap;
         },
         { side: -1, ignoreSelection: true, key: `cb-${checked}-${pos}` },

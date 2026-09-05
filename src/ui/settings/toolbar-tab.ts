@@ -1,14 +1,16 @@
 import { Setting, setIcon, Platform } from "obsidian";
-import { ButterSettingTab, SubmenuEditModal } from "../settings-tab";
+import { ButterSettingTab, CommandActionEditModal, CommandPickerModal, SubmenuEditModal } from "../settings-tab";
 import { MAIN_TOOLBAR_BUTTON_DEFS, openMobilePresetColorSheet, createPresetColorPicker } from "../toolbar";
 import { TABLE_TOOLBAR_BUTTON_DEFS } from "../../editor/table-toolbar";
-import { defaultTableLayout, mainLayoutFull, mainLayoutSimple, mobileLayoutDefault, mobileTableLayoutDefault, cloneLayout, collectButtonIds, locate, removeItem, newId } from "../toolbar-layout";
+import { defaultTableLayout, mainLayoutDefault, mainLayoutFull, mainLayoutSimple, mobileLayoutDefault, mobileLayoutSimple, mobileTableLayoutDefault, cloneLayout, countButtonPlacements, groupActionDefinitions, layoutItemKey, locate, removeItem, newId } from "../toolbar-layout";
+import { commandActionIcon, commandActionLabel } from "../command-actions";
 import type { ToolbarLayoutItem } from "../../main";
 import { tx, txKnown, tv } from "../../i18n";
 import {
   DEFAULT_PRESET_TEXT_COLORS,
   DEFAULT_PRESET_HIGHLIGHT_COLORS,
 } from "../../main";
+import { createAvailableActionCatalog, createAvailableActionCategory } from "./available-action-catalog";
 
 export function renderToolbar(this: ButterSettingTab, root: HTMLElement) {
     // Single tab-level Desktop/Mobile platform switcher rendered
@@ -338,25 +340,23 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
       if (segment === "desktop") {
         new Setting(layoutItems)
           .setName(tx("Toolbar style"))
-          .setDesc(tx("Attached sits as a chrome row at the edge of the pane. Detached floats as a card inside the editor."))
+          .setDesc(tx("Attached sits at the edge of the pane. Detached floats inside the editor. Integrated shares Obsidian's note header."))
           .addDropdown((d) =>
-            // Integrated is implemented but hidden from this dropdown
-            // until the design pass for view-header layout is finalized.
-            // The setting still works if set programmatically.
             d
               .addOptions({
                 attached: tx("Attached"),
                 detached: tx("Detached"),
+                integrated: tx("Integrated"),
               })
-              .setValue(
-                this.plugin.settings.toolbarStyle === "integrated"
-                  ? "attached"
-                  : this.plugin.settings.toolbarStyle,
-              )
+              .setValue(this.plugin.settings.toolbarStyle)
               .onChange(async (v) => {
                 this.plugin.settings.toolbarStyle = v as "detached" | "attached" | "integrated";
+                if (v === "integrated") {
+                  this.plugin.settings.toolbarPosition = "top";
+                }
                 await this.plugin.saveSettings();
                 this.plugin.applyToolbarPositionToAllViews();
+                renderSegment();
               }),
           );
 
@@ -366,9 +366,28 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
           .addDropdown((d) =>
             d
               .addOptions({ top: tx("Pin to top"), bottom: tx("Pin to bottom") })
-              .setValue(this.plugin.settings.toolbarPosition)
+              .setValue(
+                this.plugin.settings.toolbarStyle === "integrated"
+                  ? "top"
+                  : this.plugin.settings.toolbarPosition,
+              )
+              .setDisabled(this.plugin.settings.toolbarStyle === "integrated")
               .onChange(async (v) => {
                 this.plugin.settings.toolbarPosition = v as "top" | "bottom";
+                await this.plugin.saveSettings();
+                this.plugin.applyToolbarPositionToAllViews();
+              }),
+          );
+
+        new Setting(layoutItems)
+          .setName(tx("Filename pill"))
+          .setDesc(tx("Show the note filename in a rounded pill in Obsidian's note header."))
+          .addToggle((toggle) =>
+            toggle
+              .setValue(this.plugin.settings.showFilenamePill)
+              .setDisabled(this.plugin.settings.toolbarStyle === "integrated")
+              .onChange(async (value) => {
+                this.plugin.settings.showFilenamePill = value;
                 await this.plugin.saveSettings();
                 this.plugin.applyToolbarPositionToAllViews();
               }),
@@ -454,6 +473,10 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
       tooltip: string;
       onClick: () => void | Promise<void>;
     }, tag?: { label: string; icon?: string; icons?: string[] }): HTMLElement {
+    // Keep this stable DOM contract across Obsidian versions. Butter's public
+    // settings surface already uses native setting classes, while owning this
+    // small wrapper prevents newer SettingGroup implementations from adding
+    // search-only rows and nesting that alter established spacing and rhythm.
     const group = parent.createDiv({ cls: "setting-group butter-setting-group" });
     const headerEl = group.createDiv({
       cls: "setting-item setting-item-heading",
@@ -502,9 +525,10 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
    * own mobile-toolbar settings pattern: rows are full-width with
    * large tap targets so it works on both desktop and touch.
    *
-   * `On toolbar` shows the current layout in order; submenu rows
+   * `In toolbar` shows the current layout in order; submenu rows
    * are followed by their indented children (single-level nesting).
-   * `Available` shows buttons not currently anywhere in the layout.
+   * `Available actions` shows buttons not currently in the layout, grouped
+   * into independently collapsible categories.
    * Drag-handle drag reorders within the same parent. The kebab
    * menu on each row exposes cross-level moves and deletion.
    */
@@ -531,7 +555,7 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
         this.renderLayoutEditor(
           container,
           "Primary toolbar",
-          "Drag rows to reorder. Tap row actions to remove or move into a submenu. Tap an Available button's plus to add it back.",
+          "Drag rows to reorder. Tap row actions to remove or move into a submenu. Expand an available category to add actions.",
           MAIN_TOOLBAR_BUTTON_DEFS,
           () => this.plugin.getMainToolbarLayout(),
           async (next) => {
@@ -541,18 +565,24 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
           },
           [
             {
-              name: "Full toolbar preset",
-              desc: "Every Butter feature, organized into submenus.",
+              name: "Default toolbar preset",
+              desc: "Balanced everyday writing tools.",
               cta: true,
-              build: mainLayoutFull,
+              build: mainLayoutDefault,
             },
             {
               name: "Simple toolbar preset",
               desc: "Pared-down essentials only.",
               build: mainLayoutSimple,
             },
+            {
+              name: "Full toolbar preset",
+              desc: "Every Butter feature, organized into submenus.",
+              build: mainLayoutFull,
+            },
           ],
           { label: "Desktop", icon: "monitor" },
+          { allowCommands: true },
         );
       } else {
         this.renderLayoutEditor(
@@ -573,8 +603,14 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
               cta: true,
               build: mobileLayoutDefault,
             },
+            {
+              name: "Simple toolbar preset",
+              desc: "Pared-down essentials only.",
+              build: mobileLayoutSimple,
+            },
           ],
           { label: "Mobile", icon: "smartphone" },
+          { allowCommands: true },
         );
       }
     };
@@ -654,7 +690,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       desc: string;
       cta?: boolean;
       build: () => ToolbarLayoutItem[];
-    }>, tag?: { label: string; icon?: string }) {
+    }>, tag?: { label: string; icon?: string }, options: { allowCommands?: boolean } = {}) {
     const defLookup = new Map(defs.map((d) => [d.id, d]));
 
     // Single setting-group card holding both the preset rows and
@@ -672,6 +708,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
     let hideToastTimer: number | null = null;
     let removeToastTimer: number | null = null;
     let rerender = () => {};
+    const availableCategoryOpen = new Map<string, boolean>();
 
     const showUpdateToast = () => {
       const host = settingsRoot ?? root;
@@ -748,7 +785,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       const onWrap = wrap.createDiv({ cls: "butter-layout-list" });
       onWrap.createDiv({
         cls: "butter-layout-list-label",
-        text: tx("On toolbar"),
+        text: txKnown("In toolbar"),
       });
       const onList = onWrap.createDiv({
         cls: "butter-layout-rows",
@@ -761,10 +798,11 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         index: number,
         depth: number,
       ) => {
+        const itemKey = layoutItemKey(item);
         const row = onList.createDiv({
           cls: "butter-layout-row",
           attr: {
-            "data-item-id": item.id,
+            "data-item-id": itemKey,
             "data-depth": String(depth),
             "data-type": item.type,
           },
@@ -795,6 +833,11 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           setIcon(icon, item.icon || "more-horizontal");
           label.setText(item.label ? txKnown(item.label) : tx("Submenu"));
           row.classList.add("is-submenu");
+        } else if (item.type === "command") {
+          setIcon(icon, commandActionIcon(this.app, item));
+          label.setText(commandActionLabel(this.app, item));
+          row.classList.add("is-command");
+          if (!this.app.commands?.commands?.[item.commandId]) row.classList.add("is-missing");
         } else {
           const def = defLookup.get(item.id);
           setIcon(icon, def?.icon ?? "circle-help");
@@ -817,9 +860,26 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           });
         }
 
+        if (item.type === "command") {
+          const editBtn = actions.createEl("button", {
+            cls: "butter-layout-action clickable-icon",
+            attr: { "aria-label": txKnown("Edit command action"), type: "button" },
+          });
+          setIcon(editBtn, "pencil");
+          editBtn.addEventListener("click", (event) => {
+            event.preventDefault();
+            this.openCommandActionEditModal(item, async (updated) => {
+              const location = locate(layout, itemKey);
+              if (!location) return;
+              location.parent[location.index] = updated;
+              await commitLayout(layout);
+            });
+          });
+        }
+
         // Cross-level move: top-level button can be moved into a
         // submenu; child can be moved out to top-level.
-        if (item.type === "button") {
+        if (item.type === "button" || item.type === "command") {
           const submenus = layout.filter(
             (i) => i.type === "submenu",
           );
@@ -836,7 +896,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
                   (i) => i.type === "submenu" && i.id === subId,
                 ) as Extract<ToolbarLayoutItem, { type: "submenu" }> | undefined;
                 if (!targetSub) return;
-                const idx = parentArr.findIndex((i) => i.id === item.id);
+                const idx = parentArr.findIndex((i) => layoutItemKey(i) === itemKey);
                 if (idx < 0) return;
                 parentArr.splice(idx, 1);
                 targetSub.children.push(item);
@@ -855,7 +915,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
             setIcon(moveOutBtn, "folder-output");
             moveOutBtn.addEventListener("click", (e) => {
               e.preventDefault();
-              const idx = parentArr.findIndex((i) => i.id === item.id);
+              const idx = parentArr.findIndex((i) => layoutItemKey(i) === itemKey);
               if (idx < 0) return;
               parentArr.splice(idx, 1);
               layout.push(item);
@@ -871,7 +931,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         setIcon(removeBtn, "x");
         removeBtn.addEventListener("click", (e) => {
           e.preventDefault();
-          const idx = parentArr.findIndex((i) => i.id === item.id);
+          const idx = parentArr.findIndex((i) => layoutItemKey(i) === itemKey);
           if (idx < 0) return;
           parentArr.splice(idx, 1);
           void commitLayout(layout);
@@ -881,7 +941,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         // row before/after another row (at the target's level), or
         // drop a row INTO a submenu (becomes its last child). See
         // `wireDrag()` below.
-        this.wireDrag(handle, row, layout, item.id, async () => {
+        this.wireDrag(handle, row, layout, itemKey, async () => {
           await commitLayout(layout);
         });
       };
@@ -943,6 +1003,24 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           /* isNew */ true,
         );
       });
+      if (options.allowCommands) {
+        buildAddBtn("terminal", "Command", (event) => {
+          event.preventDefault();
+          this.openCommandPicker((command) => {
+            const item: Extract<ToolbarLayoutItem, { type: "command" }> = {
+              type: "command",
+              id: newId("command"),
+              commandId: command.id,
+              label: command.name,
+              icon: command.icon || "terminal",
+            };
+            this.openCommandActionEditModal(item, async (configured) => {
+              layout.push(configured);
+              await commitLayout(layout);
+            });
+          });
+        });
+      }
       buildAddBtn("minus", "Divider", (e) => {
         e.preventDefault();
         layout.push({ type: "separator", id: newId("sep") });
@@ -950,32 +1028,45 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
       });
 
       // ── AVAILABLE list ──
-      const used = collectButtonIds(layout);
-      const available = defs.filter((d) => !used.has(d.id));
+      const usageCounts = countButtonPlacements(layout);
+      const available = defs;
       if (available.length > 0) {
-        const availWrap = wrap.createDiv({ cls: "butter-layout-list" });
-        availWrap.createDiv({
-          cls: "butter-layout-list-label",
-          text: tx("Available"),
-        });
-        const availList = availWrap.createDiv({ cls: "butter-layout-rows" });
-        for (const def of available) {
-          const row = availList.createDiv({
-            cls: "butter-layout-row is-available",
-          });
-          const icon = row.createDiv({ cls: "butter-layout-icon" });
-          setIcon(icon, def.icon);
-          row.createDiv({ cls: "butter-layout-label", text: txKnown(def.label) });
-          const addBtn = row.createEl("button", {
-            cls: "butter-layout-action clickable-icon mod-add",
-            attr: { "aria-label": `${tx("Add")} ${txKnown(def.label)}`, type: "button" },
-          });
-          setIcon(addBtn, "plus");
-          addBtn.addEventListener("click", (e) => {
-            e.preventDefault();
-            layout.push({ type: "button", id: def.id });
-            void commitLayout(layout);
-          });
+        const availWrap = createAvailableActionCatalog(
+          wrap,
+          txKnown("Available actions"),
+          available.length,
+        );
+        for (const [group, definitions] of groupActionDefinitions(available)) {
+          const category = createAvailableActionCategory(
+            availWrap,
+            txKnown(group),
+            definitions.length,
+            availableCategoryOpen.get(group) === true,
+            (open) => { availableCategoryOpen.set(group, open); },
+          );
+          const availableRows = category.createDiv({ cls: "butter-layout-rows" });
+          for (const def of definitions) {
+            const row = availableRows.createDiv({
+              cls: "butter-layout-row is-available",
+            });
+            const icon = row.createDiv({ cls: "butter-layout-icon" });
+            setIcon(icon, def.icon);
+            const label = row.createDiv({ cls: "butter-layout-label", text: txKnown(def.label) });
+            const usageCount = usageCounts.get(def.id) ?? 0;
+            if (usageCount > 0) {
+              label.createSpan({ cls: "butter-layout-usage-count", text: ` · ${usageCount}` });
+            }
+            const addBtn = row.createEl("button", {
+              cls: "butter-layout-action clickable-icon mod-add",
+              attr: { "aria-label": `${tx("Add")} ${txKnown(def.label)}`, type: "button" },
+            });
+            setIcon(addBtn, "plus");
+            addBtn.addEventListener("click", (e) => {
+              e.preventDefault();
+              layout.push({ type: "button", id: def.id, instanceId: newId("toolbar-button") });
+              void commitLayout(layout);
+            });
+          }
         }
       }
     };
@@ -1041,6 +1132,21 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
     modal.open();
   }
 
+  export function openCommandPicker(
+    this: ButterSettingTab,
+    onChoose: (command: { id: string; name: string; icon?: string }) => void,
+  ): void {
+    new CommandPickerModal(this.app, onChoose).open();
+  }
+
+  export function openCommandActionEditModal(
+    this: ButterSettingTab,
+    item: Extract<ToolbarLayoutItem, { type: "command" }>,
+    onSave: (updated: Extract<ToolbarLayoutItem, { type: "command" }>) => void | Promise<void>,
+  ): void {
+    new CommandActionEditModal(this.app, item, onSave).open();
+  }
+
 /** Pointer-event drag-to-reorder with cross-level support.
    *
    * Drop targets fall into three kinds:
@@ -1053,11 +1159,28 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
    * Visual: blue line at the top/bottom edge of the ref-row for
    * before/after; accent-tinted background on the submenu row for
    * into. Both work on touch + mouse via pointer events. */
-  export function wireDrag(this: ButterSettingTab, handle: HTMLElement, row: HTMLElement, rootLayout: ToolbarLayoutItem[], draggedItemId: string, onCommit: () => void | Promise<void>) {
+  export function wireDrag(this: ButterSettingTab, handle: HTMLElement, row: HTMLElement, rootLayout: ToolbarLayoutItem[], draggedItemId: string, onCommit: () => void | Promise<void>, options: {
+    canDropInto?: (
+      submenu: Extract<ToolbarLayoutItem, { type: "submenu" }>,
+      dragged: ToolbarLayoutItem,
+    ) => boolean;
+  } = {}) {
     const initDrag = (startY: number, pointerType: string) => {
       const list = row.parentElement!;
       const startRect = row.getBoundingClientRect();
       const draggedIsSubmenu = row.dataset.type === "submenu";
+      const canDropInto = (submenuId: string | undefined): boolean => {
+        if (!submenuId || draggedIsSubmenu) return false;
+        const submenuLocation = locate(rootLayout, submenuId);
+        const draggedLocation = locate(rootLayout, draggedItemId);
+        const submenu = submenuLocation?.parent[submenuLocation.index];
+        const dragged = draggedLocation?.parent[draggedLocation.index];
+        return Boolean(
+          submenu?.type === "submenu" &&
+          dragged &&
+          (options.canDropInto?.(submenu, dragged) ?? true),
+        );
+      };
 
       let preventScroll: ((e: TouchEvent) => void) | null = null;
       if (pointerType === "touch") {
@@ -1143,7 +1266,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         if (currentIntoSubmenu) {
            const headerRect = currentIntoSubmenu.getBoundingClientRect();
            const placeholderRect = placeholder.getBoundingClientRect();
-           if (pointerY >= headerRect.top && pointerY <= placeholderRect.bottom) {
+           if (canDropInto(currentIntoSubmenu.dataset.itemId) && pointerY >= headerRect.top && pointerY <= placeholderRect.bottom) {
                targetKind = "into";
                targetEl = currentIntoSubmenu;
            }
@@ -1161,7 +1284,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
               if (pointerY < rect.top || pointerY > rect.bottom) continue;
               const submenuId = emptyRow.dataset.emptyFor;
               targetEl = elements.find((el) => el.dataset.itemId === submenuId) ?? null;
-              if (targetEl) {
+              if (targetEl && canDropInto(targetEl.dataset.itemId)) {
                 targetKind = "into";
                 break;
               }
@@ -1173,7 +1296,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
               const el = elements[i];
               const rect = el.getBoundingClientRect();
 
-              if (!draggedIsSubmenu && el.dataset.type === "submenu") {
+              if (!draggedIsSubmenu && el.dataset.type === "submenu" && canDropInto(el.dataset.itemId)) {
                 const margin = rect.height * 0.3;
                 if (pointerY >= rect.top + margin && pointerY <= rect.bottom - margin) {
                   targetKind = "into";
@@ -1317,6 +1440,9 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
           if (!found) return;
           const sub = found.parent[found.index];
           if (sub.type !== "submenu") return;
+          const dragged = locate(rootLayout, draggedItemId);
+          const draggedItem = dragged?.parent[dragged.index];
+          if (!draggedItem || options.canDropInto?.(sub, draggedItem) === false) return;
           const removed = removeItem(rootLayout, draggedItemId);
           if (!removed) return;
           sub.children.push(removed);

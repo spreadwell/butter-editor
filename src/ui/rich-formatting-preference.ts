@@ -5,7 +5,7 @@ export interface RichFormattingPreferenceState {
 
 export interface OnboardingPreferenceState
   extends RichFormattingPreferenceState {
-  enableMarkdownShortcuts: boolean;
+  markdownShortcuts: MarkdownShortcutSettings;
 }
 
 export function initialRichFormattingChoice(
@@ -30,5 +30,12 @@ export function applyOnboardingChoices(
   markdownShortcutsEnabled: boolean,
 ): void {
   applyRichFormattingChoice(settings, richFormattingEnabled);
-  settings.enableMarkdownShortcuts = markdownShortcutsEnabled;
+  settings.markdownShortcuts = withCommonMarkdownShortcuts(
+    settings.markdownShortcuts,
+    markdownShortcutsEnabled,
+  );
 }
+import {
+  type MarkdownShortcutSettings,
+  withCommonMarkdownShortcuts,
+} from "../editor/markdown-shortcuts";

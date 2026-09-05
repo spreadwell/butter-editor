@@ -37,7 +37,10 @@
 import { Plugin as PMPlugin, PluginKey } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import type { Fragment, Node as PMNode } from "prosemirror-model";
-import { editorTopChromeBottom } from "../ui/toolbar-layout";
+import {
+  editorTopChromeBottom,
+  visibleContextToolbarBottom,
+} from "../ui/toolbar-layout";
 import {
   CellSelection,
   TableMap,
@@ -292,10 +295,9 @@ class SelectionFrameView {
     const leaf = this.view.dom.closest(".workspace-leaf-content");
     const header = leaf?.querySelector<HTMLElement>(".view-header");
     const stack = leaf?.querySelector<HTMLElement>(".butter-toolbar-stack");
-    const tableBar = stack?.querySelector<HTMLElement>(".butter-table-toolbar:not(.is-hidden)");
     const hb = header?.getBoundingClientRect().bottom ?? 0;
     const sb = stack?.getBoundingClientRect().bottom ?? 0;
-    const tb = tableBar?.getBoundingClientRect().bottom ?? 0;
+    const cb = visibleContextToolbarBottom(leaf);
     const toolbarPosition = leaf?.getAttribute("data-toolbar-pos") === "bottom"
       ? "bottom"
       : "top";
@@ -303,7 +305,7 @@ class SelectionFrameView {
       toolbarPosition,
       hb,
       sb,
-      tb,
+      cb,
     );
     const clippedTop = Math.max(vr.top, chromeBottom);
     const clippedHeight = vr.height - (clippedTop - vr.top);

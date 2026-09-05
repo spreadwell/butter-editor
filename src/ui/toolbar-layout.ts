@@ -15,13 +15,22 @@
  */
 
 export type LayoutItem =
-  | { type: "button"; id: string }
+  | { type: "button"; id: string; /** Optional per-placement key for layouts that repeat an action. */ instanceId?: string }
+  | {
+      type: "command";
+      id: string;
+      commandId: string;
+      label: string;
+      icon: string;
+    }
   | { type: "separator"; id: string }
   | {
       type: "submenu";
       id: string;
       label: string;
       icon: string;
+      /** Context-menu-only icon strip. Ordinary toolbar/context submenus omit it. */
+      presentation?: "menu" | "quick";
       children: LayoutItem[];
     }
   /** Mobile-only: a "More …" button that opens a bottom sheet
@@ -32,16 +41,54 @@ export type LayoutItem =
 
 export type Layout = LayoutItem[];
 
+/** Preserve catalog order while grouping available actions for both layout
+ * customizers. Keeping this shared prevents their browsing structures from
+ * drifting apart. */
+export function groupActionDefinitions<T extends { group: string }>(
+  definitions: readonly T[],
+): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const definition of definitions) {
+    const entries = groups.get(definition.group) ?? [];
+    entries.push(definition);
+    groups.set(definition.group, entries);
+  }
+  return groups;
+}
+
+/** Stable row/placement identity. Repeated actions carry a separate instance
+ * ID so each placement can be moved or removed independently. */
+export function layoutItemKey(item: LayoutItem): string {
+  return item.type === "button" ? item.instanceId ?? item.id : item.id;
+}
+
 /** The lower edge of chrome that can cover block-level UI at the top
  *  of the editor, including drag handles and selection overlays. */
 export function editorTopChromeBottom(
   toolbarPosition: "top" | "bottom",
   headerBottom: number,
   toolbarBottom: number,
-  tableToolbarBottom: number,
+  contextToolbarBottom: number,
 ): number {
   if (toolbarPosition === "bottom") return headerBottom;
-  return Math.max(headerBottom, toolbarBottom, tableToolbarBottom);
+  return Math.max(headerBottom, toolbarBottom, contextToolbarBottom);
+}
+
+/** Lowest visible contextual toolbar edge. Contextual bars are positioned over
+ * the editor in attached/integrated layouts, so their bounds are not reliably
+ * represented by the toolbar stack itself. */
+export function visibleContextToolbarBottom(
+  root: ParentNode | null | undefined,
+): number {
+  if (!root) return 0;
+  let bottom = 0;
+  const toolbars = Array.from(root.querySelectorAll<HTMLElement>(
+    ".butter-context-toolbar:not(.is-hidden):not(.butter-search-suppressed)",
+  ));
+  for (const toolbar of toolbars) {
+    bottom = Math.max(bottom, toolbar.getBoundingClientRect().bottom);
+  }
+  return bottom;
 }
 
 // ── ID generation ──────────────────────────────────────────────
@@ -87,6 +134,9 @@ export function mainLayoutFull(): Layout {
     { type: "button", id: "strikethrough" },
     { type: "button", id: "highlight" },
     { type: "button", id: "text-color" },
+    { type: "button", id: "code" },
+    { type: "button", id: "link" },
+    { type: "button", id: "clear-formatting" },
     { type: "separator", id: newId("sep") },
     {
       type: "submenu",
@@ -97,11 +147,10 @@ export function mainLayoutFull(): Layout {
         { type: "button", id: "bullet-list" },
         { type: "button", id: "ordered-list" },
         { type: "button", id: "task-list" },
+        { type: "button", id: "indent-list" },
+        { type: "button", id: "outdent-list" },
       ],
     },
-    { type: "button", id: "code" },
-    { type: "button", id: "link" },
-    { type: "button", id: "clear-formatting" },
     { type: "button", id: "blockquote" },
     {
       type: "submenu",
@@ -109,41 +158,42 @@ export function mainLayoutFull(): Layout {
       label: "Callout",
       icon: "message-square-quote",
       children: [
-        { type: "button", id: "callout-quote" },
-        { type: "button", id: "callout-example" },
-        { type: "button", id: "callout-bug" },
-        { type: "button", id: "callout-danger" },
+        { type: "button", id: "callout-note" },
+        { type: "button", id: "callout-abstract" },
+        { type: "button", id: "callout-info" },
+        { type: "button", id: "callout-tip" },
+        { type: "button", id: "callout-success" },
+        { type: "button", id: "callout-question" },
         { type: "button", id: "callout-warning" },
         { type: "button", id: "callout-failure" },
-        { type: "button", id: "callout-question" },
-        { type: "button", id: "callout-success" },
-        { type: "button", id: "callout-tip" },
-        { type: "button", id: "callout-info" },
-        { type: "button", id: "callout-abstract" },
-        { type: "button", id: "callout-note" },
+        { type: "button", id: "callout-danger" },
+        { type: "button", id: "callout-bug" },
+        { type: "button", id: "callout-example" },
+        { type: "button", id: "callout-quote" },
       ],
     },
     { type: "separator", id: newId("sep") },
     { type: "button", id: "hr" },
     { type: "button", id: "table" },
-    { type: "button", id: "insert-base-embed" },
     { type: "button", id: "code-block" },
     { type: "button", id: "image" },
+    { type: "button", id: "video" },
     { type: "separator", id: newId("sep") },
     {
       type: "submenu",
       id: newId("sub"),
-      label: "Other",
-      icon: "more-horizontal",
-      children: [{ type: "button", id: "insert-base-inline" }],
+      label: "Base",
+      icon: "database",
+      children: [
+        { type: "button", id: "insert-base-inline" },
+        { type: "button", id: "insert-base-embed" },
+      ],
     },
   ];
 }
 
-/** Simple preset - pared-down "essentials" layout for users who
- *  don't need the full feature surface. H1-H3 headings, basic
- *  inline marks, lists, link, blockquote, image. */
-export function mainLayoutSimple(): Layout {
+/** Default preset - balanced everyday tools with low toolbar density. */
+export function mainLayoutDefault(): Layout {
   return [
     { type: "button", id: "undo" },
     { type: "button", id: "redo" },
@@ -163,25 +213,98 @@ export function mainLayoutSimple(): Layout {
     { type: "button", id: "bold" },
     { type: "button", id: "italic" },
     { type: "button", id: "highlight" },
-    { type: "button", id: "text-color" },
-    { type: "separator", id: newId("sep") },
-    { type: "button", id: "bullet-list" },
-    { type: "button", id: "ordered-list" },
-    { type: "button", id: "task-list" },
-    { type: "separator", id: newId("sep") },
     { type: "button", id: "link" },
-    { type: "button", id: "clear-formatting" },
+    { type: "separator", id: newId("sep") },
+    {
+      type: "submenu",
+      id: newId("sub"),
+      label: "Lists",
+      icon: "list",
+      children: [
+        { type: "button", id: "bullet-list" },
+        { type: "button", id: "ordered-list" },
+        { type: "button", id: "task-list" },
+        { type: "button", id: "indent-list" },
+        { type: "button", id: "outdent-list" },
+      ],
+    },
     { type: "button", id: "blockquote" },
+    {
+      type: "submenu",
+      id: newId("sub"),
+      label: "Insert",
+      icon: "plus",
+      children: [
+        { type: "button", id: "image" },
+        { type: "button", id: "video" },
+        { type: "button", id: "table" },
+      ],
+    },
+  ];
+}
+
+/** Simple preset - compact essentials for a quiet desktop toolbar. */
+export function mainLayoutSimple(): Layout {
+  return [
+    { type: "button", id: "undo" },
+    { type: "button", id: "redo" },
+    { type: "separator", id: newId("sep") },
+    {
+      type: "submenu",
+      id: newId("sub"),
+      label: "Heading",
+      icon: "heading",
+      children: [
+        { type: "button", id: "heading-1" },
+        { type: "button", id: "heading-2" },
+        { type: "button", id: "heading-3" },
+      ],
+    },
+    { type: "separator", id: newId("sep") },
+    { type: "button", id: "bold" },
+    { type: "button", id: "italic" },
+    { type: "button", id: "link" },
+    { type: "separator", id: newId("sep") },
+    {
+      type: "submenu",
+      id: newId("sub"),
+      label: "Lists",
+      icon: "list",
+      children: [
+        { type: "button", id: "bullet-list" },
+        { type: "button", id: "ordered-list" },
+        { type: "button", id: "task-list" },
+      ],
+    },
     { type: "button", id: "image" },
   ];
 }
 
-/** New users get the Simple preset on first load. */
+/** New users get the balanced Default preset on first load. */
 export function defaultMainLayout(): Layout {
-  return mainLayoutSimple();
+  return mainLayoutDefault();
 }
 
-/** Mobile preset - flat 14-button strip tuned for thumb-typing on a
+/** Mobile Simple preset - the smallest useful one-handed strip. */
+export function mobileLayoutSimple(): Layout {
+  return [
+    { type: "button", id: "undo" },
+    { type: "button", id: "redo" },
+    { type: "separator", id: newId("sep") },
+    { type: "button", id: "insert" },
+    { type: "button", id: "turn-into" },
+    { type: "button", id: "block-actions" },
+    { type: "separator", id: newId("sep") },
+    { type: "button", id: "bold" },
+    { type: "button", id: "italic" },
+    { type: "button", id: "link" },
+    { type: "separator", id: newId("sep") },
+    { type: "button", id: "bullet-list" },
+    { type: "button", id: "task-list" },
+  ];
+}
+
+/** Mobile preset - flat, scrollable strip tuned for thumb-typing on a
  *  phone. No submenus (mobile flattens them anyway, so there's no
  *  point nesting), and the set is curated to the buttons users
  *  actually reach for one-handed: typography (3 headings + paragraph
@@ -197,6 +320,7 @@ export function mobileLayoutDefault(): Layout {
     { type: "button", id: "insert" },
     { type: "button", id: "turn-into" },
     { type: "button", id: "block-actions" },
+    { type: "button", id: "image" },
     { type: "separator", id: newId("sep") },
     { type: "button", id: "heading-1" },
     { type: "button", id: "heading-2" },
@@ -210,6 +334,8 @@ export function mobileLayoutDefault(): Layout {
     { type: "button", id: "bullet-list" },
     { type: "button", id: "ordered-list" },
     { type: "button", id: "task-list" },
+    { type: "button", id: "indent-list" },
+    { type: "button", id: "outdent-list" },
     { type: "separator", id: newId("sep") },
     { type: "button", id: "link" },
     { type: "button", id: "code" },
@@ -311,17 +437,63 @@ export function collectButtonIds(layout: Layout): Set<string> {
   return ids;
 }
 
-/** Backfill buttons that exist in `defaults` but are missing from
- *  `layout`. Appends them at the end so existing user ordering is
- *  untouched. Returns the layout (mutated in place). */
-export function backfillMissingButtons(layout: Layout, defaults: Layout): Layout {
-  const existing = collectButtonIds(layout);
-  for (const item of defaults) {
-    if (item.type === "button" && !existing.has(item.id)) {
-      layout.push({ type: "button", id: item.id });
+/** Count every built-in action placement across the root and its submenus. */
+export function countButtonPlacements(layout: Layout): Map<string, number> {
+  const counts = new Map<string, number>();
+  const walk = (items: Layout) => {
+    for (const item of items) {
+      if (item.type === "button") counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
+      else if (item.type === "submenu") walk(item.children);
+    }
+  };
+  walk(layout);
+  return counts;
+}
+
+export function collectCommandItems(
+  layout: Layout,
+): Array<Extract<LayoutItem, { type: "command" }>> {
+  const commands: Array<Extract<LayoutItem, { type: "command" }>> = [];
+  const walk = (items: Layout) => {
+    for (const item of items) {
+      if (item.type === "command") commands.push(item);
+      else if (item.type === "submenu") walk(item.children);
+    }
+  };
+  walk(layout);
+  return commands;
+}
+
+/** Remove retired button ids from a saved layout, including submenus. */
+export function removeButtonsById(
+  layout: Layout,
+  retiredIds: ReadonlySet<string>,
+): number {
+  let removed = 0;
+  for (let index = layout.length - 1; index >= 0; index--) {
+    const item = layout[index];
+    if (item.type === "button" && retiredIds.has(item.id)) {
+      layout.splice(index, 1);
+      removed += 1;
+    } else if (item.type === "submenu") {
+      removed += removeButtonsById(item.children, retiredIds);
     }
   }
-  return layout;
+  return removed;
+}
+
+/** Rename saved button placements recursively while preserving their instance IDs. */
+export function replaceButtonId(layout: Layout, fromId: string, toId: string): number {
+  let replaced = 0;
+  for (const item of layout) {
+    if (item.type === "button" && item.id === fromId) {
+      item.id = toId;
+      replaced += 1;
+    } else if (item.type === "submenu") {
+      replaced += replaceButtonId(item.children, fromId, toId);
+    }
+  }
+  return replaced;
 }
 
 /** Find an item by id anywhere in the layout, returning its parent
@@ -331,7 +503,7 @@ export function locate(
   id: string,
 ): { parent: Layout; index: number } | null {
   for (let i = 0; i < layout.length; i++) {
-    if (layout[i].id === id) return { parent: layout, index: i };
+    if (layoutItemKey(layout[i]) === id) return { parent: layout, index: i };
     if (layout[i].type === "submenu") {
       const sub = layout[i] as Extract<LayoutItem, { type: "submenu" }>;
       const inner = locate(sub.children, id);
@@ -376,4 +548,24 @@ export function migrateFromHiddenList(
  *  serializable. */
 export function cloneLayout(layout: Layout): Layout {
   return JSON.parse(JSON.stringify(layout)) as Layout;
+}
+
+/** Shared visible viewport for selection and search reveal, scoped to its pane. */
+export function visibleEditorBounds(host: HTMLElement): { top: number; bottom: number } {
+  const bounds = host.getBoundingClientRect();
+  let top = bounds.top + 8;
+  let bottom = bounds.bottom - 8;
+  const doc = host.ownerDocument;
+  const root = doc.body.classList.contains("is-mobile") ? doc.body : host.closest(".butter-view-root") ?? host;
+  for (const toolbar of Array.from(root.querySelectorAll<HTMLElement>(
+    ".butter-toolbar, .butter-context-toolbar:not(.is-hidden):not(.butter-search-suppressed)",
+  ))) {
+    const style = doc.defaultView?.getComputedStyle(toolbar);
+    if (!style || style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") < 0.05) continue;
+    const rect = toolbar.getBoundingClientRect();
+    if (rect.bottom <= bounds.top || rect.top >= bounds.bottom || rect.right <= bounds.left || rect.left >= bounds.right) continue;
+    if (rect.top + rect.height / 2 < bounds.top + bounds.height / 2) top = Math.max(top, rect.bottom + 8);
+    else bottom = Math.min(bottom, rect.top - 8);
+  }
+  return { top, bottom };
 }

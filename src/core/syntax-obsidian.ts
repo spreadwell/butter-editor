@@ -13,6 +13,90 @@ import {
   isValidInlineMathOpenAt,
 } from "./inline-math-delimiters";
 
+type MarkdownItBlockRule = (
+  state: StateBlock,
+  startLine: number,
+  endLine: number,
+  silent: boolean,
+) => boolean;
+
+function stripIndentColumns(line: string, columns: number): string {
+  let offset = 0;
+  let column = 0;
+  while (offset < line.length && column < columns) {
+    if (line[offset] === " ") {
+      column += 1;
+      offset += 1;
+    } else if (line[offset] === "\t") {
+      column += 4 - (column % 4);
+      offset += 1;
+    } else {
+      break;
+    }
+  }
+  return line.slice(offset);
+}
+
+/**
+ * Markdown-it intentionally consumes reference definitions into `env` and
+ * emits no token. Butter needs an explicit source artifact so editing a
+ * containing paragraph/list/blockquote/callout cannot delete untouched
+ * definitions. Wrap the built-in CommonMark rule, preserving its parsing and
+ * precedence behavior, and add one zero-width semantic token at the exact
+ * container level where the definition was authored.
+ */
+export function referenceDefinitionPlugin(md: MarkdownIt): void {
+  const ruler = md.block.ruler as unknown as {
+    __rules__: Array<{ name: string; fn: MarkdownItBlockRule }>;
+  };
+  const referenceRule = ruler.__rules__.find(
+    (rule) => rule.name === "reference",
+  );
+  if (!referenceRule) {
+    throw new Error("Markdown-it reference rule unavailable");
+  }
+  const original = referenceRule.fn;
+  referenceRule.fn = function retainedReferenceDefinition(
+    state,
+    startLine,
+    endLine,
+    silent,
+  ) {
+    const blockIndent = state.blkIndent;
+    const matched = original.call(
+      this,
+      state,
+      startLine,
+      endLine,
+      silent,
+    );
+    if (!matched || silent) return matched;
+
+    const lastLine = state.line;
+    const lines: string[] = [];
+    for (let line = startLine; line < lastLine; line++) {
+      const sourceLine = state.src.slice(
+        state.bMarks[line],
+        state.eMarks[line],
+      );
+      // On the first line, tShift points past a list marker (or ordinary
+      // optional indentation) to the definition itself. On continuation
+      // lines, remove only the container indentation so the definition's own
+      // two-or-more-space continuation indentation remains authored data.
+      lines.push(line === startLine
+        ? state.src.slice(
+            state.bMarks[line] + state.tShift[line],
+            state.eMarks[line],
+          )
+        : stripIndentColumns(sourceLine, blockIndent));
+    }
+    const token = state.push("reference_definition", "", 0);
+    token.content = lines.join("\n");
+    token.map = [startLine, lastLine];
+    return true;
+  };
+}
+
 // ══════════════════════════════════════════
 // 1. Highlights  ==text==
 // ══════════════════════════════════════════
@@ -959,6 +1043,7 @@ export type { HtmlMarkConfig };
 // ══════════════════════════════════════════
 
 export function installObsidianPlugins(md: MarkdownIt): void {
+  referenceDefinitionPlugin(md);
   blockCommentPlugin(md);
   blockMathPlugin(md);
   footnoteDefPlugin(md);

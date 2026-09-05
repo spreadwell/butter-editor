@@ -2,7 +2,7 @@ import { Schema, NodeSpec, MarkSpec, Attrs } from "prosemirror-model";
 import {
   tableNodes,
 } from "prosemirror-tables";
-import { getExtensionNodeSpecs } from "../integration/extensions";
+import { getExtensionSchemaSpecs } from "../integration/extensions";
 import { sanitizeHref } from "../util/safe-url";
 
 /** PM's `Attrs` is `Record<string, any>` — every node-spec toDOM
@@ -412,6 +412,27 @@ const basicNodes: Record<string, NodeSpec> = {
     },
   },
 
+  reference_definition: {
+    group: "block",
+    atom: true,
+    selectable: true,
+    attrs: { raw: { default: "" } },
+    parseDOM: [{
+      tag: "div[data-reference-definition]",
+      getAttrs(dom: HTMLElement) {
+        return { raw: dom.getAttribute("data-raw") || "" };
+      },
+    }],
+    toDOM(node) {
+      const { raw } = attrs<{ raw: string }>(node.attrs);
+      return ["div", {
+        "data-reference-definition": "",
+        "data-raw": raw,
+        class: "butter-reference-definition",
+      }, raw];
+    },
+  },
+
   // ── Obsidian-specific inline nodes ──
 
   wikilink: {
@@ -567,7 +588,7 @@ const basicNodes: Record<string, NodeSpec> = {
 
 // ── Mark specs ──
 
-const marks: Record<string, MarkSpec> = {
+const basicMarks: Record<string, MarkSpec> = {
   strong: {
     parseDOM: [
       { tag: "strong" },
@@ -771,8 +792,9 @@ const tNodes = tableNodes({
 // built-in specs win the built-in - the registry's registerSyntax
 // Extension() guards against double-registration within extensions
 // themselves, but built-ins always dominate.
-const extNodes = getExtensionNodeSpecs();
+const { nodes: extNodes, marks: extMarks } = getExtensionSchemaSpecs();
 const allNodes = { ...extNodes, ...basicNodes, ...tNodes };
+const allMarks = { ...extMarks, ...basicMarks };
 
 /**
  * Source preservation is a first-class property of Butter's editor schema.
@@ -781,12 +803,12 @@ const allNodes = { ...extNodes, ...basicNodes, ...tNodes };
  * attribute - `{ start: number, end: number }` character offsets into
  * the original file body - set at parse time by the bridge.
  *
- * The range travels with the node through PM transactions. When an
- * edit mutates a node's content, a companion plugin invalidates the
- * range (sets it to null). At save time, nodes with valid ranges emit
- * their original bytes unchanged; nodes with null ranges serialize
- * fresh. This is the mechanism that makes "bytes you didn't touch
- * stay byte-identical" literally true.
+ * The range travels with the node through PM transactions as original-source
+ * provenance. ProseMirror's immutable structural sharing supplies the strict
+ * unchanged check: only a node that is reference-identical to its parse-time
+ * counterpart may emit original bytes verbatim. Edited replacement nodes may
+ * retain a range solely to recover authored gaps/list context; they serialize
+ * fresh. No second invalidation plugin or mutable source model is involved.
  *
  * Excluded: `doc` (never needs a range - it's the container) and
  * `text` (PM doesn't allow attrs on text nodes; inline ranges live
@@ -838,4 +860,4 @@ for (const [, spec] of Object.entries(allNodes)) {
   (spec).attrs = { ...existing, blockId: { default: null } };
 }
 
-export const schema = new Schema({ nodes: allNodes, marks });
+export const schema = new Schema({ nodes: allNodes, marks: allMarks });

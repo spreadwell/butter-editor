@@ -1,8 +1,11 @@
 import { Setting, Notice } from "obsidian";
 import { ButterSettingTab } from "../settings-tab";
-import { WelcomeModal, BUTTER_GITHUB_README } from "../welcome-modal";
 import { appendInlineNotice } from "../inline-notice";
 import { BUTTER_LANGUAGE_OPTIONS, tx, type ButterLanguageSetting, type MessageKey } from "../../i18n";
+import {
+  allMarkdownShortcutSettings,
+  type MarkdownShortcutKey,
+} from "../../editor/markdown-shortcuts";
 
 function renderRichFormattingSetting(
   tab: ButterSettingTab,
@@ -30,10 +33,9 @@ function renderRichFormattingSetting(
   );
 }
 
-/** High-value shortcuts plus documentation and walkthrough links. */
+/** General app integration and view-navigation preferences. */
 export function renderGeneralIntroSections(this: ButterSettingTab, root: HTMLElement) {
-    const quick = this.createSettingGroup(root, tx("Quick settings"));
-    renderRichFormattingSetting(this, quick);
+    const quick = this.createSettingGroup(root, tx("General"));
 
     const languageSetting = new Setting(quick)
       .setName(tx("Language"))
@@ -48,7 +50,7 @@ export function renderGeneralIntroSections(this: ButterSettingTab, root: HTMLEle
             this.plugin.settings.uiLanguage = v as ButterLanguageSetting;
             this.plugin.applyI18nLanguage();
             await this.plugin.saveSettings();
-            (this as unknown as { display: () => void }).display();
+            this.refreshSettingsUi();
           });
       });
     appendInlineNotice(languageSetting.descEl, tx("Experimental"), "warning");
@@ -69,7 +71,31 @@ export function renderGeneralIntroSections(this: ButterSettingTab, root: HTMLEle
           }),
       );
 
-    new Setting(quick)
+    this.renderOutlineSection(quick);
+
+    const cycleSection = this.createSettingGroup(root, tx("View cycle modes"));
+    renderViewCycleModes(this, cycleSection);
+}
+
+/**
+ * General tab - the user's touchbase. Includes the rich-formatting
+ * preference, an optional Start-trial CTA visible only when the user
+ * has not activated a license or trial, common settings, and help.
+ */
+export function renderGeneral(this: ButterSettingTab, root: HTMLElement) {
+    this.renderGeneralIntroSections(root);
+}
+
+/**
+ * Editor page - writing and display preferences that affect everyday
+ * interaction with note content.
+ */
+export function renderEditor(this: ButterSettingTab, root: HTMLElement) {
+    const formatting = this.createSettingGroup(root, tx("Formatting"));
+    renderRichFormattingSetting(this, formatting);
+
+    const display = this.createSettingGroup(root, tx("Display"));
+    new Setting(display)
       .setName(tx("Animations"))
       .setDesc(tx("Entrance fades, drag springs, hint transitions, and other motion polish. Turn off for slower machines, accessibility, or screen recordings."))
       .addToggle((t) =>
@@ -82,72 +108,6 @@ export function renderGeneralIntroSections(this: ButterSettingTab, root: HTMLEle
           }),
       );
 
-    const more = this.createSettingGroup(root, tx("Learn more"));
-
-    new Setting(more)
-      .setName(tx("Open feature docs"))
-      .setDesc(tx("Opens the Butter README on GitHub. Feature descriptions with screenshots and GIFs."))
-      .addButton((b) =>
-        b.setButtonText(tx("Open README")).onClick(() => {
-          window.open(BUTTER_GITHUB_README, "_blank");
-        }),
-      );
-
-    new Setting(more)
-      .setName(tx("Replay welcome walkthrough"))
-      .setDesc(tx("Re-open the welcome walkthrough."))
-      .addButton((b) =>
-        b.setButtonText(tx("Replay")).onClick(() => {
-          new WelcomeModal(this.app, this.plugin).open();
-        }),
-      );
-}
-
-/**
- * General tab - the user's touchbase. Includes the rich-formatting
- * preference, an optional Start-trial CTA visible only when the user
- * has not activated a license or trial, common settings, and help.
- */
-export function renderGeneral(this: ButterSettingTab, root: HTMLElement) {
-    // Start-trial CTA first - this is the most-common first-session
-    // action for any new user. Only renders while the user has never
-    // activated a license and isn't mid-trial-activation; once that
-    // changes the section disappears and the tab leads with the
-    // formatting choice below instead.
-    this.renderStartTrialCardIfApplicable(root);
-
-    // High-value shortcuts and help links.
-    this.renderGeneralIntroSections(root);
-}
-
-/**
- * Behavior tab - the less-common everyday knobs that do not merit a
- * place on the General tab. Outline, drag handle behavior, plugin
- * compatibility, and view-cycle ordering.
- */
-export function renderBehavior(this: ButterSettingTab, root: HTMLElement) {
-    const outline = this.createSettingGroup(root, tx("Outline"));
-    this.renderOutlineSection(outline);
-
-    const formatting = this.createSettingGroup(root, tx("Formatting"));
-    renderRichFormattingSetting(this, formatting);
-
-    new Setting(formatting)
-      .setName(tx("Markdown typing shortcuts"))
-      .setDesc(
-        tx("When this is on, typing things like *word*, # Heading, or - List turns them into formatting. Leave it off to keep those characters as text."),
-      )
-      .addToggle((t) =>
-        t
-          .setValue(this.plugin.settings.enableMarkdownShortcuts)
-          .onChange(async (v) => {
-            this.plugin.settings.enableMarkdownShortcuts = v;
-            await this.plugin.saveSettings();
-            this.plugin.applyMarkdownShortcutSettingToAllViews();
-          }),
-      );
-
-    const display = this.createSettingGroup(root, tx("Display"));
     new Setting(display)
       .setName(tx("Frontmatter visibility"))
       .setDesc(tx("Control whether the properties/frontmatter panel is shown at the top of notes."))
@@ -175,6 +135,111 @@ export function renderBehavior(this: ButterSettingTab, root: HTMLElement) {
         }),
       );
 
+    new Setting(display)
+      .setName(tx("Save status icon"))
+      .setDesc(tx("Show a checkmark for clean saves and a warning for blocked or normalized saves in Obsidian's status bar."))
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.showSaveStatusIcon).onChange(async (v) => {
+          this.plugin.settings.showSaveStatusIcon = v;
+          await this.plugin.saveSettings();
+          this.plugin.applySaveStatusSetting();
+        }),
+      );
+
+    renderMarkdownTypingShortcuts(this, root);
+}
+
+function renderMarkdownTypingShortcuts(
+  tab: ButterSettingTab,
+  root: HTMLElement,
+): void {
+  const shortcuts = tab.createSettingGroup(
+    root,
+    tx("Markdown typing shortcuts"),
+  );
+  const setAllMarkdownShortcuts = async (enabled: boolean): Promise<void> => {
+    tab.plugin.settings.markdownShortcuts =
+      allMarkdownShortcutSettings(enabled);
+    await tab.plugin.saveSettings();
+    tab.plugin.applyMarkdownShortcutSettingToAllViews();
+    tab.refreshSettingsUi();
+  };
+
+  new Setting(shortcuts)
+    .setName(tx("All"))
+    .addButton((button) =>
+      button
+        .setButtonText(tx("Enable all"))
+        .onClick(() => void setAllMarkdownShortcuts(true)),
+    )
+    .addButton((button) =>
+      button
+        .setButtonText(tx("Disable all"))
+        .onClick(() => void setAllMarkdownShortcuts(false)),
+    );
+
+  const shortcutGroups: Array<{
+    title: MessageKey;
+    entries: Array<{
+      key: MarkdownShortcutKey;
+      label: MessageKey;
+      syntax: string;
+    }>;
+  }> = [
+    {
+      title: "Inline marks",
+      entries: [
+        { key: "bold", label: "Bold", syntax: "**text**  __text__" },
+        { key: "italic", label: "Italic", syntax: "*text*  _text_" },
+        { key: "highlight", label: "Highlight", syntax: "==text==" },
+        { key: "strikethrough", label: "Strikethrough", syntax: "~~text~~" },
+        { key: "inlineCode", label: "Inline code", syntax: "`code`" },
+        { key: "inlineMath", label: "Inline math", syntax: "$x + 1$" },
+      ],
+    },
+    {
+      title: "Links and metadata",
+      entries: [
+        { key: "wikilinks", label: "Wikilink", syntax: "[[Note]]" },
+        { key: "markdownLinks", label: "Link", syntax: "[text](url)" },
+        { key: "tags", label: "Tag", syntax: "#tag" },
+      ],
+    },
+    {
+      title: "Block types",
+      entries: [
+        { key: "headings", label: "Headings", syntax: "# Heading" },
+        { key: "blockquotes", label: "Blockquote", syntax: "> Quote" },
+        { key: "bulletLists", label: "Bullet list", syntax: "- List" },
+        { key: "numberedLists", label: "Numbered list", syntax: "1. List" },
+        { key: "taskLists", label: "Task list", syntax: "- [ ] Task" },
+        { key: "codeBlocks", label: "Code block", syntax: "```lang" },
+        { key: "horizontalRules", label: "Horizontal rule", syntax: "---" },
+      ],
+    },
+  ];
+
+  for (const group of shortcutGroups) {
+    new Setting(shortcuts).setName(tx(group.title)).setHeading();
+    for (const entry of group.entries) {
+      const setting = new Setting(shortcuts)
+        .setName(tx(entry.label))
+        .addToggle((toggle) =>
+          toggle
+            .setValue(tab.plugin.settings.markdownShortcuts[entry.key])
+            .onChange(async (enabled) => {
+              tab.plugin.settings.markdownShortcuts[entry.key] = enabled;
+              await tab.plugin.saveSettings();
+              tab.plugin.applyMarkdownShortcutSettingToAllViews();
+            }),
+        );
+      setting.descEl.createEl("code", { text: entry.syntax });
+    }
+  }
+}
+
+/** Block movement, insertion, paste, and file-drop preferences. */
+export function renderDragAndDrop(this: ButterSettingTab, root: HTMLElement) {
     const dragDrop = this.createSettingGroup(root, tx("Drag and drop"));
     this.renderDragSection(dragDrop);
     new Setting(dragDrop)
@@ -186,8 +251,9 @@ export function renderBehavior(this: ButterSettingTab, root: HTMLElement) {
           await this.plugin.saveSettings();
         }),
       );
+}
 
-    const cycleSection = this.createSettingGroup(root, tx("View cycle modes"));
+function renderViewCycleModes(tab: ButterSettingTab, cycleSection: HTMLElement): void {
     const cycleModes: Array<{
       id: "source" | "live" | "reading" | "butter";
       label: MessageKey;
@@ -216,9 +282,9 @@ export function renderBehavior(this: ButterSettingTab, root: HTMLElement) {
         .setDesc(tx(m.desc))
         .addToggle((t) =>
           t
-            .setValue(this.plugin.settings.viewCycleModes.includes(m.id))
+            .setValue(tab.plugin.settings.viewCycleModes.includes(m.id))
             .onChange(async (v) => {
-              const current = new Set(this.plugin.settings.viewCycleModes);
+              const current = new Set(tab.plugin.settings.viewCycleModes);
               if (v) current.add(m.id);
               else current.delete(m.id);
               // Preserve the canonical order so cycle direction stays
@@ -227,8 +293,8 @@ export function renderBehavior(this: ButterSettingTab, root: HTMLElement) {
               for (const id of ["source", "live", "reading", "butter"] as const) {
                 if (current.has(id)) ordered.push(id);
               }
-              this.plugin.settings.viewCycleModes = ordered;
-              await this.plugin.saveSettings();
+              tab.plugin.settings.viewCycleModes = ordered;
+              await tab.plugin.saveSettings();
             }),
         );
     }
@@ -242,6 +308,27 @@ export function renderBehavior(this: ButterSettingTab, root: HTMLElement) {
 export function renderAdvanced(this: ButterSettingTab, root: HTMLElement) {
   // Source preservation + canonical-glyph + normalize options.
   this.renderSourceSection(root);
+
+  const resilience = this.createSettingGroup(root, tx("Input resilience"));
+  new Setting(resilience)
+    .setName(tx("Mouse release protection"))
+    .setDesc(tx("Keeps a block drag active through an extremely brief mouse-button dropout. Automatic adds a sub-frame confirmation; Strong tolerates a longer faulty-switch gap."))
+    .addDropdown((dropdown) =>
+      dropdown
+        .addOptions({
+          off: tx("Off"),
+          automatic: tx("Automatic"),
+          strong: tx("Strong"),
+        })
+        .setValue(this.plugin.settings.mouseReleaseProtection)
+        .onChange(async (value) => {
+          this.plugin.settings.mouseReleaseProtection = value as
+            | "off"
+            | "automatic"
+            | "strong";
+          await this.plugin.saveSettings();
+        }),
+    );
 
   // Compatibility bridges. Each adapts an Obsidian API or theme
   // surface that assumes the native CM6 MarkdownView to Butter's
@@ -277,37 +364,4 @@ export function renderAdvanced(this: ButterSettingTab, root: HTMLElement) {
   // an issue.
   const debug = this.createSettingGroup(root, tx("Debug"));
   this.renderDebugSection(debug);
-}
-
-/**
- * Surface a Start-trial CTA card on the General tab while the user
- * has never activated a license / trial. The card disappears once
- * they have a key or a pending activation - this surface is for
- * users who haven't yet engaged with the licensing flow at all.
- * The button bounces them to the License tab where the actual
- * trial activation UI lives.
- */
-export function renderStartTrialCardIfApplicable(this: ButterSettingTab, root: HTMLElement) {
-  const s = this.plugin.settings;
-  const hasKey = typeof s.licenseKey === "string" && s.licenseKey.trim() !== "";
-  const trialPending = !!s.pendingTrialActivation;
-  const hasActivated = !!s.everValidated || !!s.activatedAt;
-  if (hasKey || trialPending || hasActivated) return;
-
-  // Native Setting row so the chrome matches the rest of the
-  // settings surface. The CTA bounces to the License tab where
-  // the actual activation flow lives.
-  new Setting(root)
-    .setName(tx("Free Trial Available"))
-    .setDesc(
-      tx("Butter is paid software with a free trial. No card, no email. You get the full editor for the trial window, then choose whether to license or fall back to read-only."),
-    )
-    .addButton((b) =>
-      b
-        .setButtonText(tx("Start free trial"))
-        .setCta()
-        .onClick(() => {
-          this.plugin.startTrialFlow();
-        }),
-    );
 }

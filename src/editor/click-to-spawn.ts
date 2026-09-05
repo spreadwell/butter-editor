@@ -64,6 +64,7 @@ import type { EditorState, Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorView } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
+import { HANDLE_OFFSET_LEFT } from "./drag-handles/constants";
 
 interface EphemeralState {
   /** PM position of the ephemeral paragraph's NODE START (inclusive).
@@ -80,9 +81,66 @@ interface EphemeralState {
 /** Time the OUT animation plays before the actual delete transaction
  *  is dispatched. Must match the `butter-spawn-out` keyframe duration
  *  in styles.css - keep these in lockstep. */
-const LEAVE_ANIMATION_MS = 140;
+const LEAVE_ANIMATION_MS = 160;
 
 const key = new PluginKey<EphemeralState>("butter-click-to-spawn");
+
+/**
+ * The wide document gutters belong to `.butter-editor-view`, not to the
+ * ProseMirror DOM. Chromium therefore has no editable caret target when the
+ * user clicks one of those gutters and can leave the old native/PM text range
+ * painted indefinitely. Treat only the literal side-padding background as a
+ * request to collapse that range; central background clicks remain owned by
+ * click-to-spawn and controls keep their normal pointer behavior.
+ */
+export function isDocumentSideMarginPointer(
+  event: Pick<MouseEvent, "button" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey" | "clientX" | "clientY" | "target">,
+  editorContainer: HTMLElement,
+  editorRoot: HTMLElement,
+): boolean {
+  if (
+    event.button !== 0 ||
+    event.metaKey || event.ctrlKey || event.shiftKey || event.altKey ||
+    event.target !== editorContainer
+  ) return false;
+
+  const rootRect = editorRoot.getBoundingClientRect();
+  if (event.clientY < rootRect.top || event.clientY > rootRect.bottom) return false;
+
+  // Leave the native vertical scrollbar track alone. `clientWidth` excludes
+  // it, whereas getBoundingClientRect().right includes it.
+  const containerRect = editorContainer.getBoundingClientRect();
+  const contentRight = containerRect.left + editorContainer.clientWidth;
+  if (event.clientX >= contentRight) return false;
+
+  return event.clientX < rootRect.left || event.clientX > rootRect.right;
+}
+
+function mountDocumentMarginSelectionDismissal(editorView: EditorView): () => void {
+  const editorRoot = editorView.dom.closest<HTMLElement>(".butter-editor-root");
+  const editorContainer = editorView.dom.closest<HTMLElement>(".butter-editor-view");
+  if (!editorRoot || !editorContainer) return () => {};
+
+  const onMarginMouseDown = (event: MouseEvent): void => {
+    if (!isDocumentSideMarginPointer(event, editorContainer, editorRoot)) return;
+    const selection = editorView.state.selection;
+    if (!(selection instanceof TextSelection) || selection.empty) return;
+
+    // Own the browser default before it can preserve/reassert the old native
+    // range. Keep the caret at the selection's active end, matching the point
+    // from which Shift+Arrow would otherwise continue.
+    event.preventDefault();
+    const collapsed = TextSelection.near(
+      editorView.state.doc.resolve(selection.head),
+      selection.head >= selection.anchor ? 1 : -1,
+    );
+    editorView.dispatch(editorView.state.tr.setSelection(collapsed));
+    editorView.focus();
+  };
+
+  editorContainer.addEventListener("mousedown", onMarginMouseDown, true);
+  return () => editorContainer.removeEventListener("mousedown", onMarginMouseDown, true);
+}
 
 // ─── Hit-test ─────────────────────────────────────────────────────
 
@@ -91,6 +149,74 @@ interface GapHit {
    *  the preceding top-level block, or 0 for "before first block",
    *  or doc.content.size for "after last block"). */
   insertPos: number;
+}
+
+/** Canonical visible inter-block destination. Click-to-spawn, its hover
+ * affordance, and direct payload placement all consume this resolver so the
+ * same line always means the same insertion position. */
+export interface InterBlockGap {
+  insertPos: number;
+  midY: number;
+  left: number;
+  width: number;
+  gutterWidth: number;
+  gapIdx: number;
+}
+
+export function resolveInterBlockGap(
+  view: EditorView,
+  clientY: number,
+): InterBlockGap | null {
+  const doc = view.state.doc;
+  if (doc.childCount < 2) return null;
+  let posCursor = 0;
+  const blocks: Array<{
+    endPos: number;
+    rect: DOMRect;
+    visualLeft: number;
+    node: PMNode;
+  }> = [];
+  for (let i = 0; i < doc.childCount; i++) {
+    const node = doc.child(i);
+    const dom = view.nodeDOM(posCursor);
+    if (dom instanceof HTMLElement) {
+      const rect = dom.getBoundingClientRect();
+      if (rect.width !== 0 || rect.height !== 0) {
+        const marginLeft = parseFloat(getComputedStyle(dom).marginLeft) || 0;
+        blocks.push({
+          endPos: posCursor + node.nodeSize,
+          rect,
+          visualLeft: rect.left - Math.min(0, marginLeft),
+          node,
+        });
+      }
+    }
+    posCursor += node.nodeSize;
+  }
+  if (blocks.length < 2) return null;
+
+  for (let i = 0; i < blocks.length - 1; i++) {
+    const before = blocks[i];
+    const after = blocks[i + 1];
+    if (clientY < before.rect.bottom || clientY > after.rect.top) continue;
+    if (isEmptyParagraph(before.node) || isEmptyParagraph(after.node)) return null;
+    const visualLeft = Math.min(before.visualLeft, after.visualLeft);
+    const pane = view.dom.closest(".workspace-leaf");
+    const paneLeft = pane instanceof HTMLElement
+      ? pane.getBoundingClientRect().left
+      : 0;
+    const left = Math.max(visualLeft - HANDLE_OFFSET_LEFT, paneLeft);
+    const right = Math.max(before.rect.right, after.rect.right);
+    return {
+      insertPos: before.endPos,
+      midY: (before.rect.bottom + after.rect.top) / 2,
+      left,
+      width: right - left,
+      gutterWidth: visualLeft - left,
+      gapIdx: i,
+    };
+  }
+  return null;
 }
 
 function hitTestInterBlockGap(view: EditorView, event: MouseEvent): GapHit | null {
@@ -130,8 +256,8 @@ function hitTestInterBlockGap(view: EditorView, event: MouseEvent): GapHit | nul
     if (dom instanceof HTMLElement) {
       const rect = dom.getBoundingClientRect();
       // Skip blocks that don't take layout space. `display:none` nodes
-      // (e.g., block_comment) return an all-zero rect, and including
-      // them would extend "gap between blocks" to "anywhere from the
+      // return an all-zero rect, and including them would extend
+      // "gap between blocks" to "anywhere from the
       // top of the page down to the next visible block" - the gap-
       // detect check below would mis-fire on cursor positions far
       // above the actual visible gap.
@@ -157,23 +283,17 @@ function hitTestInterBlockGap(view: EditorView, event: MouseEvent): GapHit | nul
   }
 
   // Between two adjacent blocks: clickY ∈ (block[i].bottom, block[i+1].top)
-  for (let i = 0; i < blocks.length - 1; i++) {
-    const a = blocks[i];
-    const b = blocks[i + 1];
-    if (clickY >= a.rect.bottom && clickY <= b.rect.top) {
-      // Suppress the spawn when either neighbor is already an empty
-      // paragraph - the user can just click INTO the existing empty
-      // rather than stack another one next to it.
-      if (isEmptyParagraph(a.node) || isEmptyParagraph(b.node)) return null;
-      // Insert right after block a (= right before block b).
-      return { insertPos: a.endPos };
-    }
-  }
+  const sharedGap = resolveInterBlockGap(view, clickY);
+  if (sharedGap) return { insertPos: sharedGap.insertPos };
 
   // Below the last block
   const last = blocks[blocks.length - 1];
   if (clickY > last.rect.bottom) {
-    return { insertPos: last.endPos };
+    // A new/empty note already owns one editable paragraph. Likewise, an
+    // authored or ephemeral trailing blank is already the correct insertion
+    // target. Never manufacture a second consecutive blank merely because
+    // the user clicked lower in the editor background.
+    return canSpawnAfterLastBlock(doc) ? { insertPos: last.endPos } : null;
   }
 
   // Click fell inside some block's rect → not a gap hit.
@@ -189,6 +309,11 @@ function hitTestInterBlockGap(view: EditorView, event: MouseEvent): GapHit | nul
  *  typing - no spawn needed. */
 function isEmptyParagraph(node: PMNode): boolean {
   return node.type.name === "paragraph" && node.content.size === 0;
+}
+
+/** Whether below-document click-to-spawn should append a new paragraph. */
+export function canSpawnAfterLastBlock(doc: PMNode): boolean {
+  return Boolean(doc.lastChild && !isEmptyParagraph(doc.lastChild));
 }
 
 /** True iff `target` is nested inside one of the editor's top-level
@@ -327,13 +452,6 @@ function beginLeavingPhase(view: EditorView): boolean {
 // The click-to-spawn hit-test still accepts those clicks; the hint
 // just doesn't advertise them.
 
-// Mirrors HANDLE_OFFSET_LEFT in drag-handles.ts. Kept as a local
-// constant rather than imported because the drag-handles module
-// scopes it inside a function - duplicating the value here is
-// cheaper than restructuring that module just to share one number.
-// If the gutter offset moves, update both.
-const HANDLE_GUTTER = 30;
-
 // Dwell time before the spawn hint actually appears. The cursor has
 // to settle inside the same gap for this long; a quick scan past
 // gaps while reading does nothing. Jitter within one gap doesn't
@@ -342,6 +460,7 @@ const HANDLE_GUTTER = 30;
 const DWELL_MS = 115;
 
 function mountClickToSpawnView(editorView: EditorView): { update(): void; destroy(): void } {
+  const unmountMarginSelectionDismissal = mountDocumentMarginSelectionDismissal(editorView);
   const hint = activeWindow.createDiv();
   hint.className = "butter-spawn-hint";
   hint.setAttribute("aria-hidden", "true");
@@ -372,10 +491,11 @@ function mountClickToSpawnView(editorView: EditorView): { update(): void; destro
     dwellGapIdx = -1;
   }
 
-  function show(midY: number, left: number, width: number): void {
+  function show(midY: number, left: number, width: number, gutterWidth: number): void {
     hint.style.top = `${midY}px`;
     hint.style.left = `${left}px`;
     hint.style.width = `${width}px`;
+    hint.style.setProperty("--butter-spawn-gutter-width", `${gutterWidth}px`);
     if (!visible) {
       hint.classList.add("is-visible");
       visible = true;
@@ -393,13 +513,17 @@ function mountClickToSpawnView(editorView: EditorView): { update(): void; destro
     }
   }
 
-  function compute(event: MouseEvent): { midY: number; left: number; width: number; gapIdx: number } | null {
+  function compute(event: MouseEvent): { midY: number; left: number; width: number; gutterWidth: number; gapIdx: number } | null {
     // No spawn affordance while a block drag is in progress. The cursor
     // sits in the gutter during a drag, so the cheap early-exits below
     // don't catch it and compute would scan every block
     // (getBoundingClientRect each) on every mousemove - heavy in large
     // notes.
-    if (activeDocument.body.classList.contains("butter-is-dragging")) return null;
+    if (
+      activeDocument.body.classList.contains("butter-is-drag-scene-v2") ||
+      activeDocument.body.classList.contains("butter-is-image-dragging") ||
+      activeDocument.body.classList.contains("butter-is-image-resizing")
+    ) return null;
     const target = event.target;
     if (target instanceof Element) {
       if (target.closest(".butter-drag-handle")) return null;
@@ -407,65 +531,7 @@ function mountClickToSpawnView(editorView: EditorView): { update(): void; destro
       if (isInsideTopLevelBlock(target, editorView.dom)) return null;
     }
 
-    const doc = editorView.state.doc;
-    const n = doc.childCount;
-    if (n < 2) return null;
-
-    const y = event.clientY;
-    let posCursor = 0;
-    const rects: DOMRect[] = [];
-    const visualLefts: number[] = [];
-    const nodes: PMNode[] = [];
-    for (let i = 0; i < n; i++) {
-      const child = doc.child(i);
-      const dom = editorView.nodeDOM(posCursor);
-      if (dom instanceof HTMLElement) {
-        const rect = dom.getBoundingClientRect();
-        // Skip blocks that don't take layout space. `display:none`
-        // nodes (e.g., block_comment) return an all-zero rect, and
-        // a 0-rect block would extend its "gap" with neighbors all
-        // the way up to the page top - the hint would anchor far
-        // above the actual visible gap. Same fix as in
-        // hitTestInterBlockGap above; the two paths must stay in
-        // lockstep so the visual hint and the click target match.
-        if (rect.width !== 0 || rect.height !== 0) {
-          rects.push(rect);
-          const ml = parseFloat(getComputedStyle(dom).marginLeft) || 0;
-          visualLefts.push(rect.left - Math.min(0, ml));
-          nodes.push(child);
-        }
-      }
-      posCursor += child.nodeSize;
-    }
-    if (rects.length < 2) return null;
-
-    for (let i = 0; i < rects.length - 1; i++) {
-      const a = rects[i];
-      const b = rects[i + 1];
-      if (y >= a.bottom && y <= b.top) {
-        // Suppress the affordance when either neighbor is an empty
-        // paragraph - clicking would just stack another empty next
-        // to one that already exists. Mirrors hitTestInterBlockGap
-        // so the visual hint and the click target stay in sync.
-        if (isEmptyParagraph(nodes[i]) || isEmptyParagraph(nodes[i + 1]))
-          return null;
-        const midY = (a.bottom + b.top) / 2;
-        // Extend left into the drag-handle gutter so the hint's `+`
-        // icon lands in the same visual column as the per-block drag
-        // handles (HANDLE_OFFSET_LEFT = 30px in drag-handles.ts).
-        // Mirror that module's negative-margin compensation: on
-        // lists `margin-left` is `-var(--list-indent)` to keep their
-        // LI content flush with paragraphs while the marker column
-        // sits in the gutter - without compensating, a hint between
-        // a paragraph and a list would land 30px further left than
-        // the per-block handle would for either block.
-        const left =
-          Math.min(visualLefts[i], visualLefts[i + 1]) - HANDLE_GUTTER;
-        const right = Math.max(a.right, b.right);
-        return { midY, left, width: right - left, gapIdx: i };
-      }
-    }
-    return null;
+    return resolveInterBlockGap(editorView, event.clientY);
   }
 
   function onMove(event: MouseEvent): void {
@@ -494,7 +560,7 @@ function mountClickToSpawnView(editorView: EditorView): { update(): void; destro
     const armed = hit; // capture for the closure
     dwellTimer = window.setTimeout(() => {
       dwellTimer = null;
-      show(armed.midY, armed.left, armed.width);
+      show(armed.midY, armed.left, armed.width, armed.gutterWidth);
     }, DWELL_MS);
   }
 
@@ -554,6 +620,7 @@ function mountClickToSpawnView(editorView: EditorView): { update(): void; destro
       syncLeavingPhase();
     },
     destroy() {
+      unmountMarginSelectionDismissal();
       editorView.dom.removeEventListener("mousemove", onMove);
       editorView.dom.removeEventListener("mouseleave", hide);
       editorView.dom.removeEventListener("mousedown", hide, true);

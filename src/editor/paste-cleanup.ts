@@ -72,19 +72,26 @@ function rebuild(node: PMNode): PMNode {
 }
 
 /**
- * Drop empty / whitespace-only top-level textblocks.
+ * Drop empty / whitespace-only top-level paragraphs.
  *
  * After stripOrphanTagText fires, paragraphs that contained ONLY
  * orphan-tag text become empty. This pass removes those paragraphs.
- * Block-level atoms (hr, image, embed, math_block, callout, code_block)
- * are left alone since they legitimately have empty / no textContent
- * but do represent real content the user pasted.
+ * Inline atoms inside a paragraph (images, embeds, math, footnote refs) are
+ * meaningful even though `textContent` is empty. Structural textblocks such
+ * as an empty fenced code block or heading are also authored content, so only
+ * an actually empty paragraph is eligible for removal.
  */
 export function dropEmptyTextblocks(doc: PMNode): PMNode {
   const kept: PMNode[] = [];
   doc.forEach((child) => {
-    if (child.isTextblock && child.textContent.trim().length === 0) {
-      return;
+    if (child.type.name === "paragraph") {
+      let meaningful = false;
+      child.forEach((inline) => {
+        if (!inline.isText || inline.textContent.trim().length > 0) {
+          meaningful = true;
+        }
+      });
+      if (!meaningful) return;
     }
     kept.push(child);
   });

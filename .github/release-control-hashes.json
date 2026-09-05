@@ -1,8 +1,8 @@
 {
   "version": 1,
   "controls": {
-    "candidateVerifier": "20556d5d88310826bf1a62edf1350b728dedd2f59f09bfa072198331322e4403",
-    "publicExporter": "9465656d13fc198a999a3d6c3d35276bd86ceeca53670e476189afe18c7d2086",
-    "releaseOrchestrator": "2c6f30c67b3bb34cd83c011ec876bb9b7746bc11e6ee4e7eef52a78e5f6f39d7"
+    "candidateVerifier": "ea4a5804dcdd9c57c771161ad1f083afdffdb15c5bcf59182b1aae9fcb75c7af",
+    "publicExporter": "3309b2e3d6217a6bf182140796cff0c83749d7395aae984aa6f862e7e90c1ffa",
+    "releaseOrchestrator": "d0dea6f97a05d417e6328fba16671cb003536609ab34507a16d9ef502bfa4f6e"
   }
 }

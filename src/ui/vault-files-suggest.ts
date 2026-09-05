@@ -1,5 +1,5 @@
 /**
- * Native-feel autocomplete suggester for vault markdown files. Wraps
+ * Native-feel autocomplete suggester for scoped vault files. Wraps
  * Obsidian's `AbstractInputSuggest` so the dropdown looks identical
  * to the one used by Internal Links / file pickers / "Quick Switcher"
  * elsewhere in Obsidian - fuzzy matching, keyboard nav, themed popup.
@@ -22,8 +22,16 @@
  */
 
 import { AbstractInputSuggest, App, TFile, prepareFuzzySearch } from "obsidian";
+import {
+  extensionMatchesVaultSuggestionScope,
+  type VaultFileSuggestionScope,
+} from "./vault-file-scope";
 
 export interface VaultFilesSuggestOptions {
+  /** File family exposed by this field. Note/link fields default to
+   *  `markdown`; media editors opt into their matching attachment family and
+   *  generic embed fields use `all`. */
+  scope?: VaultFileSuggestionScope;
   /** Called when the user picks a suggestion (Enter / click). The
    *  default behavior is to write the file's basename into the input
    *  and close the dropdown; pass an override to do something else
@@ -39,6 +47,15 @@ export interface VaultFilesSuggestOptions {
    *  matches in the visible list, low enough that we don't blow up
    *  the popover on giant vaults. */
   limit?: number;
+  /** Show the first vault files for an empty query. */
+  showOnEmpty?: boolean;
+}
+
+export function vaultFileMatchesSuggestionScope(
+  file: Pick<TFile, "extension">,
+  scope: VaultFileSuggestionScope,
+): boolean {
+  return extensionMatchesVaultSuggestionScope(file.extension, scope);
 }
 
 class VaultFilesSuggest extends AbstractInputSuggest<TFile> {
@@ -82,11 +99,21 @@ class VaultFilesSuggest extends AbstractInputSuggest<TFile> {
   getSuggestions(query: string): TFile[] {
     if (this.opts.skipWhen && this.opts.skipWhen(query)) return [];
     const trimmed = query.trim();
-    // Empty input → no dropdown. Returning an empty list signals the
-    // suggester to stay closed; the popup only appears once the user
-    // has typed something to fuzzy-match against.
-    if (!trimmed) return [];
-    const files = this.app.vault.getMarkdownFiles();
+    // Most consumers stay closed for an empty query. Link insertion
+    // opts into an immediate, alphabetized vault list.
+    const scope = this.opts.scope ?? "markdown";
+    const files = scope === "markdown"
+      ? this.app.vault.getMarkdownFiles()
+      : this.app.vault.getFiles().filter((file) =>
+          vaultFileMatchesSuggestionScope(file, scope));
+    if (!trimmed) {
+      return this.opts.showOnEmpty
+        ? files
+          .slice()
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .slice(0, this.limit)
+        : [];
+    }
     const match = prepareFuzzySearch(trimmed);
     type Scored = { file: TFile; score: number };
     const scored: Scored[] = [];
@@ -123,7 +150,9 @@ class VaultFilesSuggest extends AbstractInputSuggest<TFile> {
     );
     const titleEl = el.createDiv({
       cls: "butter-vault-suggest-title",
-      text: file.basename,
+      text: (this.opts.scope ?? "markdown") === "markdown"
+        ? file.basename
+        : file.name,
     });
     void titleEl;
     const parent = file.parent?.path && file.parent.path !== "/"

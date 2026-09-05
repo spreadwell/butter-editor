@@ -43,18 +43,34 @@ function buildLineMap(text: string): LineMap {
  */
 export class PMEditorShim {
   private lineMap: LineMap;
+  private textBlocks: Array<{ pos: number; text: string; ordinal: number }> = [];
 
   constructor(
     private pm: EditorView,
     private serialize: Serializer,
     private fallbackReplace?: (newMarkdown: string) => void,
+    private toggleChecklist?: (cycle: boolean) => void,
   ) {
     this.lineMap = buildLineMap(this.currentMarkdown());
+    this.rebuildTextBlockIndex();
   }
 
   /** Recompute when the PM doc changes. */
   refresh() {
     this.lineMap = buildLineMap(this.currentMarkdown());
+    this.rebuildTextBlockIndex();
+  }
+
+  private rebuildTextBlockIndex(): void {
+    const blocks: Array<{ pos: number; text: string; ordinal: number }> = [];
+    this.pm.state.doc.descendants((node, pos) => {
+      if (node.isTextblock) {
+        blocks.push({ pos, text: node.textContent, ordinal: blocks.length });
+        return false;
+      }
+      return true;
+    });
+    this.textBlocks = blocks;
   }
 
   private currentMarkdown(): string {
@@ -160,6 +176,11 @@ export class PMEditorShim {
   }
 
   toggleMarkdownFormatting(format?: unknown, ...rest: unknown[]): void {
+    // Obsidian's native formatting commands can fall back to the active
+    // Editor shim when Butter declines its direct command bridge. Honor the
+    // EditorView's canonical editable state here as well so a read-only
+    // license state cannot mutate stored marks through that fallback.
+    if (!this.pm.editable) return;
     const normalized = [format, ...rest]
       .map((part) => {
         if (typeof part === "string") return part;
@@ -198,6 +219,23 @@ export class PMEditorShim {
     this.refresh();
   }
 
+  /** Obsidian's native checklist commands call this Editor method directly. */
+  toggleCheckList(cycle = false): void {
+    if (!this.pm.editable) return;
+    this.toggleChecklist?.(cycle);
+    this.refresh();
+  }
+
+  /** Host commands use this probe to avoid list actions inside table cells. */
+  get inTableCell(): boolean {
+    const { $from } = this.pm.state.selection;
+    for (let depth = $from.depth; depth > 0; depth--) {
+      const role = ($from.node(depth).type.spec as { tableRole?: string }).tableRole;
+      if (role === "cell" || role === "header_cell") return true;
+    }
+    return false;
+  }
+
   getRange(from: EditorPosition, to: EditorPosition): string {
     const fromOff = this.lineChToPos(from);
     const toOff = this.lineChToPos(to);
@@ -209,6 +247,7 @@ export class PMEditorShim {
     from: EditorPosition,
     to?: EditorPosition,
   ): void {
+    if (!this.pm.editable) return;
     const end = to ?? from;
     const pmFrom = this.findPMPosForLine(from.line, from.ch);
     const pmTo = this.findPMPosForLine(end.line, end.ch);
@@ -229,6 +268,7 @@ export class PMEditorShim {
   }
 
   replaceSelection(replacement: string): void {
+    if (!this.pm.editable) return;
     this.pm.dispatch(this.pm.state.tr.insertText(replacement));
     this.refresh();
   }
@@ -265,44 +305,30 @@ export class PMEditorShim {
    * content; for structured nodes it snaps to the nearest text node.
    */
   private findPMPosForLine(line: number, ch: number): number {
-    const { doc } = this.pm.state;
     const lineText = this.lineMap.lines[line] ?? "";
     const prefix = lineText.slice(0, ch);
 
     let best = -1;
     let bestDistance = Infinity;
 
-    doc.descendants((node, pos) => {
-      if (!node.isTextblock) return true;
-      const blockText = node.textContent;
+    for (const block of this.textBlocks) {
+      const blockText = block.text;
       if (!blockText && !prefix) {
         // Empty block matches empty-prefix searches
-        if (line === 0 && best < 0) best = pos + 1;
-        return true;
+        if (line === 0 && best < 0) best = block.pos + 1;
+        continue;
       }
       const idx = blockText.indexOf(prefix);
       if (idx >= 0) {
-        const candidate = pos + 1 + idx + prefix.length;
-        const distance = Math.abs(line - this.estimateLineFromPos(pos));
+        const candidate = block.pos + 1 + idx + prefix.length;
+        const distance = Math.abs(line - block.ordinal);
         if (distance < bestDistance) {
           bestDistance = distance;
           best = candidate;
         }
       }
-      return false;
-    });
+    }
 
     return best;
-  }
-
-  private estimateLineFromPos(pos: number): number {
-    // Rough: count how many block boundaries precede this pos.
-    let line = 0;
-    this.pm.state.doc.descendants((node, p) => {
-      if (p >= pos) return false;
-      if (node.isBlock && node.isTextblock) line++;
-      return true;
-    });
-    return line;
   }
 }

@@ -1,15 +1,23 @@
 /**
  * Editor UX: keymaps, input rules, and context menu.
  */
-import { Menu, Platform } from "obsidian";
-import { runClipboardCommand } from "../util/dom-utils";
+import {
+  Menu,
+  Platform,
+  setIcon,
+} from "obsidian";
+import {
+  pasteClipboardIntoEditor,
+  pastePlainTextIntoEditor,
+  runClipboardCommand,
+} from "../util/dom-utils";
 import { keymap } from "prosemirror-keymap";
 import {
   chainCommands,
   newlineInCode,
   createParagraphNear,
   liftEmptyBlock,
-  splitBlock,
+  splitBlockKeepMarks,
   exitCode,
   deleteSelection,
   joinBackward,
@@ -27,14 +35,101 @@ import {
   textblockTypeInputRule,
   InputRule,
 } from "prosemirror-inputrules";
-import type { MarkType } from "prosemirror-model";
-import { EditorState, Plugin, PluginKey, Selection, TextSelection } from "prosemirror-state";
+import type { Mark, MarkType } from "prosemirror-model";
+import { exitCalloutFromTrailingEmptyParagraph } from "./callout-enter";
+import {
+  EditorState,
+  Plugin,
+  PluginKey,
+  Selection,
+  TextSelection,
+  type Transaction,
+} from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { Fragment, type Schema } from "prosemirror-model";
 import type { Command } from "prosemirror-state";
 import { enterMovesDown } from "./table-editing";
+import { backspaceAtStartOfFlatListItem } from "./flat-list-editing";
 import { buildInlineMathInputRule } from "./inline-math-input-rule";
-import { tx } from "../i18n";
+import {
+  allMarkdownShortcutSettings,
+  type MarkdownShortcutSettings,
+} from "./markdown-shortcuts";
+import { tx, txKnown } from "../i18n";
+import { dismissMenuOnScroll } from "../ui/menu-scroll-dismiss";
+import {
+  attachMenuSurfaceMotion,
+  hideMenuSurfaceImmediately,
+} from "../ui/surface-motion";
+import { undo, redo } from "prosemirror-history";
+import { clearFormatting } from "./formatting-actions";
+import { openUnifiedLinkEditor } from "../ui/link-editor";
+import {
+  emitEditorMenuContributions,
+  type GeneralContextMenuHost,
+} from "./editor-menu-bridge";
+import {
+  CONTEXT_MENU_ENTRY_DEFS,
+  contextMenuDefaultLayout,
+  type ContextMenuEntryId,
+} from "./context-menu-layout";
+import type { Layout } from "../ui/toolbar-layout";
+import {
+  createDesktopContextMenuBridge,
+  type DesktopContextMenuBridge,
+  type DesktopContextMenuParams,
+} from "./desktop-context-menu-bridge";
+import {
+  BUTTON_REGISTRY,
+  MAIN_TOOLBAR_BUTTON_DEFS,
+  applyToolbarColor,
+  execBlockCmd,
+  execHistoryCmd,
+  execInsertCmd,
+  execListCmd,
+  execListDepthCmd,
+  execMarkCmd,
+  insertTable,
+  setHeading,
+  toolbarColorChoices,
+  type BtnDef,
+} from "../ui/toolbar";
+import {
+  buildBlockLifecycleMenuItems,
+  buildSingleBlockMenuItems,
+  renderBlockMenuItems,
+  renderBlockLifecycleMenuItems,
+  renderBlockMenuSubItems,
+  type BlockMenuItem,
+  type BlockSubItem,
+} from "./block-menu-spec";
+import {
+  commandActionIcon,
+  commandActionLabel,
+  executeObsidianCommand,
+  isObsidianCommandAvailable,
+} from "../ui/command-actions";
+
+/**
+ * Marks that should remain active after an ordinary block continuation.
+ *
+ * An explicit stored-mark set wins, including the empty set produced when the
+ * user toggles formatting off. Otherwise ProseMirror's marks at the caret are
+ * the conventional continuation state.
+ */
+const continuationMarks = (state: EditorState): readonly Mark[] =>
+  state.storedMarks ?? state.selection.$from.marks();
+
+/** Restore active marks after a custom transaction moves the caret. */
+const restoreContinuationMarks = (
+  tr: Transaction,
+  marks: readonly Mark[],
+): Transaction => {
+  if (!(tr.selection instanceof TextSelection) || !tr.selection.empty) return tr;
+  const parent = tr.selection.$from.parent;
+  if (!parent.type.inlineContent) return tr;
+  return tr.setStoredMarks(parent.type.allowedMarks(marks));
+};
 
 // ── Task-list Enter command ──
 //
@@ -64,6 +159,7 @@ const handleEnterInTaskList: Command = (state, dispatch) => {
 
   const liNode = $from.node(liDepth);
   if (liNode.attrs.kind !== "task") return false;
+  const marks = continuationMarks(state);
 
   const liPos = $from.before(liDepth);
   const liEnd = liPos + liNode.nodeSize;
@@ -84,7 +180,7 @@ const handleEnterInTaskList: Command = (state, dispatch) => {
     tr.replaceWith(liPos, liEnd, para);
     const newSel = TextSelection.near(tr.doc.resolve(liPos + 1));
     tr.setSelection(newSel);
-    dispatch(tr.scrollIntoView());
+    dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
     return true;
   }
 
@@ -112,7 +208,7 @@ const handleEnterInTaskList: Command = (state, dispatch) => {
   const tr = state.tr.insert(liEnd, newItem);
   const newCaret = liEnd + 2; // inside new paragraph
   tr.setSelection(TextSelection.near(tr.doc.resolve(newCaret)));
-  dispatch(tr.scrollIntoView());
+  dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
   return true;
 };
 
@@ -133,6 +229,7 @@ const handleEnterInFlatListItem: Command = (state, dispatch) => {
   if (liDepth < 0) return false;
 
   const liNode = $from.node(liDepth);
+  const marks = continuationMarks(state);
   const liPos = $from.before(liDepth);
   const liEnd = liPos + liNode.nodeSize;
 
@@ -150,13 +247,13 @@ const handleEnterInFlatListItem: Command = (state, dispatch) => {
         sourceRange: null,
       });
       tr.setSelection(TextSelection.near(tr.doc.resolve(liPos + 2)));
-      dispatch(tr.scrollIntoView());
+      dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
       return true;
     }
     const para = state.schema.nodes.paragraph.create();
     const tr = state.tr.replaceWith(liPos, liEnd, para);
     tr.setSelection(TextSelection.near(tr.doc.resolve(liPos + 1)));
-    dispatch(tr.scrollIntoView());
+    dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
     return true;
   }
 
@@ -201,7 +298,7 @@ const handleEnterInFlatListItem: Command = (state, dispatch) => {
   );
   const rightItemPos = liPos + leftItem.nodeSize;
   tr.setSelection(TextSelection.near(tr.doc.resolve(rightItemPos + 2)));
-  dispatch(tr.scrollIntoView());
+  dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
   return true;
 };
 
@@ -216,12 +313,14 @@ const handleEnterInHeading: Command = (state, dispatch) => {
   if (parent.type.name !== "heading") return false;
   const paragraphType = state.schema.nodes.paragraph;
   if (!paragraphType) return false;
+  const marks = continuationMarks(state);
 
   // Empty heading → convert to paragraph
   if (parent.content.size === 0) {
     if (dispatch) {
       const pos = $head.before();
-      dispatch(state.tr.setNodeMarkup(pos, paragraphType).scrollIntoView());
+      const tr = state.tr.setNodeMarkup(pos, paragraphType);
+      dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
     }
     return true;
   }
@@ -232,7 +331,7 @@ const handleEnterInHeading: Command = (state, dispatch) => {
       const after = $head.after();
       const tr = state.tr.insert(after, paragraphType.create());
       tr.setSelection(Selection.near(tr.doc.resolve(after + 1)));
-      dispatch(tr.scrollIntoView());
+      dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
     }
     return true;
   }
@@ -240,12 +339,12 @@ const handleEnterInHeading: Command = (state, dispatch) => {
   // Middle of heading → split, convert trailing to paragraph
   if (dispatch) {
     let tr = state.tr.split($head.pos);
-    const mappedPos = tr.mapping.map($head.pos);
-    try {
-      const newBlockPos = tr.doc.resolve(mappedPos).after();
-      tr = tr.setNodeMarkup(newBlockPos, paragraphType);
-    } catch { /* split without converting */ }
-    dispatch(tr.scrollIntoView());
+    const mappedPos = tr.mapping.map($head.pos, 1);
+    const $destination = tr.doc.resolve(mappedPos);
+    const newBlockPos = $destination.before();
+    tr = tr.setNodeMarkup(newBlockPos, paragraphType);
+    tr.setSelection(TextSelection.near(tr.doc.resolve(newBlockPos + 1)));
+    dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
   }
   return true;
 };
@@ -368,14 +467,10 @@ const handleBackspaceInEmptyCalloutBody: Command = (state, dispatch, view) => {
 
 // ── liftEmptyBlock guarded against callout body ──
 //
-// PM's stock `liftEmptyBlock` will lift an empty paragraph out of
-// its parent - useful at the doc top level for "press Enter on an
-// empty line to escape a list" muscle memory, but unwanted inside
-// an `obsidian_callout` where lifting would dump the paragraph
-// below the callout (and effectively close it). We wrap it with a
-// pre-check that returns false when the empty block's parent is a
-// callout, falling through to `splitBlock` (which keeps the user
-// inside the callout body).
+// PM's stock `liftEmptyBlock` cannot distinguish a deliberate exit from a
+// nested or non-terminal empty block. The targeted callout command above the
+// standard chain owns the valid trailing-empty exit; this guard keeps every
+// other empty block inside its callout and falls through to a normal split.
 const liftEmptyBlockGuarded: Command = (state, dispatch) => {
   const { $from } = state.selection;
   for (let d = $from.depth - 1; d >= 0; d--) {
@@ -386,11 +481,22 @@ const liftEmptyBlockGuarded: Command = (state, dispatch) => {
 
 // ── Build keymaps ──
 
-export function buildKeymap(schema: Schema) {
+export interface ButterKeymapOptions {
+  markdownShortcuts?: () => MarkdownShortcutSettings;
+}
+
+export function buildKeymap(
+  schema: Schema,
+  options: ButterKeymapOptions = {},
+) {
   const keys: Record<string, Command> = {};
+  const codeFenceShortcut: Command = (state, dispatch, view) =>
+    options.markdownShortcuts?.().codeBlocks === false
+      ? false
+      : handleEnterToCreateCodeFence(state, dispatch, view);
 
   // Enter: heading exit → standard chain. `enterMovesDown` runs FIRST
-  // because PM's `liftEmptyBlock` and `splitBlock` would otherwise
+  // because PM's `liftEmptyBlock` and `splitBlockKeepMarks` would otherwise
   // catch the empty-cell case before us - `liftEmptyBlock` lifts an
   // empty paragraph out of its parent, which produces a malformed
   // doc when the parent is a table cell, and PM auto-corrects by
@@ -400,11 +506,12 @@ export function buildKeymap(schema: Schema) {
   keys["Enter"] = chainCommands(
     enterMovesDown,
     handleEnterInHeading,
-    handleEnterToCreateCodeFence,
+    codeFenceShortcut,
+    exitCalloutFromTrailingEmptyParagraph,
     newlineInCode,
     createParagraphNear,
     liftEmptyBlockGuarded,
-    splitBlock,
+    splitBlockKeepMarks,
   );
 
   keys["Mod-Enter"] = exitCode;
@@ -413,17 +520,23 @@ export function buildKeymap(schema: Schema) {
   keys["Backspace"] = chainCommands(
     handleBackspaceInEmptyCalloutBody,
     deleteSelection,
+    backspaceAtStartOfFlatListItem,
     joinBackward,
     selectNodeBackward,
   );
   keys["Mod-Backspace"] = chainCommands(
     handleBackspaceInEmptyCalloutBody,
     deleteSelection,
+    backspaceAtStartOfFlatListItem,
     joinBackward,
     selectNodeBackward,
   );
-  keys["Delete"] = chainCommands(deleteSelection, joinForward, selectNodeForward);
-  keys["Mod-Delete"] = chainCommands(deleteSelection, joinForward, selectNodeForward);
+  keys["Delete"] = chainCommands(
+    deleteSelection,
+    joinForward,
+    selectNodeForward,
+  );
+  keys["Mod-Delete"] = keys["Delete"];
   keys["Mod-a"] = selectAll;
 
   // List keybindings - task-aware Enter is chained before the generic
@@ -433,13 +546,14 @@ export function buildKeymap(schema: Schema) {
     keys["Enter"] = chainCommands(
       enterMovesDown,
       handleEnterInHeading,
-      handleEnterToCreateCodeFence,
+      codeFenceShortcut,
+      exitCalloutFromTrailingEmptyParagraph,
       handleEnterInTaskList,
       handleEnterInFlatListItem,
       newlineInCode,
       createParagraphNear,
       liftEmptyBlockGuarded,
-      splitBlock,
+      splitBlockKeepMarks,
     );
     // Tab / Shift-Tab are handled by listOperationsPlugin's
     // changeListItemDepth - flat-list schema needs depth-attr
@@ -448,24 +562,28 @@ export function buildKeymap(schema: Schema) {
     // that no longer exist).
   }
 
-  // Shift+Enter inserts a soft line break inside the current block.
-  // Matches Obsidian Live Preview behavior: Enter = new block,
-  // Shift+Enter = new line within the same paragraph. Uses the
-  // softbreak schema node (not hard_break), so source round-trips
-  // as a plain `\n` rather than a `\` + newline.
-  if (schema.nodes.softbreak) {
+  // Shift+Enter inserts an explicit Markdown hard break inside the current
+  // textblock and keeps the user's active formatting for subsequent input.
+  // Source-authored soft line wraps remain represented by `softbreak`; this
+  // command represents the deliberate rich-editor line-break action.
+  if (schema.nodes.hard_break) {
     keys["Shift-Enter"] = (state, dispatch) => {
-      const { $from } = state.selection;
-      // Only inside textblock contexts where inline softbreak is
-      // a valid child. Paragraphs, headings (for multi-line
-      // headings - rare but allowed), and similar.
-      if (!$from.parent.type.inlineContent) return false;
+      const { $from, $to } = state.selection;
+      const hardBreak = schema.nodes.hard_break;
+      if (
+        !$from.sameParent($to) ||
+        !$from.parent.type.inlineContent ||
+        !$from.parent.canReplaceWith($from.index(), $to.index(), hardBreak)
+      ) {
+        return false;
+      }
       if (dispatch) {
+        const marks = continuationMarks(state);
         const tr = state.tr.replaceSelectionWith(
-          schema.nodes.softbreak.create(),
+          hardBreak.create(),
           false,
         );
-        dispatch(tr.scrollIntoView());
+        dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
       }
       return true;
     };
@@ -488,6 +606,8 @@ export function buildKeymap(schema: Schema) {
 // ── Build input rules ──
 
 export interface ButterInputRuleOptions {
+  markdownShortcuts?: MarkdownShortcutSettings;
+  /** Compatibility for older internal callers and extensions. */
   enableMarkdownShortcuts?: boolean;
 }
 
@@ -495,20 +615,23 @@ export function buildInputRules(
   schema: Schema,
   options: ButterInputRuleOptions = {},
 ) {
-  if (options.enableMarkdownShortcuts === false) {
-    return inputRules({ rules: [] });
-  }
+  const shortcuts = options.markdownShortcuts
+    ?? allMarkdownShortcutSettings(options.enableMarkdownShortcuts !== false);
 
   const rules: InputRule[] = [];
 
   // Heading input rules: # → h1, ## → h2, etc.
-  for (let level = 1; level <= 6; level++) {
-    const pattern = new RegExp(`^(#{${level}})\\s$`);
-    rules.push(textblockTypeInputRule(pattern, schema.nodes.heading, { level }));
+  if (shortcuts.headings) {
+    for (let level = 1; level <= 6; level++) {
+      const pattern = new RegExp(`^(#{${level}})\\s$`);
+      rules.push(textblockTypeInputRule(pattern, schema.nodes.heading, { level }));
+    }
   }
 
   // Blockquote: > at start of line
-  rules.push(wrappingInputRule(/^\s*>\s$/, schema.nodes.blockquote));
+  if (shortcuts.blockquotes) {
+    rules.push(wrappingInputRule(/^\s*>\s$/, schema.nodes.blockquote));
+  }
 
   // ── Flat-list input rules ──
   //
@@ -558,14 +681,16 @@ export function buildInputRules(
   }
 
   // Bullet list: `- ` or `* ` at start of paragraph.
-  rules.push(new InputRule(/^\s*[-*]\s$/, makeListItemConversion("bullet")));
+  if (shortcuts.bulletLists) {
+    rules.push(new InputRule(/^\s*[-*]\s$/, makeListItemConversion("bullet")));
+  }
 
   // Ordered list: `N. ` at start of paragraph. The matched number
-  // becomes the item's `start` attr (null when N === 1, since 1 is
-  // the implicit default and storing null avoids serializer noise).
-  rules.push(
-    new InputRule(/^(\d+)\.\s$/, makeListItemConversion("ordered", (m) => ({
-      start: +m[1] === 1 ? null : +m[1],
+  // becomes the item's explicit run-start attr. We retain 1 too: in the flat
+  // list model it distinguishes a newly typed ordered run from continuation.
+  if (shortcuts.numberedLists) rules.push(
+    new InputRule(/^(\d{1,9})\.\s$/, makeListItemConversion("ordered", (m) => ({
+      start: +m[1],
     }))),
   );
 
@@ -576,7 +701,7 @@ export function buildInputRules(
   // wants it to become a task), see the second rule below - it
   // matches `[ ] ` at the start of an EXISTING bullet list_item's
   // paragraph and flips the kind in place via setNodeMarkup.
-  rules.push(
+  if (shortcuts.taskLists) rules.push(
     new InputRule(/^\s*[-*]\s\[([ xX])\]\s$/, (state, match, start, end) => {
       const $start = state.doc.resolve(start);
       const parent = $start.parent;
@@ -611,7 +736,7 @@ export function buildInputRules(
   // task). Only fires when the parent paragraph is the FIRST child
   // of a bullet list_item (not on subsequent paragraphs in a loose
   // item, where the bracket text is just content).
-  rules.push(
+  if (shortcuts.taskLists) rules.push(
     new InputRule(/^\[([ xX])\]\s$/, (state, match, start, end) => {
       const $start = state.doc.resolve(start);
       const parent = $start.parent;
@@ -641,9 +766,11 @@ export function buildInputRules(
   // obsidian-chart, etc. - anything a plugin might register a
   // code-block processor for. The Enter-key variant is handled by
   // `handleEnterToCreateCodeFence` in the keymap above.
-  rules.push(textblockTypeInputRule(/^```([\w.+#-]*)\s$/, schema.nodes.code_block, (match) => ({
-    language: match[1] || "",
-  })));
+  if (shortcuts.codeBlocks) {
+    rules.push(textblockTypeInputRule(/^```([\w.+#-]*)\s$/, schema.nodes.code_block, (match) => ({
+      language: match[1] || "",
+    })));
+  }
 
   // Horizontal rule: --- at start of line.
   //
@@ -652,7 +779,7 @@ export function buildInputRules(
   // through tr.mapping before using it for the trailing-paragraph
   // insert; otherwise PM throws `Position N out of range` and the
   // input event tears down the editor.
-  rules.push(new InputRule(/^---$/, (state, match, start, end) => {
+  if (shortcuts.horizontalRules) rules.push(new InputRule(/^---$/, (state, match, start, end) => {
     const tr = state.tr.replaceWith(
       start - 1,
       end,
@@ -662,7 +789,7 @@ export function buildInputRules(
   }));
 
   // Tag: #tagname followed by space - converts text to tag node + space
-  if (schema.nodes.obsidian_tag) {
+  if (shortcuts.tags && schema.nodes.obsidian_tag) {
     rules.push(new InputRule(
       /(?:^|\s)#([a-zA-Z0-9_/-]*[a-zA-Z_/-][a-zA-Z0-9_/-]*)\s$/,
       (state, match, start, end) => {
@@ -679,7 +806,7 @@ export function buildInputRules(
   // first paragraph sets the list_item's `checked` attr and deletes
   // the typed characters. Lets users create tasks by typing, not just
   // via Mod+L.
-  if (schema.nodes.list_item) {
+  if (shortcuts.taskLists && schema.nodes.list_item) {
     rules.push(
       new InputRule(
         /^\[([ xX])\]\s$/,
@@ -719,7 +846,7 @@ export function buildInputRules(
   }
 
   // Wikilink: typing ]] after [[target converts to wikilink node
-  if (schema.nodes.wikilink) {
+  if (shortcuts.wikilinks && schema.nodes.wikilink) {
     rules.push(new InputRule(
       /\[\[([^\]]+)\]\]$/,
       (state, match, start, end) => {
@@ -741,7 +868,7 @@ export function buildInputRules(
   // the closing `$` is typed. Currency-shaped dollars intentionally
   // stay plain text.
   const inlineMathRule = buildInlineMathInputRule(schema);
-  if (inlineMathRule) rules.push(inlineMathRule);
+  if (shortcuts.inlineMath && inlineMathRule) rules.push(inlineMathRule);
 
   const wrapMark = (
     pattern: RegExp,
@@ -773,24 +900,34 @@ export function buildInputRules(
   };
 
   // Bold - `**text**` and `__text__`
-  add(wrapMark(/(^|\s)\*\*([^*\s](?:[^*]*[^*\s])?)\*\*$/, schema.marks.strong, 2, 1));
-  add(wrapMark(/(^|\s)__([^_\s](?:[^_]*[^_\s])?)__$/, schema.marks.strong, 2, 1));
+  if (shortcuts.bold) {
+    add(wrapMark(/(^|\s)\*\*([^*\s](?:[^*]*[^*\s])?)\*\*$/, schema.marks.strong, 2, 1));
+    add(wrapMark(/(^|\s)__([^_\s](?:[^_]*[^_\s])?)__$/, schema.marks.strong, 2, 1));
+  }
 
   // Italic - `*text*` and `_text_` (but not inside **...**)
-  add(wrapMark(/(^|[^*])\*([^*\s](?:[^*]*[^*\s])?)\*$/, schema.marks.em, 2, 1));
-  add(wrapMark(/(^|[^_])_([^_\s](?:[^_]*[^_\s])?)_$/, schema.marks.em, 2, 1));
+  if (shortcuts.italic) {
+    add(wrapMark(/(^|[^*])\*([^*\s](?:[^*]*[^*\s])?)\*$/, schema.marks.em, 2, 1));
+    add(wrapMark(/(^|[^_])_([^_\s](?:[^_]*[^_\s])?)_$/, schema.marks.em, 2, 1));
+  }
 
   // Strikethrough - `~~text~~`
-  add(wrapMark(/~~([^~\s](?:[^~]*[^~\s])?)~~$/, schema.marks.strikethrough));
+  if (shortcuts.strikethrough) {
+    add(wrapMark(/~~([^~\s](?:[^~]*[^~\s])?)~~$/, schema.marks.strikethrough));
+  }
 
   // Inline code - `` `text` ``
-  add(wrapMark(/`([^`\s](?:[^`]*[^`\s])?)`$/, schema.marks.code));
+  if (shortcuts.inlineCode) {
+    add(wrapMark(/`([^`\s](?:[^`]*[^`\s])?)`$/, schema.marks.code));
+  }
 
   // Highlight - `==text==`
-  add(wrapMark(/==([^=\s](?:[^=]*[^=\s])?)==$/, schema.marks.highlight));
+  if (shortcuts.highlight) {
+    add(wrapMark(/==([^=\s](?:[^=]*[^=\s])?)==$/, schema.marks.highlight));
+  }
 
   // Link - `[text](url)`
-  if (schema.marks.link) {
+  if (shortcuts.markdownLinks && schema.marks.link) {
     rules.push(
       new InputRule(
         /\[([^\]]+)\]\(([^)\s]+)\)$/,
@@ -815,9 +952,63 @@ export function buildInputRules(
 
 // ── Context menu ──
 
-export function contextMenuPlugin(schema: Schema) {
+export function contextMenuPlugin(
+  schema: Schema,
+  host?: GeneralContextMenuHost,
+) {
+  let desktopBridge: DesktopContextMenuBridge | null = null;
+  const deferDesktopMenu = (
+    view: EditorView,
+    event: MouseEvent,
+    blockOverride?: ContextBlock,
+  ): boolean => desktopBridge?.defer(event, (params) => {
+    showContextMenu(
+      schema,
+      view,
+      event,
+      host,
+      blockOverride,
+      buildSpellingMenuContext(view, event, params, desktopBridge),
+    );
+  }) ?? false;
+
   return new Plugin({
     key: new PluginKey("butter-context-menu"),
+    view(view) {
+      // Callout headers are NodeView-owned chrome. Their stopEvent protects
+      // title editing, but also prevents PM's bubble-phase contextmenu hook.
+      // Capture only that chrome here; custom atom/image menus keep ownership
+      // of their own targets.
+      const onCalloutHeaderContextMenu = (event: MouseEvent) => {
+        if (Platform.isMobile || !view.editable) return;
+        const block = contextBlockAtCalloutHeader(view, event.target);
+        if (!block) return;
+        if (deferDesktopMenu(view, event, block)) {
+          // Keep the event out of PM's bubble handler while still allowing
+          // Chromium to produce Electron's spelling context-menu payload.
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        showContextMenu(schema, view, event, host, block);
+      };
+      desktopBridge = createDesktopContextMenuBridge(view.dom.ownerDocument.defaultView ?? window);
+      view.dom.addEventListener("contextmenu", onCalloutHeaderContextMenu, true);
+      return {
+        destroy: () => {
+          desktopBridge?.destroy();
+          desktopBridge = null;
+          view.dom.removeEventListener(
+            "contextmenu",
+            onCalloutHeaderContextMenu,
+            true,
+          );
+        },
+      };
+    },
     props: {
       handleDOMEvents: {
         contextmenu: (view: EditorView, event: MouseEvent) => {
@@ -826,13 +1017,103 @@ export function contextMenuPlugin(schema: Schema) {
           // menu mid-selection. Skip and let the platform handle the
           // selection gesture natively.
           if (Platform.isMobile) return false;
+          if (!view.editable) return false;
+          if (deferDesktopMenu(view, event)) return false;
           event.preventDefault();
-          showContextMenu(schema, view, event);
+          showContextMenu(schema, view, event, host);
           return true;
         },
       },
     },
   });
+}
+
+type SpellingRange = { from: number; to: number };
+
+type SpellingMenuContext = {
+  word: string;
+  suggestions: string[];
+  replace: (suggestion: string) => void;
+  addToDictionary: () => void;
+};
+
+function resolveSpellingRange(
+  view: EditorView,
+  event: MouseEvent,
+  word: string,
+): SpellingRange | null {
+  const hit = view.posAtCoords({ left: event.clientX, top: event.clientY });
+  if (!hit) return null;
+  const $hit = view.state.doc.resolve(hit.pos);
+  let depth = $hit.depth;
+  while (depth > 0 && !$hit.node(depth).isTextblock) depth -= 1;
+  if (!$hit.node(depth).isTextblock) return null;
+
+  const block = $hit.node(depth);
+  const blockStart = $hit.start(depth);
+  // One replacement character per inline atom keeps string offsets aligned
+  // with ProseMirror content positions while preserving marked text runs.
+  const text = block.textBetween(0, block.content.size, "", "\uFFFC");
+  const clickOffset = Math.max(0, Math.min(text.length, hit.pos - blockStart));
+  const candidates: number[] = [];
+  for (let index = text.indexOf(word); index >= 0; index = text.indexOf(word, index + 1)) {
+    candidates.push(index);
+  }
+  if (candidates.length === 0) {
+    const foldedText = text.toLocaleLowerCase();
+    const foldedWord = word.toLocaleLowerCase();
+    for (
+      let index = foldedText.indexOf(foldedWord);
+      index >= 0;
+      index = foldedText.indexOf(foldedWord, index + 1)
+    ) candidates.push(index);
+  }
+  if (candidates.length === 0) return null;
+  const start = candidates.reduce((best, candidate) => {
+    const distance = clickOffset < candidate
+      ? candidate - clickOffset
+      : clickOffset > candidate + word.length
+        ? clickOffset - (candidate + word.length)
+        : 0;
+    const bestDistance = clickOffset < best
+      ? best - clickOffset
+      : clickOffset > best + word.length
+        ? clickOffset - (best + word.length)
+        : 0;
+    return distance < bestDistance ? candidate : best;
+  });
+  return { from: blockStart + start, to: blockStart + start + word.length };
+}
+
+function buildSpellingMenuContext(
+  view: EditorView,
+  event: MouseEvent,
+  params: DesktopContextMenuParams,
+  bridge: DesktopContextMenuBridge | null,
+): SpellingMenuContext | undefined {
+  const word = params.misspelledWord;
+  if (!word) return undefined;
+  const range = resolveSpellingRange(view, event, word);
+  const suggestions = Array.from(new Set(params.dictionarySuggestions))
+    .filter((suggestion) => suggestion !== word)
+    .slice(0, 5);
+  return {
+    word,
+    suggestions,
+    replace: (suggestion) => {
+      if (!range) return;
+      const current = view.state.doc.textBetween(range.from, range.to, "", "\uFFFC");
+      if (current !== word) return;
+      const tr = view.state.tr.insertText(suggestion, range.from, range.to);
+      tr.setSelection(TextSelection.create(tr.doc, range.from + suggestion.length));
+      view.dispatch(tr);
+      window.setTimeout(() => view.focus(), 0);
+    },
+    addToDictionary: () => {
+      bridge?.addWordToDictionary(word);
+      window.setTimeout(() => view.focus(), 0);
+    },
+  };
 }
 
 /**
@@ -887,67 +1168,901 @@ function trimDblClickSelection(view: EditorView): void {
   );
 }
 
-function showContextMenu(schema: Schema, view: EditorView, event: MouseEvent) {
-  const menu = new Menu();
-  const hasSelection = !view.state.selection.empty;
+function markIsActive(state: EditorState, markType: MarkType): boolean {
+  const { from, to, empty, $from } = state.selection;
+  if (empty) {
+    return Boolean(markType.isInSet(state.storedMarks ?? $from.marks()));
+  }
+  return state.doc.rangeHasMark(from, to, markType);
+}
 
-  if (hasSelection) {
-    if (schema.marks.strong) {
-      menu.addItem((item) =>
-        item.setTitle(tx("Bold")).setIcon("bold")
-          .onClick(() => toggleMark(schema.marks.strong)(view.state, view.dispatch)),
-      );
+function runCommand(view: EditorView, command: Command): void {
+  if (command(view.state, view.dispatch.bind(view), view)) view.focus();
+}
+
+function contextBlockAtSelection(view: EditorView): {
+  pos: number;
+  node: import("prosemirror-model").Node;
+} | null {
+  const { selection } = view.state;
+  if (selection.$from.depth < 1) {
+    const node = view.state.doc.nodeAt(selection.from);
+    return node?.isBlock ? { pos: selection.from, node } : null;
+  }
+  for (let depth = selection.$from.depth; depth > 0; depth--) {
+    const node = selection.$from.node(depth);
+    if (node.type.name === "list_item") {
+      return { pos: selection.$from.before(depth), node };
     }
-    if (schema.marks.em) {
-      menu.addItem((item) =>
-        item.setTitle(tx("Italic")).setIcon("italic")
-          .onClick(() => toggleMark(schema.marks.em)(view.state, view.dispatch)),
-      );
+  }
+  const depth = selection.$from.depth;
+  const node = selection.$from.node(depth);
+  return node.isBlock ? { pos: selection.$from.before(depth), node } : null;
+}
+
+type ContextBlock = NonNullable<ReturnType<typeof contextBlockAtSelection>>;
+
+let quickActionLabelId = 0;
+
+function contextBlockAtCalloutHeader(
+  view: EditorView,
+  eventTarget: EventTarget | null,
+): ContextBlock | null {
+  if (!(eventTarget instanceof Element)) return null;
+  if (!eventTarget.closest(".butter-callout-header")) return null;
+  const callout = eventTarget.closest<HTMLElement>(".butter-callout-view");
+  if (!callout || !view.dom.contains(callout)) return null;
+  try {
+    const mapped = view.posAtDOM(callout, 0);
+    const direct = view.state.doc.nodeAt(mapped);
+    if (direct?.type.name === "obsidian_callout") {
+      return { pos: mapped, node: direct };
     }
-    if (schema.marks.strikethrough) {
-      menu.addItem((item) =>
-        item.setTitle(tx("Strikethrough")).setIcon("strikethrough")
-          .onClick(() => toggleMark(schema.marks.strikethrough)(view.state, view.dispatch)),
-      );
+    const resolved = view.state.doc.resolve(
+      Math.max(0, Math.min(mapped, view.state.doc.content.size)),
+    );
+    for (let depth = resolved.depth; depth > 0; depth--) {
+      const node = resolved.node(depth);
+      if (node.type.name === "obsidian_callout") {
+        return { pos: resolved.before(depth), node };
+      }
     }
-    if (schema.marks.code) {
+  } catch { /* detached NodeView */ }
+  return null;
+}
+
+function runCanonicalBlockItem(
+  view: EditorView,
+  block: ContextBlock,
+  item: BlockMenuItem | BlockSubItem,
+  activation: MouseEvent | KeyboardEvent,
+): void {
+  if (item.applyTr) {
+    const tr = view.state.tr;
+    item.applyTr(tr, block.pos, block.node);
+    if (tr.docChanged) view.dispatch(tr);
+    view.focus();
+  } else if (item.sideEffect) {
+    item.sideEffect(view, block.pos, block.node, activation);
+  }
+  dismissActiveGeneralContextMenu();
+}
+
+function canonicalBlockMenuContext(
+  view: EditorView,
+  host: GeneralContextMenuHost | undefined,
+  blockOverride?: ContextBlock,
+): { block: ContextBlock; items: BlockMenuItem[] } | null {
+  const block = blockOverride ?? contextBlockAtSelection(view);
+  if (!block || !host) return null;
+  return {
+    block,
+    items: buildSingleBlockMenuItems({
+      view,
+      pos: block.pos,
+      node: block.node,
+      app: host.app,
+      blockDom: view.nodeDOM(block.pos) as HTMLElement | undefined,
+    }),
+  };
+}
+
+function populateCanonicalTurnIntoMenu(
+  menu: Menu,
+  view: EditorView,
+  host: GeneralContextMenuHost | undefined,
+  blockOverride?: ContextBlock,
+): boolean {
+  const context = canonicalBlockMenuContext(view, host, blockOverride);
+  const item = context?.items.find((candidate) => candidate.id === "turn-into");
+  if (!context || !item?.submenu) return false;
+  renderBlockMenuSubItems(menu, item, (subItem, activation) =>
+    runCanonicalBlockItem(view, context.block, subItem, activation));
+  return true;
+}
+
+function addCanonicalTurnIntoSubmenu(
+  menu: Menu,
+  view: EditorView,
+  host: GeneralContextMenuHost | undefined,
+  blockOverride?: ContextBlock,
+): boolean {
+  const context = canonicalBlockMenuContext(view, host, blockOverride);
+  const item = context?.items.find((candidate) => candidate.id === "turn-into");
+  if (!context || !item?.submenu) return false;
+  menu.addItem((menuItem) => {
+    menuItem.setTitle(tx(item.title)).setIcon(item.icon);
+    renderBlockMenuSubItems(menuItem.setSubmenu(), item, (subItem, activation) =>
+      runCanonicalBlockItem(view, context.block, subItem, activation));
+  });
+  return true;
+}
+
+function populateInsertMenu(
+  menu: Menu,
+  schema: Schema,
+  view: EditorView,
+  host?: GeneralContextMenuHost,
+): void {
+  menu.setUseNativeMenu(false);
+  attachMenuSurfaceMotion(menu, "submenu");
+  if (host) {
+    menu.addItem((item) =>
+      item.setTitle(tx("Add link")).setIcon("link").onClick(() => {
+        const coords = view.coordsAtPos(view.state.selection.head);
+        openUnifiedLinkEditor({
+          app: host.app,
+          view,
+          anchor: view.dom,
+          sourcePath: host.getInfo().file?.path ?? "",
+          event: { clientX: coords.left, clientY: coords.bottom } as MouseEvent,
+          autoFocus: true,
+        });
+      }),
+    );
+    const image = BUTTON_REGISTRY.get("image");
+    if (image) {
       menu.addItem((item) =>
-        item.setTitle(tx("Inline code")).setIcon("code-2")
-          .onClick(() => toggleMark(schema.marks.code)(view.state, view.dispatch)),
+        item.setTitle(tx(image.label)).setIcon(image.icon).onClick(() => {
+          execInsertCmd(
+            image,
+            schema,
+            view,
+            host.app,
+            () => host.getInfo().file?.path ?? "",
+          );
+        }),
       );
     }
     menu.addSeparator();
   }
-
-  menu.addItem((item) =>
-    item.setTitle(tx("Blockquote")).setIcon("quote")
-      .onClick(() => wrapIn(schema.nodes.blockquote)(view.state, view.dispatch)),
-  );
-  menu.addItem((item) =>
-    item.setTitle(tx("Horizontal rule")).setIcon("minus")
-      .onClick(() => {
-        const tr = view.state.tr.replaceSelectionWith(schema.nodes.horizontal_rule.create());
+  if (schema.nodes.horizontal_rule) {
+    menu.addItem((item) =>
+      item.setTitle(tx("Horizontal rule")).setIcon("minus").onClick(() => {
+        view.dispatch(view.state.tr.replaceSelectionWith(
+          schema.nodes.horizontal_rule.create(),
+        ));
+        view.focus();
+      }),
+    );
+  }
+  const { table, table_row, table_header, table_cell } = schema.nodes;
+  if (table && table_row && table_header && table_cell) {
+    menu.addItem((item) =>
+      item.setTitle(tx("Table")).setIcon("table").onClick(() => {
+        const header = table_row.create(null, Array.from(
+          { length: 3 },
+          () => table_header.createAndFill()!,
+        ));
+        const body = Array.from({ length: 2 }, () => table_row.create(
+          null,
+          Array.from({ length: 3 }, () => table_cell.createAndFill()!),
+        ));
+        view.dispatch(view.state.tr.replaceSelectionWith(
+          table.create(null, [header, ...body]),
+        ).scrollIntoView());
+        view.focus();
+      }),
+    );
+  }
+  if (schema.nodes.math_block) {
+    menu.addItem((item) =>
+      item.setTitle(tx("Math block")).setIcon("sigma").onClick(() => {
+        view.dispatch(view.state.tr.replaceSelectionWith(
+          schema.nodes.math_block.create({ value: "" }),
+        ).scrollIntoView());
+        view.focus();
+      }),
+    );
+  }
+  if (schema.nodes.obsidian_callout && schema.nodes.paragraph) {
+    menu.addItem((item) =>
+      item.setTitle(tx("Note callout")).setIcon("pencil").onClick(() => {
+        const from = view.state.selection.from;
+        const tr = view.state.tr.replaceSelectionWith(
+          schema.nodes.obsidian_callout.create(
+            { calloutType: "note" },
+            schema.nodes.paragraph.create(),
+          ),
+        ).scrollIntoView();
+        tr.setSelection(Selection.near(tr.doc.resolve(
+          Math.min(from + 2, tr.doc.content.size),
+        )));
         view.dispatch(tr);
+        view.focus();
       }),
-  );
+    );
+  }
+}
 
-  menu.addSeparator();
-  menu.addItem((item) =>
-    item.setTitle(tx("Cut")).setIcon("scissors")
-      .onClick(() => runClipboardCommand(activeDocument, "cut")),
-  );
-  menu.addItem((item) =>
-    item.setTitle(tx("Copy")).setIcon("copy")
-      .onClick(() => runClipboardCommand(activeDocument, "copy")),
-  );
-  menu.addItem((item) =>
-    item.setTitle(tx("Paste")).setIcon("clipboard-check")
-      .onClick(() => {
-        void navigator.clipboard.readText().then((text) => {
-          view.dispatch(view.state.tr.insertText(text));
+function addInsertSubmenu(
+  menu: Menu,
+  schema: Schema,
+  view: EditorView,
+  host?: GeneralContextMenuHost,
+): void {
+  menu.addItem((item) => {
+    item.setTitle(tx("Insert")).setIcon("plus");
+    populateInsertMenu(item.setSubmenu(), schema, view, host);
+  });
+}
+
+export function populateGeneralContextMenu(
+  menu: Menu,
+  schema: Schema,
+  view: EditorView,
+  host?: GeneralContextMenuHost,
+  blockOverride?: ContextBlock,
+  spelling?: SpellingMenuContext,
+): void {
+  const hasSelection = !view.state.selection.empty;
+  type ActionSpec = {
+    id: ContextMenuEntryId;
+    title: Parameters<typeof tx>[0];
+    icon: string;
+    enabled: () => boolean;
+    checked?: () => boolean;
+    run: () => void;
+  };
+
+  const markAction = (
+    id: ContextMenuEntryId,
+    title: Parameters<typeof tx>[0],
+    icon: string,
+    mark: MarkType | undefined,
+  ): ActionSpec => ({
+    id,
+    title,
+    icon,
+    enabled: () => Boolean(mark),
+    checked: () => Boolean(mark && markIsActive(view.state, mark)),
+    run: () => {
+      if (mark) runCommand(view, toggleMark(mark));
+    },
+  });
+
+  const actions = new Map<ContextMenuEntryId, ActionSpec>([
+    ["undo", { id: "undo", title: "Undo", icon: "undo-2", enabled: () => undo(view.state), run: () => runCommand(view, undo) }],
+    ["redo", { id: "redo", title: "Redo", icon: "redo-2", enabled: () => redo(view.state), run: () => runCommand(view, redo) }],
+    ["cut", { id: "cut", title: "Cut", icon: "scissors", enabled: () => hasSelection, run: () => runClipboardCommand(view.dom.ownerDocument, "cut") }],
+    ["copy", { id: "copy", title: "Copy", icon: "copy", enabled: () => hasSelection, run: () => runClipboardCommand(view.dom.ownerDocument, "copy") }],
+    ["paste", { id: "paste", title: "Paste", icon: "clipboard-check", enabled: () => true, run: () => { void pasteClipboardIntoEditor(view); } }],
+    ["paste-plain", { id: "paste-plain", title: "Paste as plain text", icon: "clipboard-type", enabled: () => true, run: () => { void pastePlainTextIntoEditor(view); } }],
+    ["select-all", { id: "select-all", title: "Select all", icon: "text-select", enabled: () => true, run: () => runCommand(view, selectAll) }],
+    ["bold", markAction("bold", "Bold", "bold", schema.marks.strong)],
+    ["italic", markAction("italic", "Italic", "italic", schema.marks.em)],
+    ["strikethrough", markAction("strikethrough", "Strikethrough", "strikethrough", schema.marks.strikethrough)],
+    ["highlight", markAction("highlight", "Highlight", "highlighter", schema.marks.highlight)],
+    ["inline-code", markAction("inline-code", "Inline code", "code-2", schema.marks.code)],
+    ["add-link", {
+      id: "add-link",
+      title: "Add link",
+      icon: "link",
+      enabled: () => Boolean(schema.marks.link),
+      checked: () => Boolean(schema.marks.link && markIsActive(view.state, schema.marks.link)),
+      run: () => {
+        if (!schema.marks.link || !host) return;
+        const coords = view.coordsAtPos(view.state.selection.head);
+        openUnifiedLinkEditor({
+          app: host.app,
+          view,
+          anchor: view.dom,
+          sourcePath: host.getInfo().file?.path ?? "",
+          event: { clientX: coords.left, clientY: coords.bottom } as MouseEvent,
+          autoFocus: true,
         });
-      }),
+      },
+    }],
+    ["clear-formatting", {
+      id: "clear-formatting",
+      title: "Clear formatting",
+      icon: "remove-formatting",
+      enabled: () => true,
+      run: () => {
+        clearFormatting(view, schema);
+        view.focus();
+      },
+    }],
+  ]);
+
+  const sourcePath = (): string => host?.getInfo().file?.path ?? "";
+  const toolbarAction = (definition: BtnDef): ActionSpec | null => {
+    if (["insert", "turn-into", "block-actions", "text-color"].includes(definition.id)) {
+      return null;
+    }
+    const mark = definition.markName ? schema.marks[definition.markName] : undefined;
+    const nodeName = definition.nodeName === "bullet_list"
+      || definition.nodeName === "ordered_list"
+      || definition.nodeName === "task_list"
+      ? "list_item"
+      : definition.nodeName;
+    const enabled = (): boolean => {
+      if (definition.markName) return Boolean(mark);
+      if (nodeName) return Boolean(schema.nodes[nodeName]);
+      return true;
+    };
+    return {
+      id: definition.id,
+      title: definition.label,
+      icon: definition.icon,
+      enabled,
+      checked: definition.kind === "mark" && mark
+        ? () => markIsActive(view.state, mark)
+        : undefined,
+      run: () => {
+        if (definition.id === "link") {
+          if (!host) return;
+          const coords = view.coordsAtPos(view.state.selection.head);
+          openUnifiedLinkEditor({
+            app: host.app,
+            view,
+            anchor: view.dom,
+            sourcePath: host.getInfo().file?.path ?? "",
+            event: { clientX: coords.left, clientY: coords.bottom } as MouseEvent,
+            autoFocus: true,
+          });
+        } else if (definition.id === "table") {
+          insertTable(schema, view, 3, 3);
+        } else if (definition.kind === "mark") {
+          execMarkCmd(definition, schema, view);
+        } else if (definition.kind === "block") {
+          execBlockCmd(definition, schema, view);
+        } else if (definition.kind === "list") {
+          execListCmd(definition, schema, view);
+        } else if (definition.kind === "list-depth") {
+          execListDepthCmd(definition, view);
+        } else if (definition.kind === "insert" && host) {
+          execInsertCmd(definition, schema, view, host.app, sourcePath);
+        } else if (definition.kind === "heading") {
+          setHeading(schema, view, definition.headingLevel ?? 0);
+        } else if (definition.kind === "history") {
+          execHistoryCmd(definition, view);
+        }
+        window.setTimeout(() => view.focus(), 0);
+      },
+    };
+  };
+  for (const definition of BUTTON_REGISTRY.values()) {
+    if (actions.has(definition.id)) continue;
+    const action = toolbarAction(definition);
+    if (action) actions.set(definition.id, action);
+  }
+
+  const addAction = (target: Menu, action: ActionSpec): void => {
+    target.addItem((item) => {
+      item
+        .setTitle(tx(action.title))
+        .setIcon(action.icon)
+        .setDisabled(!action.enabled())
+        .onClick(action.run);
+      if (action.checked) item.setChecked(action.checked());
+    });
+  };
+
+  const addFormattingSubmenu = (target: Menu): void => {
+    target.addItem((item) => {
+      item.setTitle(tx("Formatting")).setIcon("paintbrush");
+      const submenu = item.setSubmenu();
+      submenu.setUseNativeMenu(false);
+      attachMenuSurfaceMotion(submenu, "submenu");
+      for (const id of ["bold", "italic", "strikethrough", "highlight", "inline-code"] as const) {
+        addAction(submenu, actions.get(id)!);
+      }
+      submenu.addSeparator();
+      addAction(submenu, actions.get("add-link")!);
+      addAction(submenu, actions.get("clear-formatting")!);
+    });
+  };
+
+  const populateTextColorMenu = (target: Menu): void => {
+    target.setUseNativeMenu(false);
+    attachMenuSurfaceMotion(target, "submenu");
+    target.addItem((subItem) => subItem
+      .setTitle(txKnown("Default color"))
+      .setIcon("eraser")
+      .onClick(() => applyToolbarColor(schema, view, "text", null)));
+    target.addSeparator();
+    for (const choice of toolbarColorChoices("text")) {
+      target.addItem((subItem) => subItem
+        .setTitle(choice.name)
+        .setIcon("circle")
+        .onClick(() => applyToolbarColor(schema, view, "text", choice.value)));
+    }
+  };
+
+  const addTextColorSubmenu = (target: Menu): void => {
+    target.addItem((item) => {
+      item.setTitle(txKnown("Text color")).setIcon("palette");
+      populateTextColorMenu(item.setSubmenu());
+    });
+  };
+
+  const populateBlockActionsMenu = (target: Menu): boolean => {
+    const context = canonicalBlockMenuContext(view, host, blockOverride);
+    if (!context) return false;
+    target.setUseNativeMenu(false);
+    attachMenuSurfaceMotion(target, "submenu");
+    const specificItems = context.items.filter((item) => item.id !== "turn-into");
+    const lifecycleItems = buildBlockLifecycleMenuItems(host?.serializeNode);
+    const runItem = (
+      item: BlockMenuItem | BlockSubItem,
+      activation: MouseEvent | KeyboardEvent,
+    ) => runCanonicalBlockItem(view, context.block, item, activation);
+    if (specificItems.length > 0) {
+      renderBlockMenuItems(target, specificItems, runItem);
+    }
+    if (specificItems.length > 0 && lifecycleItems.length > 0) {
+      target.addSeparator();
+    }
+    if (lifecycleItems.length > 0) {
+      renderBlockLifecycleMenuItems(target, lifecycleItems, runItem);
+    }
+    return specificItems.length > 0 || lifecycleItems.length > 0;
+  };
+
+  const addBlockActionsSubmenu = (target: Menu): boolean => {
+    if (!canonicalBlockMenuContext(view, host, blockOverride)) return false;
+    target.addItem((item) => {
+      item.setTitle(txKnown("Block actions")).setIcon("square-menu");
+      populateBlockActionsMenu(item.setSubmenu());
+    });
+    return true;
+  };
+
+  const openQuickSurface = (id: string, anchor: HTMLElement): boolean => {
+    if (!["insert", "turn-into", "block-actions", "text-color"].includes(id)) return false;
+    const surface = new Menu();
+    let populated = true;
+    if (id === "insert") populateInsertMenu(surface, schema, view, host);
+    else if (id === "turn-into") populated = populateCanonicalTurnIntoMenu(surface, view, host, blockOverride);
+    else if (id === "block-actions") populated = populateBlockActionsMenu(surface);
+    else populateTextColorMenu(surface);
+    if (!populated) return false;
+    attachMenuSurfaceMotion(surface, "menu");
+    const rect = anchor.getBoundingClientRect();
+    surface.showAtPosition({ x: rect.left, y: rect.bottom + 4 });
+    return true;
+  };
+
+  const addQuickActions = (
+    target: Menu,
+    configured: Extract<Layout[number], { type: "submenu" }>["children"],
+  ): boolean => {
+    const children = configured
+      .filter((item) => item.type === "button" || item.type === "command")
+      .slice(0, 5);
+    if (children.length === 0) return false;
+    target.addItem((item) => {
+      item.setTitle(txKnown("Quick actions"));
+      const row = item.dom;
+      if (!row) return;
+      row.empty();
+      row.removeAttribute("title");
+      row.removeAttribute("aria-label");
+      row.removeAttribute("data-tooltip-position");
+      row.classList.add("butter-context-quick-actions-item");
+      const toolbar = row.createDiv({
+        cls: "butter-context-quick-actions",
+        attr: { role: "toolbar" },
+      });
+      const toolbarLabel = toolbar.createSpan({
+        cls: "butter-visually-hidden",
+        text: txKnown("Quick actions"),
+      });
+      toolbarLabel.id = `butter-context-quick-action-label-${++quickActionLabelId}`;
+      toolbar.setAttribute("aria-labelledby", toolbarLabel.id);
+      toolbar.style.setProperty(
+        "--butter-context-quick-count",
+        String(children.length),
+      );
+      const buttons: HTMLButtonElement[] = [];
+      for (const child of children) {
+        const action = child.type === "button"
+          ? actions.get(child.id)
+          : undefined;
+        const definition = child.type === "button"
+          ? BUTTON_REGISTRY.get(child.id)
+          : undefined;
+        const special = child.type === "button"
+          && ["insert", "turn-into", "block-actions", "text-color"].includes(child.id);
+        const label = child.type === "command"
+          ? host ? commandActionLabel(host.app, child) : child.label
+          : action ? tx(action.title) : definition ? tx(definition.label) : child.id;
+        const button = toolbar.createEl("button", {
+          cls: "butter-context-quick-action clickable-icon",
+          attr: {
+            type: "button",
+            "aria-pressed": action?.checked?.() ? "true" : "false",
+          },
+        });
+        if (child.type === "command" && host) {
+          setIcon(button, commandActionIcon(host.app, child));
+          button.disabled = !isObsidianCommandAvailable(host.app, child.commandId);
+        } else if (action) {
+          setIcon(button, action.icon);
+          button.disabled = !action.enabled();
+          button.classList.toggle("is-active", action.checked?.() === true);
+        } else if (special && definition) {
+          setIcon(button, definition.icon);
+        } else {
+          setIcon(button, "circle-help");
+          button.disabled = true;
+        }
+        const accessibleLabel = button.createSpan({
+          cls: "butter-visually-hidden",
+          text: label,
+        });
+        accessibleLabel.id = `butter-context-quick-action-label-${++quickActionLabelId}`;
+        button.setAttribute("aria-labelledby", accessibleLabel.id);
+        button.tabIndex = -1;
+        button.addEventListener("pointerdown", (event) => event.preventDefault());
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!button.disabled) {
+            if (child.type === "command" && host) {
+              executeObsidianCommand(host.app, child.commandId);
+            } else if (child.type === "button" && openQuickSurface(child.id, button)) {
+              menu.close();
+              return;
+            } else action?.run();
+          }
+          menu.close();
+        });
+        buttons.push(button);
+      }
+      const enabledButtons = () => buttons.filter((button) => !button.disabled);
+      const initial = enabledButtons()[0];
+      if (initial) initial.tabIndex = 0;
+      toolbar.addEventListener("keydown", (event: KeyboardEvent) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        const available = enabledButtons();
+        if (available.length === 0) return;
+        const current = toolbar.ownerDocument.activeElement as HTMLButtonElement | null;
+        let index = Math.max(0, available.indexOf(current ?? available[0]));
+        if (event.key === "ArrowLeft") index = (index - 1 + available.length) % available.length;
+        else if (event.key === "ArrowRight") index = (index + 1) % available.length;
+        else if (event.key === "Home") index = 0;
+        else index = available.length - 1;
+        event.preventDefault();
+        for (const button of buttons) button.tabIndex = -1;
+        available[index].tabIndex = 0;
+        available[index].focus();
+      });
+    });
+    return true;
+  };
+
+  const layout = host?.getContextMenuLayout?.() ?? contextMenuDefaultLayout();
+  const knownEntryIds = new Set([
+    ...CONTEXT_MENU_ENTRY_DEFS.map((entry) => entry.id),
+    ...MAIN_TOOLBAR_BUTTON_DEFS.map((entry) => entry.id),
+  ]);
+  const renderItems = (target: Menu, items: Layout): boolean => {
+    let rendered = false;
+    let pendingSeparator = false;
+    for (const item of items) {
+      if (item.type === "separator") {
+        if (rendered) pendingSeparator = true;
+        continue;
+      }
+      if (item.type === "overflow") continue;
+
+      if (item.type === "button" && item.id === "plugin-actions") {
+        const contributed = emitEditorMenuContributions(target, host, {
+          separatorBefore: rendered && pendingSeparator,
+        });
+        if (contributed) {
+          rendered = true;
+          pendingSeparator = false;
+        }
+        continue;
+      }
+
+      if (item.type === "button" && item.id === "spelling-actions") {
+        if (!spelling) continue;
+        if (rendered && pendingSeparator) target.addSeparator();
+        pendingSeparator = false;
+        for (const suggestion of spelling.suggestions) {
+          target.addItem((menuItem) => menuItem
+            .setTitle(suggestion)
+            .setIcon("spell-check-2")
+            .onClick(() => spelling.replace(suggestion)));
+        }
+        if (spelling.suggestions.length > 0) target.addSeparator();
+        target.addItem((menuItem) => menuItem
+          .setTitle(txKnown("Add to dictionary"))
+          .setIcon("book-plus")
+          .onClick(spelling.addToDictionary));
+        rendered = true;
+        continue;
+      }
+
+      if (item.type === "button" && item.id === "obsidian-actions") {
+        if (rendered && pendingSeparator) target.addSeparator();
+        pendingSeparator = false;
+        target.addItem((menuItem) => {
+          menuItem.setTitle(txKnown("Obsidian actions")).setIcon("app-window");
+          menuItem.dom?.classList.add("butter-context-obsidian-actions-marker");
+        });
+        rendered = true;
+        continue;
+      }
+
+      if (rendered && pendingSeparator) target.addSeparator();
+      pendingSeparator = false;
+
+      if (item.type === "command") {
+        target.addItem((menuItem) => menuItem
+          .setTitle(host ? commandActionLabel(host.app, item) : item.label)
+          .setIcon(host ? commandActionIcon(host.app, item) : item.icon)
+          .setDisabled(!host || !isObsidianCommandAvailable(host.app, item.commandId))
+          .onClick(() => {
+            if (host) executeObsidianCommand(host.app, item.commandId);
+          }));
+        rendered = true;
+        continue;
+      }
+
+      if (item.type === "submenu") {
+        if (item.presentation === "quick") {
+          rendered = addQuickActions(target, item.children) || rendered;
+          continue;
+        }
+        target.addItem((menuItem) => {
+          menuItem.setTitle(item.label || txKnown("Submenu")).setIcon(item.icon || "more-horizontal");
+          const submenu = menuItem.setSubmenu();
+          submenu.setUseNativeMenu(false);
+          attachMenuSurfaceMotion(submenu, "submenu");
+          renderItems(submenu, item.children);
+        });
+        rendered = true;
+        continue;
+      }
+
+      if (item.type !== "button" || !knownEntryIds.has(item.id)) continue;
+      const id = item.id;
+      const action = actions.get(id);
+      let added = true;
+      if (action) addAction(target, action);
+      else if (id === "formatting") addFormattingSubmenu(target);
+      else if (id === "turn-into") added = addCanonicalTurnIntoSubmenu(target, view, host, blockOverride);
+      else if (id === "insert") addInsertSubmenu(target, schema, view, host);
+      else if (id === "text-color") addTextColorSubmenu(target);
+      else if (id === "block-actions") added = addBlockActionsSubmenu(target);
+      else added = false;
+      rendered = added || rendered;
+    }
+    return rendered;
+  };
+
+  renderItems(menu, layout);
+}
+
+const OBSIDIAN_CONTEXT_SECTIONS = new Set(["action", "selection"]);
+
+/**
+ * Obsidian injects its own context-sensitive `action` and `selection`
+ * sections while `showAtMouseEvent` opens the menu. Move those already-wired
+ * DOM items to Butter's configurable marker, or remove them when that slot is
+ * hidden. Event handlers remain attached because the item nodes are moved,
+ * not cloned.
+ */
+function placeObsidianContextActions(menu: Menu): void {
+  const root = menu.dom;
+  if (!root) return;
+  const marker = root.querySelector<HTMLElement>(
+    ".butter-context-obsidian-actions-marker",
   );
+  const nativeItems = Array.from(
+    root.querySelectorAll<HTMLElement>(".menu-item[data-section]"),
+  )
+    .filter((item) => OBSIDIAN_CONTEXT_SECTIONS.has(item.dataset.section ?? ""));
+
+  if (marker) {
+    const targetGroup = marker.closest<HTMLElement>(".menu-group") ?? marker.parentElement;
+    if (targetGroup) {
+      for (const item of nativeItems) targetGroup.insertBefore(item, marker);
+    }
+    marker.remove();
+  } else {
+    for (const item of nativeItems) item.remove();
+  }
+
+  for (const group of Array.from(root.querySelectorAll<HTMLElement>(".menu-group"))) {
+    if (!group.querySelector(".menu-item")) group.remove();
+  }
+}
+
+function isOrdinaryContextMenuTarget(
+  event: MouseEvent,
+  blockOverride?: ContextBlock,
+): boolean {
+  if (blockOverride) return false;
+  const target = event.target as { closest?: (selector: string) => Element | null } | null;
+  return !target?.closest?.(
+    "table, img, video, audio, a, .butter-drag-handle, " +
+    ".butter-image-edit-button, .butter-inline-atom",
+  );
+}
+
+function appendContextMenuCoachmark(
+  menu: Menu,
+  event: MouseEvent,
+  host: GeneralContextMenuHost | undefined,
+  blockOverride?: ContextBlock,
+): void {
+  if (!host || !isOrdinaryContextMenuTarget(event, blockOverride)) return;
+  const surface = Platform.isMobile
+    ? "mobile-context-menu"
+    : "desktop-context-menu";
+  const announcement = host.getPendingFeatureAnnouncement?.(surface);
+  const root = menu.dom;
+  if (!announcement || !root) return;
+  const establishedWidth = root.getBoundingClientRect().width;
+  if (establishedWidth > 0) {
+    root.style.setProperty(
+      "--butter-context-menu-established-width",
+      `${establishedWidth}px`,
+    );
+  }
+  root.addClass("has-feature-coachmark");
+
+  const group = root.createDiv({
+    cls: "menu-group butter-context-menu-coachmark-group",
+  });
+  const coachmark = group.createDiv({
+    cls: "butter-context-menu-coachmark",
+    attr: { role: "note", "aria-label": txKnown(announcement.title) },
+  });
+  const header = coachmark.createDiv({ cls: "butter-context-menu-coachmark-header" });
+  const icon = header.createSpan({ cls: "butter-context-menu-coachmark-icon" });
+  setIcon(icon, "party-popper");
+  header.createSpan({
+    cls: "butter-context-menu-coachmark-title",
+    text: txKnown(announcement.title),
+  });
+  coachmark.createDiv({
+    cls: "butter-context-menu-coachmark-description",
+    text: txKnown(announcement.description),
+  });
+  const actions = coachmark.createDiv({
+    cls: "butter-context-menu-coachmark-actions",
+  });
+  const customize = actions.createEl("button", {
+    cls: "butter-context-menu-coachmark-action is-primary",
+    text: txKnown("Customize"),
+    attr: { type: "button" },
+  });
+  const dismiss = actions.createEl("button", {
+    cls: "butter-context-menu-coachmark-action",
+    text: txKnown("Got it"),
+    attr: { type: "button" },
+  });
+
+  const acknowledge = () => {
+    void host.acknowledgeFeatureAnnouncement?.(announcement.id);
+  };
+  const containPointer = (pointerEvent: Event) => pointerEvent.stopPropagation();
+  customize.addEventListener("pointerdown", containPointer);
+  dismiss.addEventListener("pointerdown", containPointer);
+  customize.addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
+    clickEvent.stopPropagation();
+    acknowledge();
+    menu.hide();
+    host.openContextMenuSettings?.();
+  });
+  dismiss.addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
+    clickEvent.stopPropagation();
+    acknowledge();
+    group.remove();
+    root.removeClass("has-feature-coachmark");
+  });
+}
+
+function clampContextMenuToViewport(menu: Menu): void {
+  const root = menu.dom;
+  const ownerWindow = root?.ownerDocument.defaultView;
+  if (!root || !ownerWindow) return;
+  const margin = 8;
+  const rect = root.getBoundingClientRect();
+  const left = Math.min(
+    Math.max(rect.left, margin),
+    Math.max(margin, ownerWindow.innerWidth - rect.width - margin),
+  );
+  const top = Math.min(
+    Math.max(rect.top, margin),
+    Math.max(margin, ownerWindow.innerHeight - rect.height - margin),
+  );
+  root.style.left = `${Math.round(left)}px`;
+  root.style.top = `${Math.round(top)}px`;
+}
+
+/** Obsidian mounts submenus beside their root menu, so a submenu leaf may
+ * close only its own surface. Observe the complete active Butter menu chain
+ * and dismiss its root after the trusted leaf click has finished. */
+function dismissGeneralMenuAfterLeafActivation(
+  menu: Menu,
+  ownerDocument: Document,
+): void {
+  const onClick = (event: MouseEvent) => {
+    if (activeGeneralContextMenu !== menu) return;
+    const target = event.target as Element | null;
+    const item = target?.closest<HTMLElement>(".menu-item");
+    if (!item || item.classList.contains("is-disabled") ||
+        item.getAttribute("aria-disabled") === "true" ||
+        item.classList.contains("has-submenu") || item.querySelector(".mod-submenu")) {
+      return;
+    }
+    const surface = item.closest<HTMLElement>(".menu");
+    const root = menu.dom;
+    if (!surface || !root ||
+        (surface !== root && surface.dataset.butterSurfaceMotion !== "submenu")) {
+      return;
+    }
+    ownerDocument.defaultView?.setTimeout(() => {
+      if (activeGeneralContextMenu === menu) dismissActiveGeneralContextMenu();
+    }, 0);
+  };
+  ownerDocument.addEventListener("click", onClick, true);
+  menu.onHide(() => ownerDocument.removeEventListener("click", onClick, true));
+}
+
+function showContextMenu(
+  schema: Schema,
+  view: EditorView,
+  event: MouseEvent,
+  host?: GeneralContextMenuHost,
+  blockOverride?: ContextBlock,
+  spelling?: SpellingMenuContext,
+) {
+  if (activeGeneralContextMenu) {
+    dismissActiveGeneralContextMenu();
+  }
+  const menu = new Menu();
+  activeGeneralContextMenu = menu;
+  menu.onHide(() => {
+    if (activeGeneralContextMenu === menu) activeGeneralContextMenu = null;
+  });
+  menu.dom?.classList.add("butter-general-context-menu");
+  attachMenuSurfaceMotion(menu, "menu");
+  populateGeneralContextMenu(menu, schema, view, host, blockOverride, spelling);
+  dismissGeneralMenuAfterLeafActivation(menu, view.dom.ownerDocument);
 
   menu.showAtMouseEvent(event);
+  placeObsidianContextActions(menu);
+  appendContextMenuCoachmark(menu, event, host, blockOverride);
+  clampContextMenuToViewport(menu);
+  dismissMenuOnScroll(menu, view.dom.ownerDocument);
+}
+
+let activeGeneralContextMenu: Menu | null = null;
+
+function dismissActiveGeneralContextMenu(): void {
+  const active = activeGeneralContextMenu;
+  if (!active) return;
+  activeGeneralContextMenu = null;
+  hideMenuSurfaceImmediately(active);
 }

@@ -745,7 +745,17 @@ function isWithin(parent, child) {
   return value === "" || (!value.startsWith("..") && !isAbsolute(value));
 }
 
+export function assertFrozenSourceIdentity(expected, actual, status) {
+  if (!SHA_1.test(expected ?? "") || expected !== actual || status.trim()) {
+    throw new Error("Release controls require the exact clean frozen private source commit");
+  }
+}
+
 export function parseLauncherArgs(argv) {
+  const sourceBound = argv[0] === "--launch-source-control";
+  if (!sourceBound && argv[0] !== "--launch-bound-control") {
+    throw new Error("Unknown release launcher mode");
+  }
   const separator = argv.indexOf("--");
   const own = separator < 0 ? argv : argv.slice(0, separator);
   const forwarded = separator < 0 ? [] : argv.slice(separator + 1);
@@ -766,6 +776,10 @@ export function parseLauncherArgs(argv) {
     "--trusted-master",
     "--wdm-root",
   ];
+  if (sourceBound) exactKeys.push("--source-commit");
+  if (sourceBound && !SHA_1.test(values["--source-commit"] ?? "")) {
+    throw new Error("Source-bound launcher requires an exact private source commit");
+  }
   if (JSON.stringify(Object.keys(values).sort()) !== JSON.stringify(exactKeys.sort())) {
     throw new Error(`Trusted launcher requires exactly: ${exactKeys.join(", ")}`);
   }
@@ -773,6 +787,7 @@ export function parseLauncherArgs(argv) {
     throw new Error("Trusted launcher control name or master SHA is invalid");
   }
   return {
+    ...(sourceBound ? { sourceCommit: values["--source-commit"] } : {}),
     control: values["--control"],
     forwarded,
     launcherSha256: values["--launcher-sha256"],
@@ -1092,6 +1107,18 @@ async function runPrivateControl(options) {
       root: options.publicRoot,
       workspaceRoot: options.wdmRoot,
     });
+    const assertFrozenSource = () => {
+      if (!options.sourceCommit) return;
+      assertFrozenSourceIdentity(
+        options.sourceCommit,
+        gitText(trustedGitExe, options.privateRoot, home, hooks, ["rev-parse", "HEAD^{commit}"]),
+        gitText(trustedGitExe, options.privateRoot, home, hooks, ["status", "--porcelain=v1", "--untracked-files=all"]),
+      );
+    };
+    assertFrozenSource();
+    const sourceBlob = (path) => exactGitBlob(
+      trustedGitExe, options.privateRoot, home, hooks, options.sourceCommit, path,
+    );
     networkGit(trustedGitExe, home, ["init", "--bare", transportRoot], { stdio: "ignore" });
     const advertisedBefore = networkGitText(trustedGitExe, home, [
       "ls-remote",
@@ -1120,7 +1147,7 @@ async function runPrivateControl(options) {
     if (fetched !== options.trustedMaster || advertisedAfter !== options.trustedMaster) {
       throw new Error("Trusted public master changed during control materialization");
     }
-    const trustedLauncherBytes = exactGitBlob(
+    const trustedLauncherBytes = options.sourceCommit ? sourceBlob("scripts/build-public-candidate.mjs") : exactGitBlob(
       trustedGitExe,
       transportRoot,
       home,
@@ -1135,7 +1162,7 @@ async function runPrivateControl(options) {
     git(trustedGitExe, transportRoot, home, hooks, ["bundle", "create", masterBundle, trustedRef]);
     git(trustedGitExe, options.publicRoot, home, hooks, ["bundle", "unbundle", masterBundle], { stdio: "ignore" });
 
-    const manifestBytes = exactGitBlob(
+    const manifestBytes = options.sourceCommit ? sourceBlob(".github/release-control-hashes.json") : exactGitBlob(
       trustedGitExe,
       transportRoot,
       home,
@@ -1160,7 +1187,10 @@ async function runPrivateControl(options) {
     for (const [name, relativePath] of LOCAL_CONTROL_PATHS) {
       const source = join(options.privateRoot, ...relativePath.split("/"));
       assertRegularUnlinkedFile(source, `private control ${name}`);
-      const bytes = readFileSync(source);
+      const bytes = options.sourceCommit ? sourceBlob(relativePath) : readFileSync(source);
+      if (!readFileSync(source).equals(bytes)) {
+        throw new Error(`Private control differs from frozen source: ${relativePath}`);
+      }
       if (!SHA_256.test(manifest.controls[name] ?? "") || sha256(bytes) !== manifest.controls[name]) {
         throw new Error(`Private control differs from trusted public manifest: ${relativePath}`);
       }
@@ -1168,7 +1198,8 @@ async function runPrivateControl(options) {
     }
 
     for (const [privatePath, publicPath] of PUBLIC_SCRIPT_PATHS) {
-      const bytes = exactGitBlob(trustedGitExe, transportRoot, home, hooks, options.trustedMaster, publicPath);
+      const bytes = options.sourceCommit ? sourceBlob(privatePath)
+        : exactGitBlob(trustedGitExe, transportRoot, home, hooks, options.trustedMaster, publicPath);
       const privateSource = join(options.privateRoot, ...privatePath.split("/"));
       assertRegularUnlinkedFile(privateSource, `mapped private control ${privatePath}`);
       if (sha256(readFileSync(privateSource)) !== sha256(bytes)) {
@@ -1177,7 +1208,12 @@ async function runPrivateControl(options) {
       writeExact(controlRoot, privatePath, bytes);
     }
     for (const [relativePath, bytes] of localBytes) writeExact(controlRoot, relativePath, bytes);
-    const packageBytes = exactGitBlob(
+    if (options.sourceCommit) {
+      for (const path of [".github/release-control-hashes.json", ".github/workflows/release.yml"]) {
+        writeExact(controlRoot, path, sourceBlob(path));
+      }
+    }
+    const packageBytes = options.sourceCommit ? sourceBlob("package.json") : exactGitBlob(
       trustedGitExe,
       transportRoot,
       home,
@@ -1185,7 +1221,7 @@ async function runPrivateControl(options) {
       options.trustedMaster,
       "package.json",
     );
-    const lockBytes = exactGitBlob(
+    const lockBytes = options.sourceCommit ? sourceBlob("package-lock.json") : exactGitBlob(
       trustedGitExe,
       transportRoot,
       home,
@@ -1200,8 +1236,12 @@ async function runPrivateControl(options) {
       assertSafePublicLockMetadata,
       assertSafePublicPackageMetadata,
     } = await import(pathToFileURL(join(controlRoot, "scripts", "public-export-shape.mjs")).href);
-    assertSafePublicPackageMetadata(trustedPackage.packageJson, trustedPackage.packageJson.version);
-    assertSafePublicLockMetadata(trustedPackage.packageLock, trustedPackage.packageJson.version);
+    if (!options.sourceCommit) {
+      assertSafePublicPackageMetadata(trustedPackage.packageJson, trustedPackage.packageJson.version);
+      assertSafePublicLockMetadata(trustedPackage.packageLock, trustedPackage.packageJson.version);
+    }
+    // Private runtime metadata never enters the public export. Both modes use
+    // exact Git lock bytes, validated registry URLs/integrities, and no scripts.
     const lockRoot = trustedPackage.packageLock.packages?.[""];
     for (const field of ["dependencies", "devDependencies"]) {
       if (
@@ -1215,6 +1255,7 @@ async function runPrivateControl(options) {
     const target = join(controlRoot, ...CONTROL_TARGETS.get(options.control).split("/"));
     const childEnvironment = {
       ...operatingSystemEnvironment(),
+      ...(options.sourceCommit ? { BTR_TRUSTED_SOURCE_COMMIT: options.sourceCommit } : {}),
       BTR_RELEASE_PRIVATE_ROOT: options.privateRoot,
       BTR_RELEASE_PUBLIC_ROOT: options.publicRoot,
       BTR_TRUSTED_CONTROL_ROOT: controlRoot,
@@ -1231,8 +1272,9 @@ async function runPrivateControl(options) {
       BTR_WDM_ROOT: runtime.wdmRoot,
       BTR_WDM_GH_EXE: runtime.ghExe,
     };
-    childEnvironment.PATH = pathWithTrustedGit(trustedGitExe);
+    childEnvironment.PATH = [dirname(runtime.nodeExe), pathWithTrustedGit(trustedGitExe)].join(delimiter);
     delete childEnvironment.Path;
+    assertFrozenSource();
     execFileSync(runtime.nodeExe, [target, ...options.forwarded], {
       cwd: options.privateRoot,
       env: childEnvironment,
@@ -1316,7 +1358,7 @@ const directInvocation = process.argv[1]
 if (directInvocation) {
   try {
     const argv = process.argv.slice(2);
-    if (argv[0] === "--launch-bound-control") {
+    if (argv[0] === "--launch-bound-control" || argv[0] === "--launch-source-control") {
       await runPrivateControl(parseLauncherArgs(argv));
     } else if (argv[0] === "--verify-release-authorization") {
       const authorization = verifyReleaseAuthorizationFile(parseAuthorizationVerificationArgs(argv));

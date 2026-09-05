@@ -2,6 +2,16 @@ import { Node as PMNode, Fragment, Mark } from "prosemirror-model";
 import { schema } from "../schema";
 import { CANONICAL_DEFAULTS, type CanonicalFormOptions } from "./common";
 import { isDigitCode } from "../inline-math-delimiters";
+import {
+  flatListLayoutFor,
+  listItemCanRepresentLooseNestedEdge,
+  listItemHasSyntheticLeadingParagraph,
+  listItemIsMarkerOnly,
+  listItemRequiresLooseParentEdge,
+  listKind,
+  orderedListStart,
+  type FlatListLayoutEntry,
+} from "../list-layout";
 
 
 
@@ -15,7 +25,7 @@ export interface MarkSpec {
   open: string | ((mark: Mark, parent: PMNode, index: number) => string);
   close: string | ((mark: Mark, parent: PMNode, index: number) => string);
   escape?: boolean;  // default true - escape text inside this mark?
-  expel?: boolean;   // default false - expel enclosing whitespace?
+  expel?: boolean | ((mark: Mark) => boolean);
   /** Lower rank = opens FIRST (outer mark wrapping everything else).
    *  HTML wrapping marks (font, underline, etc.) want to open
    *  outside markdown content marks (strong, em) so the source reads
@@ -39,7 +49,7 @@ export const markSpecs: Record<string, MarkSpec> = {
     },
     close: (mark) =>
       mark.attrs.color || mark.attrs.html ? "</mark>" : "==",
-    expel: true,
+    expel: (mark) => !mark.attrs.color && !mark.attrs.html,
     // `escape: false` - the highlight plugin's `==…==` rule consumes
     // the inner content as a single raw text token (no inline-rule
     // re-tokenization), and the parser side doesn't de-escape `\…`
@@ -67,10 +77,10 @@ export const markSpecs: Record<string, MarkSpec> = {
   // markdown content marks (strong, em, etc.) - produces
   // `<font>**bold**</font>` rather than the malformed
   // `**<font>bold**</font>`.
-  underline:   { open: "<u>",   close: "</u>",   expel: true, rank: 0 },
-  superscript: { open: "<sup>", close: "</sup>", expel: true, rank: 0 },
-  subscript:   { open: "<sub>", close: "</sub>", expel: true, rank: 0 },
-  kbd:         { open: "<kbd>", close: "</kbd>", expel: true, rank: 0 },
+  underline:   { open: "<u>",   close: "</u>",   rank: 0 },
+  superscript: { open: "<sup>", close: "</sup>", rank: 0 },
+  subscript:   { open: "<sub>", close: "</sub>", rank: 0 },
+  kbd:         { open: "<kbd>", close: "</kbd>", rank: 0 },
   font: {
     open: (mark) => {
       const parts: string[] = [];
@@ -80,7 +90,6 @@ export const markSpecs: Record<string, MarkSpec> = {
       return parts.length ? `<font ${parts.join(" ")}>` : "<font>";
     },
     close: () => "</font>",
-    expel: true,
     rank: 0,
   },
   code: {
@@ -98,17 +107,13 @@ export const markSpecs: Record<string, MarkSpec> = {
       // Pick angle form when href contains whitespace or unbalanced
       // parens; otherwise plain (which is the common case and matches
       // what users authored).
-      const rawHref = (mark.attrs.href ?? "") as string;
-      const needsAngle = /[\s)<>]/.test(rawHref);
-      const href = needsAngle
-        ? `<${rawHref.replace(/([<>\\])/g, "\\$1")}>`
-        : rawHref;
+      const href = markdownDestination((mark.attrs.href ?? "") as string);
       // title: `"..."`. Inner `"` and `\` need backslash-escaping so
       // the title parses back as a single string. Without this, a
       // title like `she said "hi"` round-trips as broken markdown.
       const rawTitle = (mark.attrs.title ?? "") as string;
       const t = rawTitle
-        ? ` "${rawTitle.replace(/(["\\])/g, "\\$1")}"`
+        ? ` "${markdownTitle(rawTitle)}"`
         : "";
       return `](${href}${t})`;
     },
@@ -143,16 +148,88 @@ function escapeTagLikeHashes(str: string, boundaryAtStart: boolean): string {
   );
 }
 
-function isHashTagBoundary(out: string): boolean {
-  return out.length === 0 || /[ \t\r\n]$/.test(out);
+function protectEntityLikeAmpersands(
+  str: string,
+  replacement: "\\&" | "&amp;",
+): string {
+  return str.replace(
+    /&(?=(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);)/g,
+    replacement,
+  );
+}
+
+function markdownDestination(value: string): string {
+  let raw = protectEntityLikeAmpersands(value, "&amp;");
+  raw = raw.replace(/\r/g, "&#13;").replace(/\n/g, "&#10;");
+  const needsAngle = /[\s()<>\\]/.test(raw);
+  return needsAngle
+    ? `<${raw.replace(/([<>\\])/g, "\\$1")}>`
+    : raw;
+}
+
+function markdownTitle(value: string): string {
+  let raw = protectEntityLikeAmpersands(value, "&amp;");
+  raw = raw.replace(/\r/g, "&#13;").replace(/\n/g, "&#10;");
+  return raw.replace(/(["\\])/g, "\\$1");
+}
+
+function encodeBoundaryWhitespace(value: string): string {
+  return value.replace(/ /g, "&#32;").replace(/\t/g, "&#9;");
+}
+
+function longestCharacterRun(value: string, character: "`" | "~"): number {
+  let longest = 0;
+  let current = 0;
+  for (const char of value) {
+    if (char === character) {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+  return longest;
+}
+
+function safeCodeFence(
+  content: string,
+  language: string,
+  preferred: "```" | "~~~",
+): string {
+  // CommonMark forbids backticks anywhere in a backtick-fence info string.
+  // A tilde info string that itself starts with `~` requires a separating
+  // space, which markdown-it retains as part of `token.info`. Prefer the
+  // alternate delimiter so the PM attribute reparses exactly. If both
+  // delimiter constraints apply, there is no lossless CommonMark encoding;
+  // refuse instead of silently changing the language attribute.
+  const hasBacktick = language.includes("`");
+  const startsWithTilde = language.startsWith("~");
+  if (hasBacktick && startsWithTilde) {
+    throw new Error(
+      "Code-block language cannot start with '~' and contain a backtick",
+    );
+  }
+  let character = preferred[0] as "`" | "~";
+  if (character === "`" && hasBacktick) character = "~";
+  if (character === "~" && startsWithTilde) character = "`";
+  return character.repeat(
+    Math.max(3, longestCharacterRun(content, character) + 1),
+  );
 }
 
 function esc(str: string, startOfLine = false, tagBoundaryAtStart = startOfLine): string {
   str = str.replace(/[`*\\[\]_]/g, "\\$&");
   str = escapeTildeRuns(str);
+  // Literal entity-looking text must remain literal text. markdown-it decodes
+  // `&nbsp;`, `&#160;`, etc. during parse, so a user typing those characters
+  // would otherwise get a different document after save/reload. Protect the
+  // ampersand before encoding actual NBSP characters on the next line.
+  str = protectEntityLikeAmpersands(str, "\\&");
   str = str.replace(/\u00a0/g, "&nbsp;");
   if (startOfLine)
-    str = str.replace(/^[#\-*+>]/, "\\$&").replace(/^(\s*\d+)\./, "$1\\.");
+    str = str
+      .replace(/^[#\-*+>]/, "\\$&")
+      .replace(/^(\s*\d+)([.)])/, "$1\\$2");
   str = escapeTagLikeHashes(str, tagBoundaryAtStart);
   return str;
 }
@@ -176,239 +253,664 @@ function isInnerLineStart(out: string): boolean {
   // text as SOL) only ADD a backslash escape, which is benign on
   // round-trip; false negatives (missing a real SOL) are the bug
   // we're trying to avoid.
-  return /^[ \t>]*(?:[-*+]\s+|\d+\.\s+)?(?:\[[ xX]\]\s+)?$/.test(lastLine);
+  return /^[ \t>]*(?:[-*+]\s+|\d+[.)]\s+)?(?:\[[ xX]\]\s+)?$/.test(lastLine);
 }
 
 // ── Serializer state ──
 
 export type NodeSer = (state: SerState, node: PMNode, parent?: PMNode, index?: number) => void;
 
-/** Compute keys of marks whose ranges interleave (overlap-but-not-nest)
- *  another mark's range within the given inline parent. Returns the
- *  set of "type::JSON(attrs)" keys for marks needing HTML-form emit.
- *
- *  Range = [first child index where mark appears, last child index + 1).
- *  Marks of the same type+attrs across non-contiguous text runs are
- *  collapsed into a single range - rare in practice and harmless even
- *  when it happens (the collapsed range can only be MORE conservatively
- *  flagged as overlapping, not less). */
-function computeOverlapKeys(parent: PMNode): Set<string> {
-  type Range = { start: number; end: number };
-  // Track ALL contiguous ranges per mark key (not a single merged
-  // range). When the overlap-resolver plugin smart-splits a previously
-  // overlapping mark, both em and strong end up with multiple non-
-  // contiguous runs separated by unmarked whitespace. Merging those
-  // runs into a single range incorrectly re-flags overlap; the
-  // serializer would emit HTML form even though the doc is now
-  // pure-markdown-representable.
-  const allRanges = new Map<string, Range[]>();
-  const open = new Map<string, Range>();
-  let i = 0;
-  parent.forEach((child) => {
-    const childKeys = new Set<string>();
-    if (child.isText && child.marks.length) {
-      for (const mark of child.marks) {
-        childKeys.add(SerState.markKey(mark));
+type DelimiterBoundaryFallbacks = Map<number, Set<string>>;
+const unknownDelimiterBoundary = Symbol("unknown-delimiter-boundary");
+type DelimiterBoundary = string | null | typeof unknownDelimiterBoundary;
+
+const unicodePunctuationOrSymbol = /[\p{P}\p{S}]/u;
+
+function firstCodePoint(value: string): string | null {
+  for (const character of value) return character;
+  return null;
+}
+
+function lastCodePoint(value: string): string | null {
+  let result: string | null = null;
+  for (const character of value) result = character;
+  return result;
+}
+
+/** Match markdown-it's whitespace classification used by scanDelims(). */
+function isDelimiterWhitespace(character: string | null): boolean {
+  if (character === null) return true;
+  const code = character.codePointAt(0)!;
+  if (code >= 0x2000 && code <= 0x200a) return true;
+  return (
+    code === 0x09 ||
+    code === 0x0a ||
+    code === 0x0b ||
+    code === 0x0c ||
+    code === 0x0d ||
+    code === 0x20 ||
+    code === 0xa0 ||
+    code === 0x1680 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000
+  );
+}
+
+function isDelimiterPunctuation(character: string | null): boolean {
+  return character !== null && unicodePunctuationOrSymbol.test(character);
+}
+
+function delimiterFlags(
+  before: string | null,
+  after: string | null,
+  canSplitWord: boolean,
+): { canOpen: boolean; canClose: boolean } {
+  const beforeWhitespace = isDelimiterWhitespace(before);
+  const afterWhitespace = isDelimiterWhitespace(after);
+  const beforePunctuation = isDelimiterPunctuation(before);
+  const afterPunctuation = isDelimiterPunctuation(after);
+  const leftFlanking =
+    !afterWhitespace &&
+    (!afterPunctuation || beforeWhitespace || beforePunctuation);
+  const rightFlanking =
+    !beforeWhitespace &&
+    (!beforePunctuation || afterWhitespace || afterPunctuation);
+  return {
+    canOpen:
+      leftFlanking &&
+      (canSplitWord || !rightFlanking || beforePunctuation),
+    canClose:
+      rightFlanking &&
+      (canSplitWord || !leftFlanking || afterPunctuation),
+  };
+}
+
+/**
+ * The character category at an inline node edge. Text covers the ordinary
+ * editing path. Known atoms return the first/last character of their emitted
+ * Markdown form. Unknown inline nodes return a sentinel: using HTML is safer
+ * than claiming a delimiter position we cannot prove representable.
+ */
+function inlineBoundaryCharacter(
+  node: PMNode,
+  side: "first" | "last",
+): DelimiterBoundary {
+  if (node.isText) {
+    return (side === "first"
+      ? firstCodePoint(node.text ?? "")
+      : lastCodePoint(node.text ?? "")) ?? unknownDelimiterBoundary;
+  }
+  switch (node.type.name) {
+    case "hard_break":
+      // Edge/consecutive/heading hard breaks use `<br>` because CommonMark's
+      // backslash-newline form is not valid at a block edge. The emitted edge
+      // character is therefore context-dependent, just like a softbreak.
+      return unknownDelimiterBoundary;
+    case "softbreak":
+      // Its representation is context-dependent (`\n` or `<br>`).
+      return unknownDelimiterBoundary;
+    case "image":
+      return side === "first" ? "!" : ")";
+    case "wikilink":
+      return side === "first" ? "[" : "]";
+    case "obsidian_embed_inline":
+      return side === "first" ? "!" : "]";
+    case "obsidian_tag": {
+      // The tag serializer may insert a boundary space based on emitted state.
+      return unknownDelimiterBoundary;
+    }
+    case "inline_math":
+      return "$";
+    case "inline_footnote":
+      return side === "first" ? "^" : "]";
+    case "block_id": {
+      if (side === "first") return "^";
+      return lastCodePoint(String(node.attrs.id ?? "")) ?? "^";
+    }
+    default:
+      return unknownDelimiterBoundary;
+  }
+}
+
+function adjacentBoundaryCharacter(
+  parent: PMNode,
+  index: number,
+  direction: -1 | 1,
+): DelimiterBoundary {
+  const adjacentIndex = index + (direction < 0 ? -1 : 0);
+  return adjacentIndex >= 0 && adjacentIndex < parent.childCount
+    ? inlineBoundaryCharacter(
+        parent.child(adjacentIndex),
+        direction < 0 ? "last" : "first",
+      )
+    : null;
+}
+
+function markedRunEdge(
+  parent: PMNode,
+  start: number,
+  end: number,
+  side: "first" | "last",
+): { character: DelimiterBoundary; expelledWhitespace: boolean } {
+  const direction = side === "first" ? 1 : -1;
+  let expelledWhitespace = false;
+  for (
+    let index = side === "first" ? start : end - 1;
+    index >= start && index < end;
+    index += direction
+  ) {
+    const node = parent.child(index);
+    if (!node.isText) {
+      return {
+        character: inlineBoundaryCharacter(node, side),
+        expelledWhitespace,
+      };
+    }
+    const characters = Array.from(node.text ?? "");
+    if (side === "last") characters.reverse();
+    for (const character of characters) {
+      if (isDelimiterWhitespace(character)) {
+        expelledWhitespace = true;
+        continue;
       }
+      return { character, expelledWhitespace };
     }
-    // Close any open run whose mark isn't present on this child.
-    for (const [key, range] of open) {
-      if (!childKeys.has(key)) {
-        const list = allRanges.get(key) ?? [];
-        list.push(range);
-        allRanges.set(key, list);
-        open.delete(key);
-      }
+  }
+  return { character: unknownDelimiterBoundary, expelledWhitespace };
+}
+
+function markdownDelimiterFor(
+  mark: Mark,
+  canonicalForm: Required<CanonicalFormOptions>,
+): string | null {
+  switch (mark.type.name) {
+    case "strong":
+      return canonicalForm.bold;
+    case "em":
+      return canonicalForm.italic;
+    case "strikethrough":
+      return "~~";
+    case "highlight":
+      return mark.attrs.color || mark.attrs.html ? null : "==";
+    default:
+      return null;
+  }
+}
+
+function inlineDelimiterSearchText(node: PMNode): string | null {
+  if (node.isText) return node.text ?? "";
+  switch (node.type.name) {
+    case "hard_break":
+    case "softbreak":
+      return "";
+    case "image":
+    case "wikilink":
+    case "obsidian_embed_inline":
+    case "obsidian_tag":
+    case "inline_math":
+    case "inline_footnote":
+    case "block_id":
+      // We only need to know whether the emitted atom can contain the
+      // delimiter, so inspecting every string attr is conservative and exact
+      // for this purpose without duplicating each atom's full serializer.
+      return JSON.stringify(node.attrs);
+    default:
+      return null;
+  }
+}
+
+function markedRunContains(
+  parent: PMNode,
+  start: number,
+  end: number,
+  needle: string,
+): boolean | null {
+  let text = "";
+  for (let index = start; index < end; index++) {
+    const childText = inlineDelimiterSearchText(parent.child(index));
+    if (childText === null) return null;
+    text += childText;
+    if (text.includes(needle)) return true;
+    if (text.length > needle.length) text = text.slice(-(needle.length - 1));
+  }
+  return false;
+}
+
+function markedRunIncludesMark(
+  parent: PMNode,
+  start: number,
+  end: number,
+  markName: string,
+): boolean {
+  for (let index = start; index < end; index++) {
+    if (parent.child(index).marks.some((mark) => mark.type.name === markName)) {
+      return true;
     }
-    // Open or extend a run for each mark on this child.
-    for (const key of childKeys) {
-      const r = open.get(key);
-      if (r) r.end = i + 1;
-      else open.set(key, { start: i, end: i + 1 });
+  }
+  return false;
+}
+
+function nestedDelimiterBoundaryOverrides(
+  parent: PMNode,
+  mark: Mark,
+  start: number,
+  end: number,
+  canonicalForm: Required<CanonicalFormOptions>,
+): { before: boolean; first: boolean; last: boolean; after: boolean } {
+  const result = { before: false, first: false, last: false, after: false };
+  const delimiter = markdownDelimiterFor(mark, canonicalForm);
+  if (delimiter === null) return result;
+  const ordered = parent.child(start).marks
+    .filter((candidate) => markdownDelimiterFor(candidate, canonicalForm) !== null)
+    .slice()
+    .sort((left, right) => {
+      const leftRank = markSpecs[left.type.name]?.rank ?? 100;
+      const rightRank = markSpecs[right.type.name]?.rank ?? 100;
+      return leftRank - rightRank;
+    });
+  const ownIndex = ordered.findIndex((candidate) => candidate.eq(mark));
+  if (ownIndex < 0) return result;
+  const previousMarks = start > 0 ? parent.child(start - 1).marks : [];
+  const nextMarks = end < parent.childCount ? parent.child(end).marks : [];
+
+  for (let index = 0; index < ordered.length; index++) {
+    if (index === ownIndex) continue;
+    const peer = ordered[index];
+    const peerDelimiter = markdownDelimiterFor(peer, canonicalForm);
+    // Identical delimiter characters form one markdown-it run (`***`), whose
+    // flanking context is the semantic content outside the complete run.
+    if (peerDelimiter === null || peerDelimiter[0] === delimiter[0]) continue;
+    const peerStartsHere = !peer.isInSet(previousMarks);
+    const peerEndsHere =
+      Boolean(peer.isInSet(parent.child(end - 1).marks)) &&
+      !peer.isInSet(nextMarks);
+    if (peerStartsHere) {
+      if (index < ownIndex) result.before = true;
+      else result.first = true;
     }
-    i++;
-  });
-  // Flush remaining open runs.
-  for (const [key, range] of open) {
-    const list = allRanges.get(key) ?? [];
-    list.push(range);
-    allRanges.set(key, list);
+    if (peerEndsHere) {
+      if (index < ownIndex) result.after = true;
+      else result.last = true;
+    }
+  }
+  return result;
+}
+
+function markedRunNeedsHtml(
+  parent: PMNode,
+  mark: Mark,
+  start: number,
+  end: number,
+  canonicalForm: Required<CanonicalFormOptions>,
+): boolean {
+  const delimiter = markdownDelimiterFor(mark, canonicalForm);
+  if (delimiter === null) return false;
+
+  // Obsidian comments are opaque to inner Markdown tokenization. Any
+  // delimiter mark sharing their text must wrap the comment in an HTML mark;
+  // putting Markdown delimiters inside `%%...%%` turns them into literal text.
+  if (markedRunIncludesMark(parent, start, end, "comment")) return true;
+
+  // The Obsidian highlight rule pairs with the first raw closing `==`.
+  // There is no Markdown escape for `=` in this syntax, so literal content
+  // containing the delimiter requires the equivalent HTML mark.
+  if (
+    mark.type.name === "highlight" &&
+    markedRunContains(parent, start, end, "==") !== false
+  ) {
+    return true;
+  }
+  if (mark.type.name === "highlight") return false;
+
+  const firstEdge = markedRunEdge(parent, start, end, "first");
+  const lastEdge = markedRunEdge(parent, start, end, "last");
+  if (
+    firstEdge.character === unknownDelimiterBoundary ||
+    lastEdge.character === unknownDelimiterBoundary
+  ) {
+    return true;
   }
 
-  const overlap = new Set<string>();
+  const adjacentBefore = adjacentBoundaryCharacter(parent, start, -1);
+  const adjacentAfter = adjacentBoundaryCharacter(parent, end, 1);
+  if (
+    adjacentBefore === unknownDelimiterBoundary ||
+    adjacentAfter === unknownDelimiterBoundary
+  ) {
+    return true;
+  }
+  const nested = nestedDelimiterBoundaryOverrides(
+    parent,
+    mark,
+    start,
+    end,
+    canonicalForm,
+  );
+  const punctuationBoundary = "!";
+  const before = nested.before
+    ? punctuationBoundary
+    : firstEdge.expelledWhitespace ? " " : adjacentBefore;
+  const first = nested.first ? punctuationBoundary : firstEdge.character;
+  const last = nested.last ? punctuationBoundary : lastEdge.character;
+  const after = nested.after
+    ? punctuationBoundary
+    : lastEdge.expelledWhitespace ? " " : adjacentAfter;
+  const canSplitWord = delimiter[0] !== "_";
+  return (
+    !delimiterFlags(before, first, canSplitWord).canOpen ||
+    !delimiterFlags(last, after, canSplitWord).canClose
+  );
+}
 
-  // CRITERION 1 - non-whitespace-separated non-contiguous runs.
-  //
-  // A mark with multiple contiguous runs in the same inline parent
-  // can be serialized in markdown form ONLY if the gaps between its
-  // runs contain whitespace (so the close-delim sits next to a
-  // non-letter char, satisfying CommonMark right-flanking). When the
-  // gap is just letter-only text (e.g., `[em]45[strong]67[em]89`),
-  // emitting markdown produces `*45*67*89*` and markdown-it can't
-  // correctly re-pair the alternating `*`s - the inner content's
-  // delim becomes unpaired and the outer surface produces `<em>`-
-  // less reparse + literal `*` text, breaking round-trip.
-  //
-  // Flag this mark for HTML form (`<em>` / `<strong>`) so each
-  // non-contig run gets a clean tag pair that markdown-it accepts
-  // independently.
-  for (const [key, runs] of allRanges) {
-    if (runs.length < 2) continue;
-    let needsHtml = false;
-    for (let r = 0; r < runs.length - 1; r++) {
-      const gapStart = runs[r].end;
-      const gapEnd = runs[r + 1].start;
-      let gapHasWhitespace = false;
-      for (let j = gapStart; j < gapEnd; j++) {
-        const child = parent.maybeChild(j);
-        if (!child) continue;
-        if (child.isText && /\s/.test(child.text ?? "")) {
-          gapHasWhitespace = true;
-          break;
-        }
+/**
+ * Map unsafe Markdown mark runs by their semantic start child. A mark can
+ * occur in several disjoint runs with identical attrs; keeping the decision
+ * per run preserves Markdown for safe spans while using HTML only where the
+ * parser's delimiter grammar cannot represent the exact interval.
+ */
+function computeDelimiterBoundaryFallbacks(
+  parent: PMNode,
+  canonicalForm: Required<CanonicalFormOptions>,
+): DelimiterBoundaryFallbacks {
+  type OpenRun = { mark: Mark; start: number };
+  const openRuns = new Map<string, OpenRun>();
+  const fallbacks: DelimiterBoundaryFallbacks = new Map();
+
+  for (let index = 0; index <= parent.childCount; index++) {
+    const marks = index < parent.childCount
+      ? parent.child(index).marks.filter(
+          (mark) => markdownDelimiterFor(mark, canonicalForm) !== null,
+        )
+      : [];
+    const current = new Map(
+      marks.map((mark) => [SerState.markKey(mark), mark] as const),
+    );
+
+    for (const [key, run] of openRuns) {
+      if (current.has(key)) continue;
+      if (markedRunNeedsHtml(parent, run.mark, run.start, index, canonicalForm)) {
+        const starts = fallbacks.get(run.start) ?? new Set<string>();
+        starts.add(key);
+        fallbacks.set(run.start, starts);
       }
-      if (!gapHasWhitespace) {
-        needsHtml = true;
+      openRuns.delete(key);
+    }
+    for (const [key, mark] of current) {
+      if (!openRuns.has(key)) openRuns.set(key, { mark, start: index });
+    }
+  }
+  return fallbacks;
+}
+
+/** Compute mark keys that need HTML-form emission.
+ *
+ * The analysis is linear in inline children plus total mark occurrences. A
+ * previous implementation compared every distinct mark key with every other
+ * key, making a paragraph with N distinct links O(N^2) even though none could
+ * overlap. Here stack transitions detect crossings, a whitespace prefix sum
+ * handles split runs, and a disjoint-set expands flags through co-marked
+ * components. */
+function computeOverlapKeys(parent: PMNode): Set<string> {
+  type Range = { start: number; end: number };
+
+  const allRanges = new Map<string, Range[]>();
+  const open = new Map<string, Range>();
+  const childKeySets: Set<string>[] = [];
+  const nestedOpaqueHighlights = new Set<string>();
+
+  // Co-mark connectivity is exactly the transitive overlap relation used by
+  // the old flag-propagation pass. Unioning every child mark set as a star
+  // avoids materializing the potentially quadratic overlap graph.
+  const dsuParent = new Map<string, string>();
+  const find = (key: string): string => {
+    let root = dsuParent.get(key) ?? key;
+    while (root !== (dsuParent.get(root) ?? root)) {
+      root = dsuParent.get(root)!;
+    }
+    let cursor = key;
+    while (cursor !== root) {
+      const next = dsuParent.get(cursor) ?? cursor;
+      dsuParent.set(cursor, root);
+      cursor = next;
+    }
+    return root;
+  };
+  const ensure = (key: string): void => {
+    if (!dsuParent.has(key)) dsuParent.set(key, key);
+  };
+  const union = (left: string, right: string): void => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) dsuParent.set(rightRoot, leftRoot);
+  };
+
+  let previousKeys = new Set<string>();
+  let childIndex = 0;
+  parent.forEach((child) => {
+    const marks = child.isText && child.marks.length
+      ? child.marks.slice().sort((a, b) => {
+          const ra = markSpecs[a.type.name]?.rank ?? 100;
+          const rb = markSpecs[b.type.name]?.rank ?? 100;
+          return ra - rb;
+        })
+      : [];
+    const childKeys = new Set<string>();
+    let firstKey: string | null = null;
+
+    for (const mark of marks) {
+      const key = SerState.markKey(mark);
+      childKeys.add(key);
+      ensure(key);
+      if (firstKey === null) firstKey = key;
+      else union(firstKey, key);
+      if (
+        mark.type.name === "highlight" &&
+        !mark.attrs.html &&
+        !mark.attrs.color &&
+        marks.length > 1
+      ) {
+        nestedOpaqueHighlights.add(key);
+      }
+    }
+
+    // Only marks active on the previous child can close here. This makes run
+    // tracking proportional to represented mark occurrences, not all keys.
+    for (const key of previousKeys) {
+      if (childKeys.has(key)) continue;
+      const range = open.get(key);
+      if (!range) continue;
+      const ranges = allRanges.get(key) ?? [];
+      ranges.push(range);
+      allRanges.set(key, ranges);
+      open.delete(key);
+    }
+    for (const key of childKeys) {
+      const range = open.get(key);
+      if (range) range.end = childIndex + 1;
+      else open.set(key, { start: childIndex, end: childIndex + 1 });
+    }
+
+    childKeySets.push(childKeys);
+    previousKeys = childKeys;
+    childIndex += 1;
+  });
+
+  for (const [key, range] of open) {
+    const ranges = allRanges.get(key) ?? [];
+    ranges.push(range);
+    allRanges.set(key, ranges);
+  }
+
+  // Markdown `==...==` is opaque to inner inline parsing. Keep the PM attr
+  // cosmetic (`html:false`) but emit this span as `<mark>` whenever another
+  // mark shares its text; the parser maps HTML back to the same PM mark.
+  const overlap = new Set<string>(nestedOpaqueHighlights);
+
+  // A repeated Markdown-delimited mark nested inside another delimiter run is
+  // safe only when the intervening source is whitespace-delimited on both
+  // sides. Interior whitespace is not sufficient: `***a*words here*b***`
+  // remains ambiguous because both inner `*` boundaries touch word chars.
+  // Inspecting the two boundary children keeps every gap query O(1).
+  for (const [key, runs] of allRanges) {
+    for (let runIndex = 0; runIndex < runs.length - 1; runIndex++) {
+      const gapStart = runs[runIndex].end;
+      const gapEnd = runs[runIndex + 1].start;
+      const firstGapChild = parent.maybeChild(gapStart);
+      const lastGapChild = parent.maybeChild(gapEnd - 1);
+      const safelyDelimited = Boolean(
+        gapStart < gapEnd &&
+        firstGapChild?.isText &&
+        /^\s/.test(firstGapChild.text ?? "") &&
+        lastGapChild?.isText &&
+        /\s$/.test(lastGapChild.text ?? ""),
+      );
+      if (!safelyDelimited) {
+        overlap.add(key);
         break;
       }
     }
-    if (needsHtml) overlap.add(key);
   }
 
   if (allRanges.size < 2) return overlap;
 
-  // CRITERION 2 - strict interleave (the original detection).
-  const entries = [...allRanges.entries()];
-  for (let a = 0; a < entries.length; a++) {
-    for (let b = a + 1; b < entries.length; b++) {
-      const [keyA, listA] = entries[a];
-      const [keyB, listB] = entries[b];
-      outer: for (const A of listA) {
-        for (const B of listB) {
-          const interleave =
-            (A.start < B.start && B.start < A.end && A.end < B.end) ||
-            (B.start < A.start && A.start < B.end && B.end < A.end);
-          if (interleave) {
-            overlap.add(keyA);
-            overlap.add(keyB);
-            break outer;
-          }
+  // A strict range interleave is precisely a stack transition where a mark
+  // closes below a mark that remains active. Scan each active stack bottom-up:
+  // every staying mark above a closer and every such closer need HTML form.
+  // Pending closers are each visited once, avoiding the old nested scans.
+  let stack: string[] = [];
+  for (const targetSet of childKeySets) {
+    const pendingClosers: string[] = [];
+    let hasCloserBelow = false;
+    for (const key of stack) {
+      if (targetSet.has(key)) {
+        if (hasCloserBelow) overlap.add(key);
+        if (pendingClosers.length > 0) {
+          for (const closingKey of pendingClosers) overlap.add(closingKey);
+          pendingClosers.length = 0;
         }
+      } else {
+        pendingClosers.push(key);
+        hasCloserBelow = true;
       }
+    }
+
+    stack = stack.filter((key) => targetSet.has(key));
+    const active = new Set(stack);
+    for (const key of targetSet) {
+      if (active.has(key)) continue;
+      stack.push(key);
+      active.add(key);
     }
   }
 
-  // CRITERION 4 - close-and-reopen detection.
-  //
-  // When the renderInline mark stack needs to close a mark M that's
-  // BELOW other marks N in the open order, the serializer closes the
-  // Ns first (top-down), closes M, then reopens the Ns. If any of
-  // the Ns are markdown-form (em/strong), their REOPEN delimiter
-  // lands right after M's close - typically against an HTML tag
-  // (`</font>**`) where flanking rules say `**` can't open. Re-parse
-  // then treats it as literal text.
-  //
-  // Simulate active stack progression. Any mark that would be in the
-  // reopen position (an N above a closing M) gets flagged for HTML
-  // form so the reopen delimiter is `<strong>`/`<em>` instead of
-  // `**`/`*` - HTML opens have no flanking constraint.
-  //
-  // Also flag the closing mark M when its close would land between
-  // the original close-of-N and the reopen-of-N - same reasoning.
-  // Conservatively flagging both sides of the close-and-reopen event
-  // produces correct, round-trippable output.
-  {
-    const stack: string[] = [];
-    const childKeySets = ((): Set<string>[] => {
-      const sets: Set<string>[] = [];
-      parent.forEach((child) => {
-        const s = new Set<string>();
-        if (child.isText && child.marks.length) {
-          // Match the rank-sort renderInline applies. The stack
-          // order is determined by open ORDER (rank-sorted within
-          // each text-node's mark set), so simulating with rank-sort
-          // matches reality.
-          const sorted = child.marks.slice().sort((a, b) => {
-            const ra = markSpecs[a.type.name]?.rank ?? 100;
-            const rb = markSpecs[b.type.name]?.rank ?? 100;
-            return ra - rb;
-          });
-          for (const m of sorted) s.add(SerState.markKey(m));
-        }
-        sets.push(s);
-      });
-      return sets;
-    })();
-    for (const targetSet of childKeySets) {
-      // Close pass - mirror renderInline's close-and-reopen logic.
-      for (let j = stack.length - 1; j >= 0; j--) {
-        if (targetSet.has(stack[j])) continue;
-        // Inners above j that should stay (in target) get reopened
-        // around the close - flag them and the closing mark.
-        for (let k = stack.length - 1; k > j; k--) {
-          if (targetSet.has(stack[k])) {
-            overlap.add(stack[k]);
-            overlap.add(stack[j]);
-          }
-        }
-        stack.splice(j, 1);
-        j = stack.length;
-      }
-      // Open pass - push new marks (in target sort order, matching
-      // renderInline's open loop).
-      for (const key of targetSet) {
-        if (!stack.includes(key)) stack.push(key);
-      }
-    }
-  }
-
-  // CRITERION 3 - flag-propagation. When CRITERION 1 forces a mark
-  // (typically em) to HTML form because its non-contig runs aren't
-  // whitespace-separated, a sibling mark (typically strong) whose
-  // markdown delimiter would land at a non-flanking position
-  // ALSO needs HTML form. Concretely: serializing
-  // `**<em>45</em>67<em>89</em>**` fails because the outer `**`
-  // delims are preceded/followed by punctuation `<`/`>` and a
-  // non-ws non-punct char (the `3` and end-of-input edge), which
-  // breaks CommonMark right/left-flanking rules. With both marks in
-  // HTML form (`<strong><em>45</em>67<em>89</em></strong>`), no
-  // flanking concerns apply.
-  //
-  // Propagation rule: any mark whose ANY contig run overlaps with
-  // an already-flagged mark's range gets flagged too. Conservative
-  // and idempotent - only marks that ALREADY share boundary issues
-  // with a flagged mark get pulled in.
+  // Expand through connected co-mark components. This is equivalent to the
+  // old fixed-point propagation over overlapping runs, without pairwise key
+  // or range comparisons.
   if (overlap.size > 0) {
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const flaggedKey of [...overlap]) {
-        const flaggedRuns = allRanges.get(flaggedKey)!;
-        for (const [otherKey, otherRuns] of allRanges) {
-          if (overlap.has(otherKey)) continue;
-          let touches = false;
-          for (const fr of flaggedRuns) {
-            for (const or of otherRuns) {
-              if (or.start < fr.end && fr.start < or.end) {
-                touches = true;
-                break;
-              }
-            }
-            if (touches) break;
-          }
-          if (touches) {
-            overlap.add(otherKey);
-            changed = true;
-          }
-        }
-      }
+    const flaggedRoots = new Set<string>();
+    for (const key of overlap) flaggedRoots.add(find(key));
+    for (const key of allRanges.keys()) {
+      if (flaggedRoots.has(find(key))) overlap.add(key);
     }
   }
   return overlap;
 }
 
+interface SerOutputSnapshot {
+  output: string;
+  outputAtBlank: boolean;
+  outputLastCode: number;
+  outputPrefixTail: string | null;
+  inlineMathClosePending: boolean;
+}
+
 export class SerState {
-  out = "";
+  private output = "";
+  private outputAtBlank = true;
+  private outputLastCode = -1;
+  private outputPrefixTail: string | null = "";
+
+  get out(): string { return this.output; }
+
+  resetOutput(value: string): void {
+    this.output = value;
+    this.outputAtBlank = value.length === 0 || value.endsWith("\n");
+    this.outputLastCode = value.length > 0 ? value.charCodeAt(value.length - 1) : -1;
+    const lastNewline = value.lastIndexOf("\n");
+    const tail = lastNewline >= 0 ? value.slice(lastNewline + 1) : value;
+    this.outputPrefixTail = isInnerLineStart(tail) ? tail : null;
+  }
+
+  snapshotOutput(): SerOutputSnapshot {
+    return {
+      output: this.output,
+      outputAtBlank: this.outputAtBlank,
+      outputLastCode: this.outputLastCode,
+      outputPrefixTail: this.outputPrefixTail,
+      inlineMathClosePending: this.inlineMathClosePending,
+    };
+  }
+
+  restoreOutput(snapshot: SerOutputSnapshot): void {
+    this.output = snapshot.output;
+    this.outputAtBlank = snapshot.outputAtBlank;
+    this.outputLastCode = snapshot.outputLastCode;
+    this.outputPrefixTail = snapshot.outputPrefixTail;
+    this.inlineMathClosePending = snapshot.inlineMathClosePending;
+  }
+
+  replaceOutputSince(snapshot: SerOutputSnapshot, replacement: string): void {
+    this.restoreOutput(snapshot);
+    // `replacement` is already rendered output and may already include the
+    // active block delimiter. Re-entering through write() would prepend that
+    // delimiter a second time inside blockquotes/callouts.
+    this.appendOutput(replacement);
+  }
+
+  private appendOutput(value: string): void {
+    if (!value) return;
+    this.output += value;
+    this.outputLastCode = value.charCodeAt(value.length - 1);
+    const lastNewline = value.lastIndexOf("\n");
+    if (lastNewline >= 0) {
+      const tail = value.slice(lastNewline + 1);
+      this.outputAtBlank = tail.length === 0;
+      this.outputPrefixTail = isInnerLineStart(tail) ? tail : null;
+    } else {
+      this.outputAtBlank = false;
+      if (this.outputPrefixTail !== null) {
+        const tail = this.outputPrefixTail + value;
+        this.outputPrefixTail = isInnerLineStart(tail) ? tail : null;
+      }
+    }
+  }
+
+  lastOutputCharacter(): string {
+    return this.outputLastCode < 0 ? "" : String.fromCharCode(this.outputLastCode);
+  }
+
+  atTagBoundary(): boolean {
+    const code = this.outputLastCode;
+    return code < 0 || code === 0x20 || code === 0x09 || code === 0x0d || code === 0x0a;
+  }
+
+  atInnerLineStart(): boolean { return this.outputPrefixTail !== null; }
+
+  /**
+   * Spaces and tabs immediately before a Markdown line break are syntax: one
+   * is discarded and two or more create a hard break. Encode only that
+   * boundary run so ordinary editor text survives exactly.
+   */
+  encodeTrailingBreakWhitespace(): void {
+    const match = /[ \t]+$/.exec(this.output);
+    if (!match) return;
+    this.resetOutput(
+      this.output.slice(0, -match[0].length) +
+        encodeBoundaryWhitespace(match[0]),
+    );
+  }
+
   closed: PMNode | false = false;
   delim = "";
   canonicalForm: Required<CanonicalFormOptions>;
@@ -421,6 +923,7 @@ export class SerState {
    *  instead, which my htmlInlineTagsPlugin handles via any-match
    *  close. Set is repopulated per renderInline() call. */
   overlapKeys: Set<string> = new Set();
+  delimiterBoundaryFallbacks: DelimiterBoundaryFallbacks = new Map();
 
   constructor(options?: CanonicalFormOptions) {
     this.canonicalForm = { ...CANONICAL_DEFAULTS, ...(options ?? {}) };
@@ -452,9 +955,14 @@ export class SerState {
    *    highlight (`==` → `<mark>`)
    *  Marks already in HTML form (font, underline, sup, sub, kbd)
    *  don't need this branch - their spec.open IS the HTML tag. */
-  markOpen(mark: Mark, parent: PMNode, index: number): string {
+  markOpen(
+    mark: Mark,
+    parent: PMNode,
+    index: number,
+    forceHtml = false,
+  ): string {
     const name = mark.type.name;
-    if (this.isOverlap(mark)) {
+    if (this.isOverlap(mark) || forceHtml) {
       if (name === "strong") return "<strong>";
       if (name === "em") return "<em>";
       if (name === "strikethrough") return "<s>";
@@ -472,9 +980,14 @@ export class SerState {
       : spec.open;
   }
 
-  markClose(mark: Mark, parent: PMNode, index: number): string {
+  markClose(
+    mark: Mark,
+    parent: PMNode,
+    index: number,
+    forceHtml = false,
+  ): string {
     const name = mark.type.name;
-    if (this.isOverlap(mark)) {
+    if (this.isOverlap(mark) || forceHtml) {
       if (name === "strong") return "</strong>";
       if (name === "em") return "</em>";
       if (name === "strikethrough") return "</s>";
@@ -490,20 +1003,20 @@ export class SerState {
 
   // ── primitives ──
 
-  atBlank(): boolean { return /(^|\n)$/.test(this.out); }
+  atBlank(): boolean { return this.outputAtBlank; }
 
   flushClose(size = 2) {
     if (!this.closed) return;
-    if (!this.atBlank()) this.out += "\n";
-    for (let i = 1; i < size; i++) this.out += this.delim + "\n";
+    if (!this.atBlank()) this.appendOutput("\n");
+    for (let i = 1; i < size; i++) this.appendOutput(this.delim + "\n");
     this.closed = false;
   }
 
   /** Write raw content. Prepends delim if at line start. */
   write(s: string) {
     this.flushClose();
-    if (this.delim && this.atBlank()) this.out += this.delim;
-    this.out += s;
+    if (this.delim && this.atBlank()) this.appendOutput(this.delim);
+    this.appendOutput(s);
   }
 
   /** Write text with optional escaping and per-line delim. */
@@ -528,22 +1041,22 @@ export class SerState {
         i > 0 ||
         this.atBlank() ||
         !!this.closed ||
-        isInnerLineStart(this.out);
+        this.atInnerLineStart();
       this.flushClose();
       if (i > 0) {
-        this.out += "\n";
-        if (this.delim) this.out += this.delim;
+        this.appendOutput("\n");
+        if (this.delim) this.appendOutput(this.delim);
       } else if (this.delim && this.atBlank()) {
-        this.out += this.delim;
+        this.appendOutput(this.delim);
       }
-      const tagBoundaryAtStart = sol || isHashTagBoundary(this.out);
-      this.out += escape ? esc(lines[i], sol, tagBoundaryAtStart) : lines[i];
+      const tagBoundaryAtStart = sol || this.atTagBoundary();
+      this.appendOutput(escape ? esc(lines[i], sol, tagBoundaryAtStart) : lines[i]);
     }
   }
 
   writeTextAfterInlineMath(text: string, escape = true) {
     let rest = text;
-    if (this.inlineMathClosePending && this.out.endsWith("$") && rest.length > 0) {
+    if (this.inlineMathClosePending && this.outputLastCode === 0x24 && rest.length > 0) {
       const first = rest.charCodeAt(0);
       if (first === 0x24 /* $ */ || isDigitCode(first)) {
         this.write(first === 0x24 /* $ */ ? "&#36;" : `&#${first};`);
@@ -573,6 +1086,12 @@ export class SerState {
   // for atoms even when their containing block is being synthesized.
   sourcePresBody: string | null = null;
   sourcePresOriginalAtoms: Set<PMNode> | null = null;
+  topLevelListOverride: {
+    node: PMNode;
+    depthIndent: string;
+    marker: string;
+    continuationColumns: number;
+  } | null = null;
 
   // ── rendering ──
 
@@ -611,7 +1130,7 @@ export class SerState {
           // nodeSer.obsidian_tag so we don't inject a space at the
           // start of a paragraph after a block close.
           if (!this.closed && !this.atBlank()) {
-            const last = this.out[this.out.length - 1];
+            const last = this.lastOutputCharacter();
             if (last && !/\s/.test(last)) this.write(" ");
           }
         }
@@ -642,8 +1161,13 @@ export class SerState {
     // Other marks (font etc.) are already HTML-form so they handle
     // overlap natively.
     this.overlapKeys = computeOverlapKeys(parent);
+    this.delimiterBoundaryFallbacks = computeDelimiterBoundaryFallbacks(
+      parent,
+      this.canonicalForm,
+    );
 
-    let active: Mark[] = [];
+    type ActiveMark = { mark: Mark; forceHtml: boolean };
+    let active: ActiveMark[] = [];
     let trailing = "";
 
     const progress = (child: PMNode | null, _off: number, index: number) => {
@@ -668,7 +1192,13 @@ export class SerState {
       let leading = trailing;
       trailing = "";
       if (child?.isText && child.text) {
-        if (marks.some((m) => markSpecs[m.type.name]?.expel)) {
+        const sharesOpaqueComment = marks.some(
+          (mark) => mark.type.name === "comment",
+        );
+        if (!sharesOpaqueComment && marks.some((m) => {
+          const expel = markSpecs[m.type.name]?.expel;
+          return typeof expel === "function" ? expel(m) : expel === true;
+        })) {
           const match = /^(\s*)(.*?)(\s*)$/s.exec(child.text);
           if (match && (match[1] || match[3])) {
             leading += match[1];
@@ -718,52 +1248,100 @@ export class SerState {
       // not in target) get filtered out of the reopen list - they
       // close as a side effect of the inner-close pass.
       for (let j = active.length - 1; j >= 0; j--) {
-        if (active[j].isInSet(marks)) continue;
+        if (active[j].mark.isInSet(marks)) continue;
         const reopenList = active
           .slice(j + 1)
-          .filter((m) => m.isInSet(marks));
+          .filter((entry) => entry.mark.isInSet(marks));
         // Close inners (top-down) so the HTML/markdown stack stays
         // well-formed when we close the target below.
         for (let k = active.length - 1; k > j; k--) {
-          this.write(this.markClose(active[k], parent, index));
+          this.write(this.markClose(
+            active[k].mark,
+            parent,
+            index,
+            active[k].forceHtml,
+          ));
         }
         // Close the unwanted mark.
-        this.write(this.markClose(active[j], parent, index));
+        this.write(this.markClose(
+          active[j].mark,
+          parent,
+          index,
+          active[j].forceHtml,
+        ));
         // Replace active[j..end] with the kept inners. Marks that
         // were above j and aren't in target are simply gone - they
         // already closed in the inner-pass above.
         active.splice(j, active.length - j, ...reopenList);
         // Reopen the kept inners (preserve original opening order).
-        for (const m of reopenList) {
-          this.write(this.markOpen(m, parent, index));
+        for (const entry of reopenList) {
+          this.write(this.markOpen(
+            entry.mark,
+            parent,
+            index,
+            entry.forceHtml,
+          ));
         }
         // Restart from new top - `j--` will fire and land at
         // active.length - 1 next iteration.
         j = active.length;
       }
 
-      // Leading whitespace (between close and open)
-      if (leading) this.write(leading);
+      // Leading whitespace (between close and open). At the start of a
+      // textblock or immediately after a line break, Markdown would trim it
+      // or reinterpret it as indentation, so emit character references
+      // through the raw writer. Whitespace expelled from a mark stays outside
+      // that mark as intended.
+      const previousSibling = index > 0 ? parent.child(index - 1) : null;
+      const followsBreak = previousSibling?.type.name === "softbreak" ||
+        previousSibling?.type.name === "hard_break";
+      if (leading) {
+        if (
+          (index === 0 || followsBreak) &&
+          !marks.some((m) => markSpecs[m.type.name]?.escape === false)
+        ) {
+          const boundary = /^[ \t]+/.exec(leading)?.[0] ?? "";
+          if (boundary) {
+            this.write(encodeBoundaryWhitespace(boundary));
+            leading = leading.slice(boundary.length);
+          }
+        }
+        if (leading) this.write(leading);
+      }
 
       // Open marks NOT currently active
       for (let j = 0; j < marks.length; j++) {
-        if (!marks[j].isInSet(active)) {
-          this.write(this.markOpen(marks[j], parent, index));
-          active.push(marks[j]);
+        if (!active.some((entry) => entry.mark.eq(marks[j]))) {
+          const forceHtml = Boolean(
+            this.delimiterBoundaryFallbacks
+              .get(index)
+              ?.has(SerState.markKey(marks[j])),
+          );
+          this.write(this.markOpen(marks[j], parent, index, forceHtml));
+          active.push({ mark: marks[j], forceHtml });
         }
       }
       if (!child) return;
 
       if (child.isText) {
         const noEsc = active.some(
-          (m) => markSpecs[m.type.name]?.escape === false,
+          (entry) => markSpecs[entry.mark.type.name]?.escape === false,
         );
-        this.writeTextAfterInlineMath(child.text!, !noEsc);
+        let text = child.text!;
+        if ((index === 0 || followsBreak) && !noEsc) {
+          const boundary = /^[ \t]+/.exec(text)?.[0] ?? "";
+          if (boundary) {
+            this.write(encodeBoundaryWhitespace(boundary));
+            text = text.slice(boundary.length);
+          }
+        }
+        if (text) this.writeTextAfterInlineMath(text, !noEsc);
       } else {
         this.renderNode(child, parent, index);
       }
     };
 
+    const startOutput = this.snapshotOutput();
     const startLen = this.out.length;
     parent.forEach((child, off, idx) => progress(child, off, idx));
     progress(null, 0, parent.childCount);
@@ -782,12 +1360,39 @@ export class SerState {
     // block_id node - that atom ALSO emits `^id` but we want it to
     // round-trip as a block_id, not be turned into escaped text.
     const lastChild = parent.lastChild;
-    if (!lastChild || lastChild.type.name !== "block_id") {
+    if (
+      lastChild?.isText &&
+      /\^[A-Za-z0-9_-]+$/.test(lastChild.text ?? "")
+    ) {
       const tail = this.out.slice(startLen);
       const m = /\^[A-Za-z0-9_-]+$/.exec(tail);
       if (m) {
-        const insertAt = startLen + tail.length - m[0].length;
-        this.out = this.out.slice(0, insertAt) + "\\" + this.out.slice(insertAt);
+        const insertAt = tail.length - m[0].length;
+        const escapedTail =
+          tail.slice(0, insertAt) + "\\" + tail.slice(insertAt);
+        this.replaceOutputSince(startOutput, escapedTail);
+      }
+    }
+
+    // Markdown parsers discard ordinary trailing spaces/tabs at the end of a
+    // textblock (and two spaces can acquire hard-break meaning). They are
+    // nevertheless normal editable text in PM. Encode only the terminal run
+    // so paragraphs, list rows, headings, and container text share one exact
+    // representation without changing explicit hard_break nodes.
+    if (
+      lastChild?.isText &&
+      !lastChild.marks.some(
+        (mark) => markSpecs[mark.type.name]?.escape === false,
+      ) &&
+      /[ \t]+$/.test(lastChild.text ?? "")
+    ) {
+      const tail = this.out.slice(startLen);
+      const encodedTail = tail.replace(
+        /[ \t]+$/,
+        encodeBoundaryWhitespace,
+      );
+      if (encodedTail !== tail) {
+        this.replaceOutputSince(startOutput, encodedTail);
       }
     }
   }
@@ -823,8 +1428,8 @@ export class SerState {
       // explains itself when someone reads the raw markdown source.
       // Each line gets the current delim so the marker renders
       // correctly inside blockquotes / callouts.
-      this.out += this.delim + "%%list-break%%\n";
-      this.out += this.delim + "\n";
+      this.appendOutput(this.delim + "%%list-break%%\n");
+      this.appendOutput(this.delim + "\n");
     }
 
     // Spacing rule for the FIRST item depends on context:
@@ -877,74 +1482,21 @@ export class SerState {
  * not ancestors).
  */
 function computeDepthIndent(
-  node: PMNode,
+  _node: PMNode,
   parent: PMNode | undefined,
   index: number | undefined,
-  bulletChar: string,
+  _bulletChar: string,
 ): string {
-  const depthRaw = (node.attrs as { depth?: unknown }).depth;
-  const depth = typeof depthRaw === "number" ? depthRaw : 0;
-  if (depth === 0 || !parent || index === undefined) return "";
+  if (!parent || index === undefined) return "";
+  const entry = flatListLayoutFor(parent)[index];
+  if (!entry || entry.effectiveDepth === 0) return "";
 
-  // Orphan-nesting guard: if the IMMEDIATE parent (depth-1) is
-  // missing, the item has no anchor in the surrounding list flow
-  // and any indent ≥ 4 characters reparses as an indented code
-  // block. The fallback indent (~2 chars per missing depth) used
-  // to push a depth≥2 orphan over the 4-space threshold and turn
-  // the user's list item into a code block on save+reload — the
-  // edit-sim harness caught this when an edit (wrap-in-callout
-  // on the immediate parent) suddenly orphaned a deeper item.
-  // Clamp orphan items to depth-0 serialization (no indent). The
-  // visible attr changes on reparse from `depth=N` to `depth=0`
-  // but the node type stays `list_item`, which is what matters
-  // for round-trip safety (and reflects what markdown can faith-
-  // fully express — there's no valid CommonMark for a depth-N
-  // list item without a preceding depth-(N-1) item).
-  let hasImmediateParent = false;
-  for (let i = index - 1; i >= 0; i--) {
-    const p = parent.child(i);
-    if (p.type.name !== "list_item") break;
-    if (p.attrs.depth < depth - 1) break;
-    if (p.attrs.depth === depth - 1) {
-      hasImmediateParent = true;
-      break;
-    }
-  }
-  if (!hasImmediateParent) return "";
-
-  let requiredColumns = 0;
-  for (let d = depth - 1; d >= 0; d--) {
-    let ancestor: PMNode | null = null;
-    let ancestorIdx = -1;
-    for (let i = index - 1; i >= 0; i--) {
-      const p = parent.child(i);
-      if (p.type.name !== "list_item") break;
-      if (p.attrs.depth < d) break;
-      if (p.attrs.depth === d) {
-        ancestor = p;
-        ancestorIdx = i;
-        break;
-      }
-    }
-    if (ancestor) {
-      // Use the BARE marker width (`- ` or `1. `, etc.) - NOT the
-      // full task marker (`- [ ] `). Task brackets are content; the
-      // continuation/nesting indent only needs to clear the bullet
-      // or number prefix. Without this distinction, a child of a
-      // task would get 6-space indent (matching `- [ ] `) and
-      // markdown-it would treat the line as a 4+ space-indented
-      // code block.
-      requiredColumns += bareMarkerWidth(ancestor, parent, ancestorIdx);
-    } else {
-      // No ancestor at this depth but immediate parent exists - a
-      // partial chain. Use 2 spaces, the bullet-marker width.
-      requiredColumns += 2;
-    }
-  }
-  const tabColumns = depth * 4;
-  return requiredColumns <= tabColumns
-    ? "\t".repeat(depth)
-    : " ".repeat(requiredColumns);
+  // Use exact columns, not tabs. CommonMark expands a tab relative to the
+  // current source column; inside blockquote/callout prefixes that column is
+  // no longer zero, so a tab that nests correctly at the document root can
+  // reparse as a depth-0 sibling under `> `. Spaces are context-independent
+  // and preserve the flat model's computed ancestry everywhere.
+  return " ".repeat(entry.requiredColumns);
 }
 
 function indentVisualWidth(indent: string): number {
@@ -954,6 +1506,50 @@ function indentVisualWidth(indent: string): number {
     else col++;
   }
   return col;
+}
+
+interface ListPrefixMetrics {
+  indentColumns: number;
+  markerColumns: number;
+  bulletMarker: "-" | "+" | "*" | null;
+  orderedNumber: number | null;
+  orderedDelimiter: "." | ")" | null;
+}
+
+/** Read only the structural prefix of an authored list-item slice. */
+function sourceListPrefixMetrics(source: string): ListPrefixMetrics | null {
+  const match = /^([ \t]*)(?:([-+*])([ \t]+)|(\d{1,9}[.)])([ \t]+))/.exec(
+    source,
+  );
+  if (!match) return null;
+  const marker = match[2] ?? match[4];
+  const padding = match[3] ?? match[5];
+  const indentColumns = indentVisualWidth(match[1]);
+  const markerEndColumns = indentVisualWidth(match[1] + marker);
+  const prefixEndColumns = indentVisualWidth(match[1] + marker + padding);
+  const authoredPaddingColumns = prefixEndColumns - markerEndColumns;
+  // CommonMark treats one-to-four post-marker columns as structural list
+  // padding. With more than four, only one column belongs to the marker and
+  // the remainder starts the item's content (most notably an indented-code
+  // first block). Do not project those content columns onto descendants.
+  const structuralPaddingColumns = authoredPaddingColumns <= 4
+    ? authoredPaddingColumns
+    : 1;
+  return {
+    indentColumns,
+    markerColumns:
+      markerEndColumns - indentColumns + structuralPaddingColumns,
+    bulletMarker:
+      match[2] === "-" || match[2] === "+" || match[2] === "*"
+        ? match[2]
+        : null,
+    orderedNumber: match[4]
+      ? Number.parseInt(match[4].slice(0, -1), 10)
+      : null,
+    orderedDelimiter: match[4]
+      ? match[4].endsWith(")") ? ")" : "."
+      : null,
+  };
 }
 
 /**
@@ -972,40 +1568,11 @@ function bareMarkerWidth(
 ): number {
   const kind = node.attrs.kind as "bullet" | "ordered" | "task";
   if (kind === "bullet" || kind === "task") return 2;
-  // Ordered: compute the rendered number and return its serialized width.
-  let firstIdx = index ?? 0;
   if (parent && index !== undefined) {
-    let i = index - 1;
-    while (i >= 0) {
-      const p = parent.child(i);
-      if (p.type.name !== "list_item") break;
-      if (p.attrs.depth > node.attrs.depth) {
-        i--;
-        continue;
-      }
-      if (p.attrs.depth < node.attrs.depth) break;
-      if (p.attrs.kind !== "ordered") break;
-      firstIdx = i;
-      i--;
-    }
+    const entry = flatListLayoutFor(parent)[index];
+    if (entry) return entry.markerWidth;
   }
-  const firstStart = (parent?.child(firstIdx).attrs.start as number | null) ?? 1;
-  let count = 0;
-  if (parent && index !== undefined) {
-    for (let j = firstIdx; j <= index; j++) {
-      const p = parent.child(j);
-      if (
-        p.type.name === "list_item" &&
-        p.attrs.kind === "ordered" &&
-        p.attrs.depth === node.attrs.depth
-      ) {
-        count++;
-      }
-    }
-  } else {
-    count = 1;
-  }
-  const number = firstStart + count - 1;
+  const number = orderedListStart(node.attrs.start);
   return `${number}. `.length;
 }
 
@@ -1033,47 +1600,67 @@ function computeListMarker(
   if (kind === "bullet") {
     return `${bulletChar} `;
   }
-  // Ordered: count my position in the run.
-  let firstIdx = index ?? 0;
   if (parent && index !== undefined) {
-    let i = index - 1;
-    while (i >= 0) {
-      const p = parent.child(i);
-      if (p.type.name !== "list_item") break;
-      if (p.attrs.depth > node.attrs.depth) {
-        i--;
-        continue;
-      }
-      if (p.attrs.depth < node.attrs.depth) break;
-      if (p.attrs.kind !== "ordered") break;
-      firstIdx = i;
-      i--;
+    const entry = flatListLayoutFor(parent)[index];
+    const markerNumber = entry?.markerNumber;
+    if (markerNumber !== null && markerNumber !== undefined) {
+      return `${markerNumber}${entry?.orderedDelimiter ?? "."} `;
     }
   }
-  const firstStart = (parent?.child(firstIdx).attrs.start as number | null) ?? 1;
-  let count = 0;
-  if (parent && index !== undefined) {
-    for (let j = firstIdx; j <= index; j++) {
-      const p = parent.child(j);
-      if (
-        p.type.name === "list_item" &&
-        p.attrs.kind === "ordered" &&
-        p.attrs.depth === node.attrs.depth
-      ) {
-        count++;
-      }
-    }
-  } else {
-    count = 1;
-  }
-  return `${firstStart + count - 1}. `;
+  const start = orderedListStart(node.attrs.start);
+  return `${start}. `;
+}
+
+function isEmptyListItem(node: PMNode): boolean {
+  return node.type.name === "list_item" &&
+    node.childCount === 1 &&
+    node.firstChild?.type.name === "paragraph" &&
+    node.firstChild.childCount === 0;
+}
+
+function listItemUsesTightLeadingEdge(
+  parent: PMNode | undefined,
+  index: number | undefined,
+  entry: FlatListLayoutEntry | null,
+): boolean {
+  const looseDirectOwner = Boolean(
+    entry &&
+    parent &&
+    index !== undefined &&
+    entry.parentIndex !== null &&
+    entry.parentIndex === index - 1 &&
+    parent.child(entry.parentIndex).attrs.tight === false &&
+    listItemCanRepresentLooseNestedEdge(parent.child(entry.parentIndex)),
+  );
+  return Boolean(
+    entry &&
+    entry.tightBefore === true &&
+    parent &&
+    index !== undefined &&
+    !looseDirectOwner &&
+    !listItemRequiresLooseParentEdge(parent, index, entry),
+  );
 }
 
 // ── Node serializer table ──
 
 export const nodeSer: Record<string, NodeSer> = {
   // Standard blocks
-  paragraph(state, node) {
+  paragraph(state, node, parent, index) {
+    // The flat-list schema requires a leading paragraph even when authored
+    // Markdown starts the item with another block (for example `- > quote`
+    // or a reference definition). The parser supplies that empty paragraph
+    // only to satisfy `paragraph block*`; it has no independent Markdown
+    // representation. Keep the list marker open so the following block is
+    // emitted as the item's first real content instead of being detached.
+    if (
+      node.childCount === 0 &&
+      parent &&
+      index === 0 &&
+      listItemHasSyntheticLeadingParagraph(parent)
+    ) {
+      return;
+    }
     // Block-IDs (`^abc123`) are paragraph-level metadata in Obsidian
     // syntax: they ONLY parse at end-of-block. The PM schema models
     // them as inline atoms inside the paragraph, so a paragraph
@@ -1127,14 +1714,29 @@ export const nodeSer: Record<string, NodeSer> = {
     // before flushing it into the main state buffer. `.out` is the
     // internal accumulator on SerializerState — not in PM's public
     // d.ts but stable in practice.
-    const stateAny = state as unknown as { out: string };
-    const before = stateAny.out.length;
+    const beforeOutput = state.snapshotOutput();
+    const before = state.out.length;
     state.renderInline(node);
-    const after = stateAny.out.length;
-    const inline: string = stateAny.out.slice(before, after);
+    const inline = state.out.slice(before);
     const collapsed = inline.replace(/[ \t]*\n[ \t]*/g, " ");
-    if (collapsed !== inline) {
-      stateAny.out = stateAny.out.slice(0, before) + collapsed;
+    // A trailing hash run followed only by whitespace is ATX closing syntax.
+    // Escape literal hashes, then encode trailing whitespace because Markdown
+    // parsers otherwise trim it from the heading's inline text.
+    const safeInline = collapsed
+      .replace(/^[ \t]+/, (prefix) =>
+        prefix.replace(/ /g, "&#32;").replace(/\t/g, "&#9;"),
+      )
+      .replace(
+        /(^|[ \t])(#+)([ \t]*)$/,
+        (_match, prefix: string, hashes: string, suffix: string) =>
+          prefix + hashes.replace(/#/g, "\\#") + suffix,
+      )
+      .replace(/[ \t]+$/, (suffix) =>
+        suffix.replace(/ /g, "&#32;").replace(/\t/g, "&#9;"),
+      );
+    if (safeInline !== inline) {
+      state.restoreOutput(beforeOutput);
+      state.write(safeInline);
     }
     state.closeBlock(node);
   },
@@ -1152,9 +1754,9 @@ export const nodeSer: Record<string, NodeSer> = {
   //
   // Inter-item spacing:
   //   • Continuation (previous sibling is a list_item at same kind +
-  //     depth, possibly with deeper-nested items in between): use the
-  //     current item's `tight` attr - tight = single \n, loose = blank
-  //     line.
+  //     depth, possibly with deeper-nested items in between): use cumulative
+  //     run tightness - tight = single \n, loose = blank line. A marker-only
+  //     item's own tight projection cannot erase an earlier loose edge.
   //   • Nested under (previous sibling is a list_item at SHALLOWER
   //     depth): same tight/loose rule based on this item's tight.
   //   • Otherwise (different kind at same depth, after non-list block,
@@ -1165,32 +1767,18 @@ export const nodeSer: Record<string, NodeSer> = {
   // correctly identifies "bar" as a continuation of "foo" despite the
   // intervening "nested" sibling at depth 1.
   list_item(state, node, parent, index) {
-    let isContinuation = false;
-    let isNested = false;
-    if (parent && index !== undefined && index > 0) {
-      let i = index - 1;
-      while (i >= 0) {
-        const p = parent.child(i);
-        if (p.type.name !== "list_item") break;
-        if (p.attrs.depth > node.attrs.depth) {
-          // Deeper-nested children of an earlier sibling - skip past.
-          i--;
-          continue;
-        }
-        if (p.attrs.depth < node.attrs.depth) {
-          isNested = true;
-          break;
-        }
-        // Same depth - continuation iff same kind.
-        if (p.attrs.kind === node.attrs.kind) isContinuation = true;
-        break;
-      }
-    }
-
+    const layoutEntry = parent && index !== undefined
+      ? flatListLayoutFor(parent)[index]
+      : null;
     if (state.closed) {
-      const tight =
-        (isContinuation || isNested) && node.attrs.tight !== false;
-      state.flushClose(tight ? 1 : 2);
+      // The ordinary leading-edge calculation already separates an empty
+      // marker from preceding callout prose, while the callout writer handles
+      // an empty first body item. Do not force a blank line for an empty item
+      // that continues a tight list: that would loosen the preceding item on
+      // reparse and make an ordinary Enter fail exact-save preflight.
+      state.flushClose(
+        listItemUsesTightLeadingEdge(parent, index, layoutEntry) ? 1 : 2,
+      );
     }
 
     // Sum marker widths of ancestor items so the indent matches what
@@ -1200,13 +1788,17 @@ export const nodeSer: Record<string, NodeSer> = {
     // 4, etc.). Without this an item nested under "1. foo" would
     // serialize with 2-space indent, which markdown-it reads as a
     // sibling at depth 0, not a nested child - breaking round-trip.
-    const depthIndent = computeDepthIndent(
+    const override = state.topLevelListOverride?.node === node
+      ? state.topLevelListOverride
+      : null;
+    const depthIndent = override?.depthIndent ?? computeDepthIndent(
       node,
       parent,
       index,
       state.canonicalForm.bullet,
     );
-    const marker = computeListMarker(node, parent, index, state.canonicalForm.bullet);
+    const marker = override?.marker ??
+      computeListMarker(node, parent, index, state.canonicalForm.bullet);
     state.write(depthIndent + marker);
 
     // Continuation indent = depth indent + BARE marker width (just
@@ -1217,7 +1809,8 @@ export const nodeSer: Record<string, NodeSer> = {
     // lines would land at column 6+ which markdown-it reads as a
     // 4+ space-indented code block, corrupting any callout / nested
     // markdown content inside the task.
-    const contIndent = indentVisualWidth(depthIndent) + bareMarkerWidth(node, parent, index);
+    const contIndent = override?.continuationColumns ??
+      (indentVisualWidth(depthIndent) + bareMarkerWidth(node, parent, index));
     const old = state.delim;
     state.delim += " ".repeat(contIndent);
     state.renderContent(node);
@@ -1225,9 +1818,17 @@ export const nodeSer: Record<string, NodeSer> = {
     state.closeBlock(node);
   },
   code_block(state, node) {
+    // Fence info strings are not inline HTML and markdown-it does not decode
+    // entities in them. Emit the language literally; protecting `&copy;`
+    // would change the stored language to `&amp;copy;` on reparse.
     const lang = (node.attrs.language as string | undefined) ?? "";
-    const fence = state.canonicalForm.codeFence;
-    state.write(fence + lang);
+    const fence = safeCodeFence(
+      node.textContent,
+      lang,
+      state.canonicalForm.codeFence,
+    );
+    const infoSeparator = lang.startsWith(fence[0]) ? " " : "";
+    state.write(fence + infoSeparator + lang);
     state.write("\n");
     state.text(node.textContent, false);
     state.write("\n");
@@ -1239,18 +1840,46 @@ export const nodeSer: Record<string, NodeSer> = {
     state.closeBlock(node);
   },
   hard_break(state, node, parent, index) {
-    if (parent && index != null) {
-      for (let i = index + 1; i < parent.childCount; i++) {
-        if (parent.child(i).type !== node.type) {
-          state.write("\\\n");
-          return;
-        }
-      }
-    } else {
-      state.write("\\\n");
-    }
+    if (index != null && index > 0) state.encodeTrailingBreakWhitespace();
+    const previous = parent && index != null && index > 0
+      ? parent.child(index - 1)
+      : null;
+    const next = parent && index != null && index + 1 < parent.childCount
+      ? parent.child(index + 1)
+      : null;
+    const isBreak = (candidate: PMNode | null): boolean =>
+      candidate?.type.name === "softbreak" ||
+      candidate?.type.name === "hard_break";
+    const nativeInterior = parent?.type.name !== "heading" &&
+      previous !== null &&
+      next !== null &&
+      !isBreak(previous) &&
+      !isBreak(next);
+    // CommonMark explicitly rejects backslash/two-space hard breaks at a
+    // block edge. Standard inline HTML is the portable exact spelling there,
+    // and is deterministic for consecutive breaks and headings too.
+    state.write(nativeInterior ? "\\\n" : "<br>");
   },
-  softbreak(state) { state.write("\n"); },
+  softbreak(state, _node, parent, index) {
+    if (index != null && index > 0) state.encodeTrailingBreakWhitespace();
+    const previous = parent && index != null && index > 0
+      ? parent.child(index - 1)
+      : null;
+    const next = parent && index != null && index + 1 < parent.childCount
+      ? parent.child(index + 1)
+      : null;
+    const isBreak = (node: PMNode | null): boolean =>
+      node?.type.name === "softbreak" || node?.type.name === "hard_break";
+    // A single interior source newline is exact and keeps ordinary Markdown
+    // readable. At textblock edges, in headings, or in consecutive runs,
+    // CommonMark trims/splits it, so use portable `<br />` for those cases.
+    state.write(
+      parent?.type.name !== "heading" &&
+        previous && next && !isBreak(previous) && !isBreak(next)
+        ? "\n"
+        : "<br />",
+    );
+  },
   image(state, node) {
     const attrs = node.attrs as {
       src?: string;
@@ -1260,18 +1889,27 @@ export const nodeSer: Record<string, NodeSer> = {
       height?: number | null;
       displayMode?: string | null;
     };
-    const src = attrs.src ?? "";
-    const title = attrs.title;
+    const src = markdownDestination(attrs.src ?? "");
+    const title = attrs.title ? markdownTitle(attrs.title) : attrs.title;
     const width = attrs.width;
     const height = attrs.height;
     const displayMode = attrs.displayMode;
-    let alt = esc(attrs.alt ?? "");
+    const rawAlt = attrs.alt ?? "";
+    let alt = esc(rawAlt);
     if (displayMode === "full") {
       // Full-column-width sentinel - overrides any pixel size.
       alt = alt ? `${alt}|full` : "|full";
     } else if (width) {
       const sz = height ? `|${width}x${height}` : `|${width}`;
       alt = alt ? `${alt}${sz}` : sz;
+    } else if (/\|(?:full|\d+(?:x\d+)?)$/i.test(rawAlt)) {
+      // A semantic alt may happen to look like Butter's display/size suffix.
+      // Escape its final separator using standard Markdown label syntax so
+      // generic renderers see the intended alt rather than a private doubled
+      // pipe convention. The parser inspects the raw label before deciding
+      // whether the suffix is Butter metadata.
+      const split = alt.lastIndexOf("|");
+      alt = `${alt.slice(0, split)}\\|${alt.slice(split + 1)}`;
     }
     state.write(`![${alt}](${src}${title ? ` "${title}"` : ""})`);
   },
@@ -1304,18 +1942,19 @@ export const nodeSer: Record<string, NodeSer> = {
     // cell content. Restore after capture so the actual table writes
     // emit prefixes correctly.
     const renderCellToString = (c: PMNode): string => {
-      const savedOut = state.out;
+      const savedOutput = state.snapshotOutput();
       const stateAny = state as unknown as { delim: string; closed: boolean };
       const savedDelim = stateAny.delim;
       const savedClosed = stateAny.closed;
-      state.out = "x"; // anchor - atBlankLine() returns false
+      state.resetOutput("x"); // anchor - atBlankLine() returns false
       stateAny.delim = "";
       stateAny.closed = false;
       state.renderInline(c);
       const captured = state.out.slice(1)
-        .replace(/\\?\n/g, "<br>")
+        .replace(/\\\n/g, "<br>")
+        .replace(/\n/g, "<br />")
         .replace(/\|/g, "\\|");
-      state.out = savedOut;
+      state.restoreOutput(savedOutput);
       stateAny.delim = savedDelim;
       stateAny.closed = savedClosed;
       return captured;
@@ -1428,7 +2067,12 @@ export const nodeSer: Record<string, NodeSer> = {
       // Writing an explicit blank line breaks the setext attachment
       // - `---` after a blank line is unambiguously a HR.
       const first = node.firstChild;
-      if (first && first.type.name === "horizontal_rule") {
+      if (
+        first &&
+        (first.type.name === "horizontal_rule" ||
+          first.type.name === "reference_definition" ||
+          isEmptyListItem(first))
+      ) {
         state.write("\n");
       }
       state.renderContent(node);
@@ -1523,6 +2167,11 @@ export const nodeSer: Record<string, NodeSer> = {
     for (let i = 1; i < lines.length; i++) state.write(`\n    ${lines[i]}`);
     state.closeBlock(node);
   },
+  reference_definition(state, node) {
+    const raw = (node.attrs.raw as string | undefined) ?? "";
+    state.text(raw, false);
+    state.closeBlock(node);
+  },
 
   // Obsidian inline
   wikilink(state, node) {
@@ -1545,9 +2194,9 @@ export const nodeSer: Record<string, NodeSer> = {
     // the buffer's stale last char (from the previous block's text)
     // would falsely trigger separator injection at paragraph start
     // (`intro\n\n#tag` became `intro\n\n #tag` — leading space drift).
-    const stateAny = state as unknown as { out: string; closed: unknown };
+    const stateAny = state as unknown as { closed: unknown };
     if (!stateAny.closed && !state.atBlank()) {
-      const last = stateAny.out[stateAny.out.length - 1];
+      const last = state.lastOutputCharacter();
       if (last && !/\s/.test(last)) state.write(" ");
     }
     state.write(`#${(node.attrs.tag as string | undefined) ?? ""}`);
@@ -1590,12 +2239,20 @@ function serializeBlock(
     originalInlineAtoms: Set<PMNode>;
   },
   options?: CanonicalFormOptions,
+  listOverride?: {
+    depthIndent: string;
+    marker: string;
+    continuationColumns: number;
+  },
 ): string {
   const wrap = schema.nodes.doc.create(null, Fragment.from(block));
   const state = new SerState(options);
   if (context) {
     state.sourcePresBody = context.originalBody;
     state.sourcePresOriginalAtoms = context.originalInlineAtoms;
+  }
+  if (listOverride) {
+    state.topLevelListOverride = { node: block, ...listOverride };
   }
   state.renderContent(wrap);
   return state.out;
@@ -1611,6 +2268,16 @@ function collectInlineAtoms(doc: PMNode): Set<PMNode> {
     if (node.isInline && node.isAtom) set.add(node);
   });
   return set;
+}
+
+function collectReferenceDefinitions(doc: PMNode): PMNode[] {
+  const definitions: PMNode[] = [];
+  doc.descendants((node) => {
+    if (node.type.name === "reference_definition") {
+      definitions.push(node);
+    }
+  });
+  return definitions;
 }
 
 /**
@@ -1650,6 +2317,11 @@ export function serializeWithSourcePreservation(
   originalDoc: PMNode,
   options?: CanonicalFormOptions,
 ): string {
+  // A semantic no-op (including undo back to the loaded document) must be a
+  // byte no-op. This also covers unusual valid source whose parser creates
+  // zero-length carrier nodes that cannot be reconstructed block-by-block.
+  if (doc.eq(originalDoc)) return originalBody;
+
   // ── Identity map: parse-time block → its index in originalDoc ──
   // Reference identity is the STRICT "this block wasn't edited" check
   // (PM's immutable-tree model means an edit produces a new object).
@@ -1697,35 +2369,420 @@ export function serializeWithSourcePreservation(
     ids.push({ origIdx, preserved: originalRefs.has(child) });
   }
 
-  // A list_item at depth > 0 needs an immediate parent (depth - 1)
-  // in the CURRENT doc context for its preserved bytes to remain
-  // round-trip-valid. When an edit removes/wraps the parent (e.g.
-  // wrap-in-callout on a depth-1 item, leaving a depth-2 follower
-  // orphan), the original bytes (`    - text`) still parse as a
-  // valid list_item ONLY when preceded by the depth-1 sibling that
-  // established the list context. Without that sibling, the 4-space
-  // indent crosses CommonMark's code-block threshold and the line
-  // reparses as `code_block` — the save guard fires, the user sees
-  // their list item become code on reload. Detect this orphan case
-  // and force canonical re-emission so `computeDepthIndent`'s
-  // missing-immediate-parent clamp kicks in (item serialized at
-  // column 0, reparses as `list_item depth=0` — visible attr shift
-  // but the node TYPE is preserved, which is what round-trip safety
-  // actually requires).
-  const isOrphanListItem = (i: number): boolean => {
+  // A preserved list slice is safe only when its original absolute depth is
+  // still expressible in the CURRENT sibling sequence. Use the same linear
+  // layout plan as canonical serialization. This catches transitive orphaning:
+  // after a depth-1 item is re-rooted, its raw depth-2 follower must also be
+  // synthesized at effective depth 1 rather than emitted with stale bytes.
+  const currentListLayout = flatListLayoutFor(doc);
+  const originalListLayout = flatListLayoutFor(originalDoc);
+  const originalListMetrics = originalBlocks.map((block) => {
+    const range = block.attrs.sourceRange as
+      | { start: number; end: number }
+      | null;
+    return range && range.start >= 0 && range.end <= originalBody.length
+      ? sourceListPrefixMetrics(originalBody.slice(range.start, range.end))
+      : null;
+  });
+  const originalPreviousAtDepth = new Array<number | null>(
+    originalDoc.childCount,
+  ).fill(null);
+  {
+    const lastAtDepth: Array<number | undefined> = [];
+    for (let index = 0; index < originalDoc.childCount; index++) {
+      const entry = originalListLayout[index];
+      if (!entry) {
+        lastAtDepth.length = 0;
+        continue;
+      }
+      originalPreviousAtDepth[index] =
+        lastAtDepth[entry.effectiveDepth] ?? null;
+      lastAtDepth.length = entry.effectiveDepth + 1;
+      lastAtDepth[entry.effectiveDepth] = index;
+    }
+  }
+  const hasUnstableListLayout = (i: number): boolean => {
     const child = doc.child(i);
     if (child.type.name !== "list_item") return false;
-    const depth = (child.attrs.depth as number | undefined) ?? 0;
-    if (depth === 0) return false;
-    for (let j = i - 1; j >= 0; j--) {
-      const prev = doc.child(j);
-      if (prev.type.name !== "list_item") return true;
-      const pd = (prev.attrs.depth as number | undefined) ?? 0;
-      if (pd < depth - 1) return true;
-      if (pd === depth - 1) return false;
-    }
-    return true;
+    const entry = currentListLayout[i];
+    return !entry || entry.effectiveDepth !== entry.rawDepth;
   };
+
+  // Preserve each reference-identical block unless its list depth is no longer
+  // expressible in the current sibling sequence. Adjacent list items remain
+  // independent source slices: splitting or editing one item must not rewrite
+  // the markers or inline bytes of unaffected siblings.
+  const canPreserveContent: boolean[] = [];
+  for (let i = 0; i < n; i++) {
+    const child = doc.child(i);
+    const range = child.attrs.sourceRange as
+      | { start: number; end: number }
+      | null;
+    const originalIndex = ids[i].origIdx;
+    const sameAuthoredLeftContext = originalIndex !== null && (
+      originalIndex === 0
+        ? i === 0
+        : i > 0 &&
+          ids[i - 1].origIdx === originalIndex - 1 &&
+          ids[i - 1].preserved
+    );
+    const authoredSource = range &&
+        range.start >= 0 && range.end >= range.start &&
+        range.end <= originalBody.length
+      ? originalBody.slice(range.start, range.end)
+      : "";
+    const contextSensitiveIndentedCode =
+      child.type.name === "code_block" && /^(?: {4}|\t)/.test(authoredSource);
+    canPreserveContent.push(Boolean(
+      ids[i].preserved &&
+      !hasUnstableListLayout(i) &&
+      (!contextSensitiveIndentedCode || sameAuthoredLeftContext) &&
+      range &&
+      typeof range.start === "number" &&
+      typeof range.end === "number" &&
+      range.start >= 0 &&
+      range.end >= range.start &&
+      range.end <= originalBody.length,
+    ));
+  }
+
+  // Reference definitions populate one document-wide resolution environment.
+  // Preserving an unchanged paragraph's authored `[text][label]` bytes is
+  // therefore safe only while the complete definition sequence is unchanged.
+  // If a definition is inserted, removed, edited, or reordered, synthesize all
+  // visible blocks from their already-resolved PM semantics. This turns links
+  // into self-contained inline destinations and prevents an unchanged source
+  // slice from reparsing as literal bracket text or binding to a different
+  // duplicate definition. The definitions themselves remain exact artifacts.
+  const originalDefinitions = collectReferenceDefinitions(originalDoc);
+  const currentDefinitions = collectReferenceDefinitions(doc);
+  const referenceEnvironmentStable =
+    originalDefinitions.length === currentDefinitions.length &&
+    currentDefinitions.every(
+      (definition, index) => definition === originalDefinitions[index],
+    );
+  if (!referenceEnvironmentStable) {
+    for (let i = 0; i < n; i++) {
+      if (doc.child(i).type.name !== "reference_definition") {
+        canPreserveContent[i] = false;
+      }
+    }
+  }
+
+  // A CommonMark list is a source container even though Butter represents its
+  // items as flat sibling blocks. If an edit changes a run's membership or
+  // tightness, authored whitespace from any one old item/gap can change the
+  // meaning of every sibling in that run. In that case synthesize the whole
+  // affected run; preserving independent stale slices is not semantically
+  // valid. Intact runs (including an intact run moved elsewhere) remain
+  // byte-preservable.
+  const membersByRun = (
+    layout: ReadonlyArray<FlatListLayoutEntry | null>,
+  ): Map<number, number[]> => {
+    const result = new Map<number, number[]>();
+    for (let index = 0; index < layout.length; index++) {
+      const entry = layout[index];
+      if (!entry) continue;
+      const members = result.get(entry.runStartIndex) ?? [];
+      members.push(index);
+      result.set(entry.runStartIndex, members);
+    }
+    return result;
+  };
+  const currentMembersByRun = membersByRun(currentListLayout);
+  const originalMembersByRun = membersByRun(originalListLayout);
+  const listRunStable = new Array<boolean>(n).fill(false);
+  for (const currentMembers of currentMembersByRun.values()) {
+    const originalIndices = currentMembers.map((index) => ids[index].origIdx);
+    const firstOriginalIndex = originalIndices[0];
+    const firstOriginalEntry = firstOriginalIndex === null
+      ? null
+      : originalListLayout[firstOriginalIndex];
+    const originalMembers = firstOriginalEntry
+      ? originalMembersByRun.get(firstOriginalEntry.runStartIndex)
+      : undefined;
+    const sameMembership = Boolean(
+      originalMembers &&
+      originalMembers.length === originalIndices.length &&
+      originalIndices.every(
+        (originalIndex, index) => originalIndex === originalMembers[index],
+      ),
+    );
+    const sameTightness = sameMembership && currentMembers.every(
+      (currentIndex, index) =>
+        doc.child(currentIndex).attrs.tight ===
+        originalBlocks[originalIndices[index]!].attrs.tight,
+    );
+    for (const index of currentMembers) {
+      listRunStable[index] = sameMembership && sameTightness;
+    }
+    if (!sameMembership || !sameTightness) {
+      for (const index of currentMembers) canPreserveContent[index] = false;
+    }
+  }
+
+  // A direct owner-to-first-child gap can carry looseness established later
+  // in the same flat-list subtree. Prove that the complete owned subtree is
+  // still the same before reusing that gap. The stack computes every subtree
+  // end once; the reverse span proves consecutive provenance, relative depth,
+  // parentage, and constituent run stability without rescanning descendants.
+  const listSubtreeEnds = (
+    layout: ReadonlyArray<FlatListLayoutEntry | null>,
+  ): number[] => {
+    const ends = new Array<number>(layout.length).fill(layout.length);
+    const open: number[] = [];
+    for (let index = 0; index < layout.length; index++) {
+      const entry = layout[index];
+      if (!entry) {
+        while (open.length > 0) ends[open.pop()!] = index;
+        continue;
+      }
+      while (open.length > 0) {
+        const ownerIndex = open[open.length - 1];
+        const ownerEntry = layout[ownerIndex]!;
+        if (ownerEntry.effectiveDepth < entry.effectiveDepth) break;
+        ends[open.pop()!] = index;
+      }
+      open.push(index);
+    }
+    return ends;
+  };
+  const currentListSubtreeEnds = listSubtreeEnds(currentListLayout);
+  const originalListSubtreeEnds = listSubtreeEnds(originalListLayout);
+  const listSourceShapeIsStable = (
+    currentIndex: number,
+    originalIndex: number,
+  ): boolean => {
+    const current = doc.child(currentIndex);
+    const original = originalBlocks[originalIndex];
+    return listKind(current) === listKind(original) &&
+      current.attrs.start === original.attrs.start &&
+      listItemIsMarkerOnly(current) === listItemIsMarkerOnly(original);
+  };
+  const stableListStructureSpan = new Array<number>(n).fill(0);
+  for (let index = n - 1; index >= 0; index--) {
+    const entry = currentListLayout[index];
+    const originalIndex = ids[index].origIdx;
+    const originalEntry = originalIndex === null
+      ? null
+      : originalListLayout[originalIndex];
+    if (
+      !entry ||
+      originalIndex === null ||
+      !originalEntry ||
+      !listRunStable[index] ||
+      !listSourceShapeIsStable(index, originalIndex)
+    ) continue;
+    stableListStructureSpan[index] = 1;
+    const nextIndex = index + 1;
+    if (nextIndex >= n || stableListStructureSpan[nextIndex] === 0) continue;
+    const nextEntry = currentListLayout[nextIndex];
+    const nextOriginalIndex = ids[nextIndex].origIdx;
+    const nextOriginalEntry = nextOriginalIndex === null
+      ? null
+      : originalListLayout[nextOriginalIndex];
+    if (
+      !nextEntry ||
+      !nextOriginalEntry ||
+      nextOriginalIndex !== originalIndex + 1
+    ) {
+      continue;
+    }
+    const currentParentOriginalIndex = nextEntry.parentIndex === null
+      ? null
+      : ids[nextEntry.parentIndex].origIdx;
+    const sameRelativeDepth =
+      nextEntry.effectiveDepth - nextOriginalEntry.effectiveDepth ===
+      entry.effectiveDepth - originalEntry.effectiveDepth;
+    if (
+      sameRelativeDepth &&
+      currentParentOriginalIndex === nextOriginalEntry.parentIndex
+    ) {
+      stableListStructureSpan[index] += stableListStructureSpan[nextIndex];
+    }
+  }
+  const listOwnerSubtreeStable = new Array<boolean>(n).fill(false);
+  for (let index = 0; index < n; index++) {
+    const originalIndex = ids[index].origIdx;
+    if (originalIndex === null || !currentListLayout[index]) continue;
+    const currentLength = currentListSubtreeEnds[index] - index;
+    const originalLength = originalListSubtreeEnds[originalIndex] - originalIndex;
+    listOwnerSubtreeStable[index] =
+      currentLength === originalLength &&
+      stableListStructureSpan[index] >= currentLength;
+  }
+  const listAncestryStable = new Array<boolean>(n).fill(false);
+  for (let index = 0; index < n; index++) {
+    const entry = currentListLayout[index];
+    if (!entry) continue;
+    listAncestryStable[index] = listOwnerSubtreeStable[index] &&
+      (entry.parentIndex === null || listAncestryStable[entry.parentIndex]);
+  }
+
+  type ListOverride = {
+    depthIndent: string;
+    marker: string;
+    continuationColumns: number;
+  };
+  const listOverrides = new Array<ListOverride | undefined>(n).fill(undefined);
+  const emittedListMetrics = new Array<ListPrefixMetrics | null>(n).fill(null);
+  const bullet = options?.bullet ?? CANONICAL_DEFAULTS.bullet;
+  const orderedDelimiterAtDepth: Array<"." | ")" | undefined> = [];
+  const currentPreviousAtDepth: Array<number | undefined> = [];
+
+  // A preserved list prefix is valid only in the context that will actually
+  // precede it. Measure authored prefixes and propagate the emitted parent
+  // columns forward. This lets unrelated siblings stay byte-identical while
+  // resynthesizing only a marker/indent whose semantic context changed.
+  for (let i = 0; i < n; i++) {
+    const child = doc.child(i);
+    if (child.type.name !== "list_item") {
+      orderedDelimiterAtDepth.length = 0;
+      currentPreviousAtDepth.length = 0;
+      continue;
+    }
+    const entry = currentListLayout[i];
+    if (!entry) continue;
+    const previousAtDepth = currentPreviousAtDepth[entry.effectiveDepth] ?? null;
+    currentPreviousAtDepth.length = entry.effectiveDepth + 1;
+    currentPreviousAtDepth[entry.effectiveDepth] = i;
+    const parentMetrics = entry?.parentIndex === null || entry?.parentIndex === undefined
+      ? null
+      : emittedListMetrics[entry.parentIndex];
+    const requiredIndent = parentMetrics
+      ? parentMetrics.indentColumns + parentMetrics.markerColumns
+      : 0;
+    const range = child.attrs.sourceRange as
+      | { start: number; end: number }
+      | null;
+    // Edited blocks retain their parse-time sourceRange. Read their authored
+    // marker too: synthesis must not mix `.` and `)` inside one ordered run.
+    const sourceMetrics = range && ids[i].origIdx !== null &&
+        range.start >= 0 && range.end >= range.start &&
+        range.end <= originalBody.length
+      ? sourceListPrefixMetrics(originalBody.slice(range.start, range.end))
+      : null;
+    const kind = listKind(child);
+    orderedDelimiterAtDepth.length = entry.effectiveDepth + 1;
+    const previousOrderedDelimiter =
+      orderedDelimiterAtDepth[entry.effectiveDepth] ?? ".";
+    const orderedDelimiter = kind === "ordered"
+      ? entry.requiresOrderedRunBreak
+        ? sourceMetrics?.orderedDelimiter &&
+            sourceMetrics.orderedDelimiter !== previousOrderedDelimiter
+          ? sourceMetrics.orderedDelimiter
+          : previousOrderedDelimiter === "." ? ")" : "."
+        : entry.continuation
+          ? orderedDelimiterAtDepth[entry.effectiveDepth] ??
+            sourceMetrics?.orderedDelimiter ?? "."
+          : sourceMetrics?.orderedDelimiter ?? "."
+      : null;
+    orderedDelimiterAtDepth[entry.effectiveDepth] =
+      orderedDelimiter ?? undefined;
+
+    const originalIndex = ids[i].origIdx;
+    const expectedOriginalPrevious = originalIndex === null
+      ? null
+      : originalPreviousAtDepth[originalIndex];
+    const currentPreviousOriginal = previousAtDepth === null
+      ? null
+      : ids[previousAtDepth].origIdx;
+    const sameAuthoredAdjacency =
+      originalIndex !== null &&
+      (
+        previousAtDepth === null
+          ? expectedOriginalPrevious === null
+          : expectedOriginalPrevious !== null &&
+            currentPreviousOriginal === expectedOriginalPrevious
+      );
+    const rootIndentContextSafe =
+      entry.effectiveDepth > 0 ||
+      previousAtDepth === null ||
+      sourceMetrics?.indentColumns === 0 ||
+      sameAuthoredAdjacency;
+    const indentCompatible = sourceMetrics !== null && (
+      parentMetrics
+        ? sourceMetrics.indentColumns >= requiredIndent &&
+          sourceMetrics.indentColumns <= requiredIndent + 3
+        : sourceMetrics.indentColumns <= 3 && rootIndentContextSafe
+    );
+    const previousSameDepthMetrics = previousAtDepth === null
+      ? null
+      : emittedListMetrics[previousAtDepth];
+    // Parent-relative indentation is not sufficient after an adjacent item
+    // has been synthesized. A marker at or beyond the previous same-depth
+    // item's content column is parsed as that item's child even when it also
+    // falls inside the parent's individually-valid indentation range. Keep a
+    // preserved prefix only while it starts before that child boundary;
+    // otherwise synthesize it from the current layout plan as well.
+    const sameDepthIndentCompatible = sourceMetrics !== null && (
+      previousSameDepthMetrics === null ||
+      sourceMetrics.indentColumns <
+        previousSameDepthMetrics.indentColumns +
+          previousSameDepthMetrics.markerColumns
+    );
+    const expectedRunStart = orderedListStart(child.attrs.start);
+    const orderedStartCompatible =
+      kind !== "ordered" ||
+      entry?.continuation === true ||
+      sourceMetrics?.orderedNumber === expectedRunStart;
+    const orderedDelimiterCompatible =
+      kind !== "ordered" ||
+      sourceMetrics?.orderedDelimiter === orderedDelimiter;
+    const sourcePrefixCompatible = Boolean(
+      sourceMetrics &&
+      indentCompatible &&
+      sameDepthIndentCompatible &&
+      orderedStartCompatible &&
+      orderedDelimiterCompatible,
+    );
+
+    if (
+      canPreserveContent[i] &&
+      sourcePrefixCompatible
+    ) {
+      emittedListMetrics[i] = sourceMetrics!;
+      continue;
+    }
+
+    canPreserveContent[i] = false;
+    // Content edits should not perturb the structural column basis of a list
+    // run. Reuse a still-valid authored indentation width even though the
+    // item's content and marker are synthesized; fall back to the canonical
+    // layout only when the authored prefix is unsafe in its current context.
+    const emittedIndentColumns = sourcePrefixCompatible
+      ? sourceMetrics!.indentColumns
+      : requiredIndent;
+    const depthIndent = " ".repeat(emittedIndentColumns);
+    const authoredBulletMarker = kind !== "ordered" &&
+        sourcePrefixCompatible &&
+        listRunStable[i]
+      ? sourceMetrics?.bulletMarker ?? null
+      : null;
+    const marker = kind === "ordered"
+      ? `${entry.markerNumber ?? expectedRunStart}${orderedDelimiter} `
+      : authoredBulletMarker
+        ? kind === "task"
+          ? `${authoredBulletMarker} [${child.attrs.checked ? "x" : " "}] `
+          : `${authoredBulletMarker} `
+        : computeListMarker(child, doc, i, bullet);
+    const markerColumns = bareMarkerWidth(child, doc, i);
+    listOverrides[i] = {
+      depthIndent,
+      marker,
+      continuationColumns: emittedIndentColumns + markerColumns,
+    };
+    emittedListMetrics[i] = {
+      indentColumns: emittedIndentColumns,
+      markerColumns,
+      orderedNumber:
+        kind === "ordered" ? entry?.markerNumber ?? expectedRunStart : null,
+      orderedDelimiter,
+      bulletMarker: kind === "ordered"
+        ? null
+        : authoredBulletMarker ?? (kind === "task" ? "-" : bullet),
+    };
+  }
 
   // Content emission per block: either preserved original bytes (if
   // reference-identical AND has a valid sourceRange AND not an
@@ -1733,36 +2790,31 @@ export function serializeWithSourcePreservation(
   // includes the block's own line-ending \n but NOT any inter-block
   // blank lines.
   const contents: string[] = [];
+  const contentWasPreserved: boolean[] = [];
   for (let i = 0; i < n; i++) {
     const child = doc.child(i);
     const range = child.attrs.sourceRange as
       | { start: number; end: number }
       | null;
-    const canPreserve =
-      ids[i].preserved &&
-      !isOrphanListItem(i) &&
-      range &&
-      typeof range.start === "number" &&
-      typeof range.end === "number" &&
-      range.start >= 0 &&
-      range.end >= range.start &&
-      range.end <= originalBody.length;
+    const canPreserve = canPreserveContent[i];
 
     if (canPreserve && range) {
       contents.push(originalBody.slice(range.start, range.end));
+      contentWasPreserved.push(true);
     } else {
-      contents.push(normalizeBlockSynth(serializeBlock(child, blockSynthCtx, options)));
+      contents.push(normalizeBlockSynth(
+        serializeBlock(child, blockSynthCtx, options, listOverrides[i]),
+      ));
+      contentWasPreserved.push(false);
     }
   }
 
-  // Leading whitespace: the bytes before the first block's content.
-  // Preserved only if the current first block's origIdx is 0 (same
-  // block sits at doc start). Otherwise reordering moved a different
-  // block to the top and the original leading whitespace no longer
-  // applies.
+  // Prefix/suffix bytes are document-owned trivia, not properties of the
+  // current first/last block. Reference definitions are explicit nodes, so
+  // these boundary slices now contain only bytes outside modeled blocks.
   let leading = "";
-  if (n > 0 && ids[0].origIdx === 0) {
-    const r = doc.firstChild!.attrs.sourceRange as
+  if (originalBlocks.length > 0) {
+    const r = originalBlocks[0].attrs.sourceRange as
       | { start: number; end: number }
       | null;
     if (r && r.start >= 0 && r.start <= originalBody.length) {
@@ -1790,6 +2842,258 @@ export function serializeWithSourcePreservation(
   // Multi-blank-line gaps (gapBytes.length > 0) still pass through
   // unchanged, preserving the user-authored whitespace.
   const gaps: string[] = [];
+  const trailingBoundaryWhitespace = (
+    value: string,
+  ): { lineBreaks: number; afterFirstLineBreak: string } => {
+    let start = value.length;
+    while (start > 0) {
+      const code = value.charCodeAt(start - 1);
+      if (code !== 9 && code !== 10 && code !== 13 && code !== 32) break;
+      start--;
+    }
+    let lineBreaks = 0;
+    let firstLineBreakEnd = -1;
+    for (let index = start; index < value.length; index++) {
+      const code = value.charCodeAt(index);
+      if (code === 13) {
+        if (value.charCodeAt(index + 1) === 10) index++;
+      } else if (code !== 10) {
+        continue;
+      }
+      lineBreaks++;
+      if (firstLineBreakEnd < 0) firstLineBreakEnd = index + 1;
+    }
+    return {
+      lineBreaks,
+      afterFirstLineBreak: firstLineBreakEnd < 0
+        ? ""
+        : value.slice(firstLineBreakEnd),
+    };
+  };
+  const continuationLineEnding = (value: string): "\r" | "\n" => {
+    let index = value.length - 1;
+    while (index >= 0) {
+      const code = value.charCodeAt(index);
+      if (code !== 9 && code !== 32) break;
+      index--;
+    }
+    return value.charCodeAt(index) === 13 ? "\r" : "\n";
+  };
+  // A source-backed list gap is reusable only while both endpoints still
+  // describe the same structural relationship. This keeps authored marker
+  // boundaries byte-local during text edits without letting stale whitespace
+  // override an intentional kind, depth, parent, marker, or tightness change.
+  const sourceBackedListAdjacencyIsUnchanged = (
+    leftIndex: number,
+  ): boolean => {
+    const rightIndex = leftIndex + 1;
+    const leftOriginalIndex = ids[leftIndex]?.origIdx ?? null;
+    const rightOriginalIndex = ids[rightIndex]?.origIdx ?? null;
+    if (
+      leftOriginalIndex === null ||
+      rightOriginalIndex !== leftOriginalIndex + 1
+    ) {
+      return false;
+    }
+    const leftEntry = currentListLayout[leftIndex];
+    const rightEntry = currentListLayout[rightIndex];
+    const originalLeftEntry = originalListLayout[leftOriginalIndex];
+    const originalRightEntry = originalListLayout[rightOriginalIndex];
+    const leftPrefix = emittedListMetrics[leftIndex];
+    const rightPrefix = emittedListMetrics[rightIndex];
+    const originalLeftPrefix = originalListMetrics[leftOriginalIndex];
+    const originalRightPrefix = originalListMetrics[rightOriginalIndex];
+    if (
+      !leftEntry ||
+      !rightEntry ||
+      !originalLeftEntry ||
+      !originalRightEntry ||
+      !leftPrefix ||
+      !rightPrefix ||
+      !originalLeftPrefix ||
+      !originalRightPrefix
+    ) {
+      return false;
+    }
+    const endpointIsUnchanged = (
+      currentIndex: number,
+      originalIndex: number,
+      entry: FlatListLayoutEntry,
+      originalEntry: FlatListLayoutEntry,
+      prefix: ListPrefixMetrics,
+      originalPrefix: ListPrefixMetrics,
+    ): boolean => {
+      const kind = listKind(doc.child(currentIndex));
+      if (
+        !listSourceShapeIsStable(currentIndex, originalIndex) ||
+        entry.effectiveDepth !== originalEntry.effectiveDepth ||
+        prefix.indentColumns !== originalPrefix.indentColumns
+      ) {
+        return false;
+      }
+      const currentParentOriginalIndex = entry.parentIndex === null
+        ? null
+        : ids[entry.parentIndex]?.origIdx ?? null;
+      if (currentParentOriginalIndex !== originalEntry.parentIndex) {
+        return false;
+      }
+      return kind === "ordered"
+        ? prefix.orderedNumber === originalPrefix.orderedNumber &&
+          prefix.orderedDelimiter === originalPrefix.orderedDelimiter
+        : prefix.bulletMarker === originalPrefix.bulletMarker;
+    };
+    const endpointsAreStructurallyUnchanged = endpointIsUnchanged(
+      leftIndex,
+      leftOriginalIndex,
+      leftEntry,
+      originalLeftEntry,
+      leftPrefix,
+      originalLeftPrefix,
+    ) && endpointIsUnchanged(
+      rightIndex,
+      rightOriginalIndex,
+      rightEntry,
+      originalRightEntry,
+      rightPrefix,
+      originalRightPrefix,
+    );
+    if (!endpointsAreStructurallyUnchanged) return false;
+    const directOwnerEdge =
+      rightEntry.parentIndex === leftIndex &&
+      originalRightEntry.parentIndex === leftOriginalIndex;
+    // Authored whitespace can encode tightness anywhere in one CommonMark
+    // list container. Once an edit splits, removes, or reorders that run,
+    // a locally unchanged edge may no longer carry the current run's meaning.
+    // Require the endpoint runs to retain their original membership and
+    // tightness before reusing that edge; otherwise let canonical spacing
+    // relocate tightness.
+    if (!listAncestryStable[leftIndex] || !listAncestryStable[rightIndex]) {
+      return false;
+    }
+    // The owner controls its edge to the first nested child. Peer-list edges
+    // are controlled by both items; distinct sibling runs may legitimately
+    // normalize their per-run tightness independently of the separating gap.
+    const ownerTightnessIsUnchanged =
+      doc.child(leftIndex).attrs.tight ===
+        originalBlocks[leftOriginalIndex].attrs.tight;
+    const tightnessIsUnchanged = ownerTightnessIsUnchanged &&
+      (directOwnerEdge ||
+        doc.child(rightIndex).attrs.tight ===
+          originalBlocks[rightOriginalIndex].attrs.tight);
+    const prefixesProveDistinctRuns = (
+      leftNode: PMNode,
+      rightNode: PMNode,
+      leftLayout: FlatListLayoutEntry,
+      rightLayout: FlatListLayoutEntry,
+      left: ListPrefixMetrics,
+      right: ListPrefixMetrics,
+    ): boolean => {
+      if (
+        leftLayout.effectiveDepth !== rightLayout.effectiveDepth ||
+        leftLayout.parentIndex !== rightLayout.parentIndex
+      ) {
+        return false;
+      }
+      const leftOrdered = listKind(leftNode) === "ordered";
+      const rightOrdered = listKind(rightNode) === "ordered";
+      if (leftOrdered !== rightOrdered) return true;
+      return leftOrdered
+        ? left.orderedDelimiter !== right.orderedDelimiter
+        : left.bulletMarker !== right.bulletMarker;
+    };
+    const authoredDistinctRun = prefixesProveDistinctRuns(
+      originalBlocks[leftOriginalIndex],
+      originalBlocks[rightOriginalIndex],
+      originalLeftEntry,
+      originalRightEntry,
+      originalLeftPrefix,
+      originalRightPrefix,
+    );
+    const emittedDistinctRun = prefixesProveDistinctRuns(
+      doc.child(leftIndex),
+      doc.child(rightIndex),
+      leftEntry,
+      rightEntry,
+      leftPrefix,
+      rightPrefix,
+    );
+    return tightnessIsUnchanged ||
+      (authoredDistinctRun && emittedDistinctRun);
+  };
+  const authoredListAdjacencyGap = (
+    leftIndex: number,
+    candidate: string,
+  ): string => {
+    if (contentWasPreserved[leftIndex]) return candidate;
+    const originalIndex = ids[leftIndex]?.origIdx ?? null;
+    const range = originalIndex === null
+      ? null
+      : originalBlocks[originalIndex].attrs.sourceRange as
+        | { start: number; end: number }
+        | null;
+    if (!range || range.start < 0 || range.end > originalBody.length) {
+      return candidate;
+    }
+    return trailingBoundaryWhitespace(
+      originalBody.slice(range.start, range.end) + candidate,
+    ).afterFirstLineBreak;
+  };
+  const gapForChangedPair = (leftIndex: number): string => {
+    const rightListLayout = currentListLayout[leftIndex + 1];
+    const tightListEdge =
+      doc.child(leftIndex).type.name === "list_item" &&
+      doc.child(leftIndex + 1).type.name === "list_item" &&
+      listItemUsesTightLeadingEdge(
+        doc,
+        leftIndex + 1,
+        rightListLayout,
+      );
+    return tightListEdge ? "" : defaultGap();
+  };
+  const ensureStructuralGap = (
+    leftIndex: number,
+    candidate: string,
+  ): string => {
+    // Non-whitespace gaps are malformed or otherwise unmodeled source trivia.
+    // Preserve them at an unchanged adjacency; changed adjacencies receive
+    // the structural fallback supplied by the caller.
+    if (/\S/.test(candidate)) return candidate;
+    const rightListLayout = currentListLayout[leftIndex + 1];
+    const tightListEdge =
+      doc.child(leftIndex).type.name === "list_item" &&
+      doc.child(leftIndex + 1).type.name === "list_item" &&
+      listItemUsesTightLeadingEdge(
+        doc,
+        leftIndex + 1,
+        rightListLayout,
+      );
+    if (tightListEdge) {
+      // A source range may have absorbed the old boundary's blank line. Once
+      // either endpoint or adjacency changes, this boundary owns that
+      // whitespace and must be able to remove it as well as add it. Retain the
+      // content line ending (and any hard-break spaces before it), but collapse
+      // structural trailing blank lines to the single tight-list line break.
+      contents[leftIndex] = contents[leftIndex].replace(
+        /((?:\r\n|\r|\n))(?:[ \t]*(?:\r\n|\r|\n))+[ \t]*$/,
+        "$1",
+      );
+      if (!/[\r\n]$/.test(contents[leftIndex])) {
+        contents[leftIndex] += "\n";
+      }
+      return "";
+    }
+    const requiredLineBreaks = tightListEdge ? 1 : 2;
+    const left = /[\r\n]$/.test(contents[leftIndex])
+      ? contents[leftIndex]
+      : `${contents[leftIndex]}\n`;
+    const boundary = left + candidate;
+    const existingLineBreaks = trailingBoundaryWhitespace(boundary).lineBreaks;
+    return existingLineBreaks >= requiredLineBreaks
+      ? candidate
+      : candidate + continuationLineEnding(boundary).repeat(
+        requiredLineBreaks - existingLineBreaks,
+      );
+  };
   for (let i = 0; i < n - 1; i++) {
     const a = ids[i];
     const b = ids[i + 1];
@@ -1814,24 +3118,34 @@ export function serializeWithSourcePreservation(
         bR.start <= originalBody.length
       ) {
         const gapBytes = originalBody.slice(aR.end, bR.start);
-        const synthesizedEdge = !a.preserved || !b.preserved;
-        if (synthesizedEdge && gapBytes.length === 0) {
-          gaps.push(defaultGap());
-        } else {
-          gaps.push(gapBytes);
-        }
+        const listAdjacencyIsStable =
+          currentListLayout[i] !== null &&
+          currentListLayout[i + 1] !== null &&
+          sourceBackedListAdjacencyIsUnchanged(i);
+        // Derive structural separation from the bytes actually emitted on the
+        // left. Source ranges may absorb blank lines into that block, so
+        // identity-based "either endpoint changed" rules double-insert gaps.
+        gaps.push(
+          contentWasPreserved[i] && contentWasPreserved[i + 1] &&
+              (
+                currentListLayout[i] === null ||
+                currentListLayout[i + 1] === null ||
+                listAdjacencyIsStable
+              )
+            ? gapBytes
+            : listAdjacencyIsStable
+              ? authoredListAdjacencyGap(i, gapBytes)
+              : ensureStructuralGap(i, gapBytes),
+        );
         continue;
       }
     }
-    gaps.push(defaultGap());
+    gaps.push(ensureStructuralGap(i, gapForChangedPair(i)));
   }
 
-  // Trailing whitespace: bytes after the last block's content.
-  // Preserved only if the current last block is the same as the
-  // original last block (same origIdx at the end).
   let trailing = "";
-  if (n > 0 && ids[n - 1].origIdx === originalBlocks.length - 1) {
-    const r = doc.lastChild!.attrs.sourceRange as
+  if (originalBlocks.length > 0) {
+    const r = originalBlocks[originalBlocks.length - 1].attrs.sourceRange as
       | { start: number; end: number }
       | null;
     if (r && r.end >= 0 && r.end <= originalBody.length) {
@@ -1857,7 +3171,7 @@ export function serializeWithSourcePreservation(
   let out = leading;
   for (let i = 0; i < n; i++) {
     let c = contents[i];
-    if (i < n - 1 && !c.endsWith("\n")) c = c + "\n";
+    if (i < n - 1 && !/[\r\n]$/.test(c)) c = c + "\n";
     out += c;
     if (i < n - 1) out += gaps[i];
   }

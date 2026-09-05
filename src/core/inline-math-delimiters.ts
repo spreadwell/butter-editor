@@ -54,6 +54,7 @@ export function isInlineMathSource(src: string): boolean {
   if (!isValidInlineMathOpenAt(src, 0)) return false;
   const close = src.length - 1;
   if (!isValidInlineMathCloseAt(src, close)) return false;
+  if (findInlineMathClose(src, 0, src.length) !== close) return false;
   const value = src.slice(1, -1);
   return !!value.trim() && value === value.trim();
 }

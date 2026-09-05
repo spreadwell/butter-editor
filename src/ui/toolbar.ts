@@ -11,11 +11,10 @@
  * `rebuild()` call. Settings UI calls rebuild when the user reorders,
  * adds, or removes items.
  */
-import { App, FuzzySuggestModal, Modal, Platform, TFile, setIcon } from "obsidian";
+import { App, FuzzySuggestModal, Modal, Notice, Platform, TFile, setIcon } from "obsidian";
 import {
   Plugin,
   PluginKey,
-  TextSelection,
   type EditorState,
 } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
@@ -32,10 +31,16 @@ type PMCommand = (
 import { undo, redo, undoDepth, redoDepth } from "prosemirror-history";
 import type { Layout, LayoutItem } from "./toolbar-layout";
 import {
+  commandActionIcon,
+  commandActionLabel,
+  executeObsidianCommand,
+  isObsidianCommandAvailable,
+  type CommandLayoutItem,
+} from "./command-actions";
+import {
   insertCallout,
-  insertFlatListItem,
 } from "./slash-menu";
-import { openRichContextMenu } from "./link-context-menu";
+import { openUnifiedLinkEditor } from "./link-editor";
 import { tx, txKnown, tv, type MessageKey } from "../i18n";
 import {
   cleanupMobileToolbarOverflowIndicators,
@@ -50,6 +55,23 @@ import {
   setMobileDrawerCleanup,
 } from "./insert-drawer";
 import { bindFixedPopoverToAnchor } from "../util/floating-surface";
+import {
+  attachSurfaceMotion,
+  dismissSurfaceWithMotion,
+} from "./surface-motion";
+import {
+  shiftSelectedListItemDepth,
+} from "../editor/list-operations";
+import {
+  setFlatListKindAtPositions,
+  toggleFlatListKind,
+} from "../editor/flat-list-editing";
+import { getMultiBlockSelection } from "../editor/multi-block-select";
+import { saveBlobAsAttachment } from "../editor/paste-drop";
+import {
+  clearFormatting,
+} from "../editor/formatting-actions";
+export { clearFormatting, insertMarkdownLink } from "../editor/formatting-actions";
 
 // ── Button definitions ──
 
@@ -58,7 +80,7 @@ export interface BtnDef {
   icon: string;
   label: MessageKey;
   kbd?: string;
-  kind: "mark" | "block" | "list" | "insert" | "heading" | "history";
+  kind: "mark" | "block" | "list" | "list-depth" | "insert" | "heading" | "history";
   markName?: string;
   nodeName?: string;
   attrs?: Record<string, unknown>;
@@ -66,6 +88,7 @@ export interface BtnDef {
   headingLevel?: number;
   /** For kind=history: which direction. */
   historyDir?: "undo" | "redo";
+  depthDelta?: 1 | -1;
 }
 
 const BUTTONS = {
@@ -87,18 +110,19 @@ const BUTTONS = {
     // the main face toggles `==text==` (markdown highlight); a small
     // chevron next to it opens the color palette to write `<mark
     // style="background: …">…</mark>`. When HTML formatting is
-    // off (Behavior → Formatting), only the main face renders so the
+    // off (Editor → Formatting), only the main face renders so the
     // user can't author HTML inline. See renderRegularButton.
     { id: "highlight",     icon: "highlighter",   label: "Highlight",     kbd: "Ctrl+Shift+H", kind: "mark" as const, markName: "highlight" },
     { id: "text-color",    icon: "palette",       label: "Text color",    kind: "mark" as const, markName: "font" },
     { id: "link",          icon: "link",          label: "Link",          kbd: "Ctrl+K", kind: "mark" as const, markName: "link" },
-    { id: "insert-link-md", icon: "link-2",       label: "Insert markdown link", kind: "insert" as const },
     { id: "clear-formatting", icon: "eraser",     label: "Clear formatting", kind: "insert" as const },
   ],
   block: [
     { id: "bullet-list",   icon: "list",          label: "Bullet list",   kind: "list" as const, nodeName: "bullet_list" },
     { id: "ordered-list",  icon: "list-ordered",  label: "Ordered list",  kind: "list" as const, nodeName: "ordered_list" },
     { id: "task-list",     icon: "list-checks",   label: "Task list",     kind: "list" as const, nodeName: "task_list" },
+    { id: "indent-list",   icon: "indent-increase", label: "Indent list item", kind: "list-depth" as const, depthDelta: 1 as const },
+    { id: "outdent-list",  icon: "indent-decrease", label: "Outdent list item", kind: "list-depth" as const, depthDelta: -1 as const },
     { id: "blockquote",    icon: "quote",         label: "Blockquote",    kbd: "Ctrl+Shift+B", kind: "block" as const, nodeName: "blockquote" },
     { id: "code-block",    icon: "file-code",     label: "Code block",    kind: "block" as const, nodeName: "code_block" },
     { id: "hr",            icon: "minus",         label: "Horizontal rule", kind: "insert" as const, nodeName: "horizontal_rule" },
@@ -106,6 +130,7 @@ const BUTTONS = {
   insert: [
     { id: "table", icon: "table", label: "Insert table", kind: "insert" as const, nodeName: "table" },
     { id: "image", icon: "image", label: "Insert image", kind: "insert" as const, nodeName: "image" },
+    { id: "video", icon: "video", label: "Insert video", kind: "insert" as const, nodeName: "video" },
     { id: "insert-base-inline", icon: "database", label: "Insert Base query", kind: "insert" as const },
     { id: "insert-base-embed",  icon: "file-spreadsheet", label: "Embed a Base file", kind: "insert" as const },
   ],
@@ -292,7 +317,23 @@ export function execListCmd(btn: BtnDef, schema: Schema, view: EditorView) {
   const kind: "bullet" | "ordered" | "task" =
     btn.nodeName === "ordered_list" ? "ordered" :
     btn.nodeName === "task_list" ? "task" : "bullet";
-  insertFlatListItem(view, schema, kind);
+  const multi = getMultiBlockSelection(view.state);
+  if (
+    multi.positions.length >= 2 &&
+    setFlatListKindAtPositions(
+      view.state,
+      view.dispatch.bind(view),
+      multi.positions,
+      kind,
+    )
+  ) return;
+  toggleFlatListKind(view.state, view.dispatch.bind(view), kind);
+}
+
+export function execListDepthCmd(btn: BtnDef, view: EditorView) {
+  if (btn.depthDelta === 1 || btn.depthDelta === -1) {
+    shiftSelectedListItemDepth(view, btn.depthDelta);
+  }
 }
 
 export function execInsertCmd(
@@ -300,16 +341,29 @@ export function execInsertCmd(
   schema: Schema,
   view: EditorView,
   app: App,
+  getSourcePath: () => string = () => "",
 ) {
   if (btn.nodeName === "horizontal_rule") {
     view.dispatch(view.state.tr.replaceSelectionWith(schema.nodes.horizontal_rule.create()));
   } else if (btn.nodeName === "image") {
-    new ImageUrlPromptModal(app, (src) => {
-      if (!src) return;
-      view.dispatch(view.state.tr.replaceSelectionWith(schema.nodes.image.create({ src, alt: "" })));
-    }).open();
-  } else if (btn.id === "insert-link-md") {
-    insertMarkdownLink(view, schema);
+    new ImageInsertModal(
+      app,
+      (file) => void insertPickedAttachment(app, schema, view, file, getSourcePath(), "image"),
+      (src) => {
+        view.dispatch(
+          view.state.tr.replaceSelectionWith(
+            schema.nodes.image.create({ src, alt: "" }),
+          ),
+        );
+      },
+    ).open();
+  } else if (btn.nodeName === "video") {
+    new AttachmentInsertModal(
+      app,
+      "Insert video",
+      "video/*",
+      (file) => void insertPickedAttachment(app, schema, view, file, getSourcePath(), "video"),
+    ).open();
   } else if (btn.id.startsWith("callout-")) {
     insertCallout(view, schema, btn.id.slice("callout-".length));
   } else if (btn.id === "insert-base-inline") {
@@ -370,40 +424,61 @@ class BaseFilePickerModal extends FuzzySuggestModal<TFile> {
   }
 }
 
-/** Small modal that asks for an image URL and reports it via callback.
- *  Replaces a previous `prompt()` call that the Obsidian directory
- *  review flags as a UX violation. */
-class ImageUrlPromptModal extends Modal {
-  private onSubmit: (src: string | null) => void;
-
-  constructor(app: App, onSubmit: (src: string | null) => void) {
+/** Desktop image insertion dialog: save a picked local image through
+ * Obsidian's attachment policy, with a URL insertion fallback. */
+class ImageInsertModal extends Modal {
+  constructor(
+    app: App,
+    private readonly onFile: (file: File) => void,
+    private readonly onUrl: (src: string) => void,
+  ) {
     super(app);
-    this.onSubmit = onSubmit;
   }
 
   onOpen() {
     const { contentEl, titleEl } = this;
     titleEl.setText(tx("Insert image"));
-    const wrap = contentEl.createDiv({ cls: "butter-image-url-modal" });
-    wrap.createDiv({ cls: "butter-image-url-label", text: tx("Image URL") });
-    const input = wrap.createEl("input", {
+    const wrap = contentEl.createDiv({ cls: "butter-image-insert-options" });
+    const pickBtn = wrap.createEl("button", {
+      cls: "butter-image-file-option mod-cta",
+      text: tx("Pick from device"),
+    });
+    pickBtn.addEventListener("click", () => {
+      const picker = activeWindow.createEl("input");
+      picker.type = "file";
+      picker.accept = "image/*";
+      picker.addClass("butter-image-file-input");
+      picker.addEventListener("change", () => {
+        const file = picker.files?.[0];
+        if (!file) return;
+        this.close();
+        this.onFile(file);
+      }, { once: true });
+      activeDocument.body.appendChild(picker);
+      picker.click();
+      window.setTimeout(() => picker.remove(), 60_000);
+    });
+
+    const urlWrap = wrap.createDiv({ cls: "butter-image-url-modal" });
+    urlWrap.createDiv({ cls: "butter-image-url-label", text: tx("Image URL") });
+    const input = urlWrap.createEl("input", {
       type: "text",
       placeholder: "https://...",
       cls: "butter-image-url-input",
     });
     input.focus();
-    const actions = wrap.createDiv({ cls: "butter-image-url-actions" });
+    const actions = urlWrap.createDiv({ cls: "butter-image-url-actions" });
     const cancelBtn = actions.createEl("button", { text: tx("Cancel") });
     const okBtn = actions.createEl("button", { text: tx("Insert"), cls: "mod-cta" });
     const submit = () => {
       const value = input.value.trim();
+      if (!value) return;
       this.close();
-      this.onSubmit(value || null);
+      this.onUrl(value);
     };
     okBtn.addEventListener("click", submit);
     cancelBtn.addEventListener("click", () => {
       this.close();
-      this.onSubmit(null);
     });
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
@@ -412,7 +487,6 @@ class ImageUrlPromptModal extends Modal {
       } else if (e.key === "Escape") {
         e.preventDefault();
         this.close();
-        this.onSubmit(null);
       }
     });
   }
@@ -422,37 +496,126 @@ class ImageUrlPromptModal extends Modal {
   }
 }
 
-/** Insert a markdown-style link at the current selection. If text is
- *  selected, applies the link mark with an empty href (user edits via
- *  right-click). If selection is empty, inserts a placeholder "link
- *  text" string with the link mark applied + selected, so the user
- *  can immediately type to replace the placeholder. The link's href
- *  starts as `https://` so right-click "Edit link" lands the cursor
- *  in a valid template. */
-function insertMarkdownLink(view: EditorView, schema: Schema) {
-  const markType = schema.marks.link;
-  if (!markType) return;
-  const { selection, tr } = view.state;
-  if (!selection.empty) {
-    // Has selection - just toggle the link mark on it.
-    if (toggleMark(markType, { href: "https://" })(view.state, view.dispatch.bind(view))) {
-      view.focus();
-    }
-    return;
+/** File-only attachment picker used for media that is represented by a
+ * native Obsidian embed rather than a Butter-specific node. */
+class AttachmentInsertModal extends Modal {
+  constructor(
+    app: App,
+    private readonly title: MessageKey,
+    private readonly accept: string,
+    private readonly onFile: (file: File) => void,
+  ) {
+    super(app);
   }
-  const placeholder = tx("link text");
-  const linkMark = markType.create({ href: "https://" });
-  const textNode = schema.text(placeholder, [linkMark]);
-  const insertPos = selection.from;
-  const inserted = tr.replaceSelectionWith(textNode, false);
-  // Select the just-inserted placeholder so the next keystroke
-  // replaces it (link mark is preserved as long as the selection
-  // stays inside the text node).
-  inserted.setSelection(
-    TextSelection.create(inserted.doc, insertPos, insertPos + placeholder.length),
-  );
-  view.dispatch(inserted);
-  view.focus();
+
+  onOpen() {
+    this.titleEl.setText(tx(this.title));
+    const pickBtn = this.contentEl.createEl("button", {
+      cls: "butter-image-file-option mod-cta",
+      text: tx("Pick from device"),
+    });
+    pickBtn.addEventListener("click", () => {
+      const picker = activeWindow.createEl("input");
+      picker.type = "file";
+      picker.accept = this.accept;
+      picker.addClass("butter-image-file-input");
+      picker.addEventListener("change", () => {
+        const file = picker.files?.[0];
+        if (!file) return;
+        this.close();
+        this.onFile(file);
+      }, { once: true });
+      activeDocument.body.appendChild(picker);
+      picker.click();
+      window.setTimeout(() => picker.remove(), 60_000);
+    });
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+export async function insertPickedAttachment(
+  app: App,
+  schema: Schema,
+  view: EditorView,
+  file: File,
+  sourcePath: string,
+  kind: "image" | "video" = "image",
+): Promise<void> {
+  let saved: TFile | null = null;
+  let inserted = false;
+  try {
+    saved = await saveBlobAsAttachment(
+      app,
+      file,
+      file.name,
+      sourcePath,
+      true,
+    );
+    if (!saved) return;
+    if (view.isDestroyed) {
+      if (app.vault.getAbstractFileByPath(saved.path) === saved) {
+        await app.fileManager.trashFile(saved);
+      }
+      return;
+    }
+
+    const { selection } = view.state;
+    const { $from } = selection;
+    const blockEmbed = schema.nodes.obsidian_embed;
+    const inlineEmbed = schema.nodes.obsidian_embed_inline;
+    if (
+      blockEmbed &&
+      selection.empty &&
+      $from.depth === 1 &&
+      $from.parent.type.name === "paragraph" &&
+      $from.parent.content.size === 0
+    ) {
+      view.dispatch(
+        view.state.tr.replaceWith(
+          $from.before(),
+          $from.after(),
+          blockEmbed.create({ src: saved.path }),
+        ),
+      );
+      inserted = true;
+    } else if (inlineEmbed) {
+      view.dispatch(
+        view.state.tr.replaceSelectionWith(
+          inlineEmbed.create({ src: saved.path }),
+        ),
+      );
+      inserted = true;
+    } else if (kind === "image") {
+      view.dispatch(
+        view.state.tr.replaceSelectionWith(
+          schema.nodes.image.create({ src: saved.path, alt: "" }),
+        ),
+      );
+      inserted = true;
+    } else {
+      throw new Error("This editor schema cannot insert native attachment embeds.");
+    }
+    view.focus();
+  } catch (error) {
+    if (
+      saved &&
+      !inserted &&
+      app.vault.getAbstractFileByPath(saved.path) === saved
+    ) {
+      try {
+        await app.fileManager.trashFile(saved);
+      } catch {
+        // The original insertion error is the actionable failure. Attachment
+        // cleanup is best-effort and must not hide it behind a second notice.
+      }
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    const prefix = kind === "video" ? tx("Failed to save video:") : tx("Failed to save image:");
+    new Notice(`${prefix} ${message}`);
+  }
 }
 
 export function insertTable(schema: Schema, view: EditorView, rows: number, cols: number) {
@@ -1044,6 +1207,23 @@ function applyHighlightColor(
   if (options.addToHistory === false) tr.setMeta("addToHistory", false);
   view.dispatch(tr);
   if (options.refocusEditor ?? true) view.focus();
+}
+
+/** Shared color surface seam for non-toolbar editor controls. */
+export function toolbarColorChoices(
+  kind: "text" | "highlight",
+): ReadonlyArray<{ name: string; value: string }> {
+  return palettePresets(kind);
+}
+
+export function applyToolbarColor(
+  schema: Schema,
+  view: EditorView,
+  kind: "text" | "highlight",
+  color: string | null,
+): void {
+  const apply = kind === "text" ? applyTextColor : applyHighlightColor;
+  apply(schema, view, color);
 }
 
 /** Build a compact color palette popover with default/custom slots,
@@ -1654,7 +1834,7 @@ export function openMobileColorSheet(
 ): void {
   const apply = kind === "text" ? applyTextColor : applyHighlightColor;
   const plugin = app.plugins?.plugins["butter-editor"] as
-    | { openSettings?: (subtab?: "general" | "behavior" | "toolbar" | "advanced" | "license", section?: string) => void }
+    | { openSettings?: (subtab?: "general" | "editor" | "drag-drop" | "toolbar" | "context-menu" | "advanced" | "license" | "support", section?: string) => void }
     | undefined;
   const snapshot = captureColorSnapshot(schema, view, kind);
   openColorDrawer({
@@ -2291,62 +2471,15 @@ function openToolbarLinkMenu(
   schema: Schema,
   view: EditorView,
   anchor: HTMLElement,
+  sourcePath = "",
 ): void {
-  // Match the right-click link menu UX - same chrome (header tile,
-  // 240px width, animation), same field rows. Differences vs. that
-  // menu: this one is for INSERTING a fresh link, so the action set
-  // is just "Insert" + "Cancel" rather than nav / Clear, and the
-  // sub-text shows a contextual hint for what the user typed.
-  const sel = view.state.selection;
-  const selectedText = sel.empty
-    ? ""
-    : view.state.doc.textBetween(sel.from, sel.to);
-
-  const insert = (values: Record<string, string>): void => {
-    const detected = classifyLinkInput(values.target || "");
-    if (!detected) return;
-    applyLink(schema, view, detected, values.text || undefined);
-    view.focus();
-  };
-
-  openRichContextMenu({
+  void schema;
+  openUnifiedLinkEditor({
     app,
+    view,
     anchor,
-    chrome: {
-      icon: "link",
-      title: tx("Add link"),
-      sub: tx("URL or note name"),
-    },
-    fields: [
-      {
-        id: "target",
-        label: tx("Link"),
-        icon: "link-2",
-        placeholder: tx("https://... or note name"),
-        // Dual-purpose field - attach the vault-files suggester but
-        // suppress its dropdown when the typed value clearly looks
-        // like a URL (has a scheme, or a domain-shaped TLD). That
-        // way "https://example" doesn't pop a "no results" panel,
-        // while "MyNote" still gets fuzzy note suggestions.
-        autocomplete: "vault-files",
-        suggestSkipWhen: (raw) => looksLikeExternalUrl(raw),
-      },
-      {
-        id: "text",
-        label: tx("Display text"),
-        icon: "type",
-        initial: selectedText,
-        placeholder: tx("Optional"),
-      },
-    ],
-    actions: [
-      {
-        label: tx("Insert"),
-        icon: "check",
-        onClick: (v) => insert(v),
-      },
-    ],
-    onCommit: (values) => insert(values),
+    sourcePath,
+    autoFocus: true,
   });
 }
 
@@ -2374,7 +2507,11 @@ export interface RenderCtx {
   buttonMap: Map<string, Set<HTMLElement>>;
   submenuMap: Map<string, HTMLElement>;
   submenuChildMap: Map<string, string[]>;
+  commandMap: Map<string, { item: CommandLayoutItem; elements: Set<HTMLElement> }>;
   getView: () => EditorView | null;
+  /** Mobile-only keyboard dismissal owned by ButterEditorView. */
+  dismissMobileKeyboard?: () => void;
+  getSourcePath: () => string;
   /** Resolves the live layout. Used by mobile-only renderers
    *  (variants popover, overflow sheet) which need to walk the
    *  current layout to populate their UI. */
@@ -2409,6 +2546,16 @@ function registerButtonEl(
   else buttonMap.set(id, new Set([el]));
 }
 
+function registerCommandEl(
+  commandMap: RenderCtx["commandMap"],
+  item: CommandLayoutItem,
+  el: HTMLElement,
+): void {
+  const existing = commandMap.get(item.id);
+  if (existing) existing.elements.add(el);
+  else commandMap.set(item.id, { item, elements: new Set([el]) });
+}
+
 function collectButtonIds(items: LayoutItem[]): string[] {
   const ids: string[] = [];
   for (const item of items) {
@@ -2416,29 +2563,6 @@ function collectButtonIds(items: LayoutItem[]): string[] {
     else if (item.type === "submenu") ids.push(...collectButtonIds(item.children));
   }
   return ids;
-}
-
-/** Strip every styling mark off the current selection. Mirrors the
- *  Word / Google Docs "Clear formatting" semantic: removes bold,
- *  italic, color, highlight, underline, sub/sup, kbd, etc., but keeps
- *  `link` (semantic content, not styling). On a collapsed selection
- *  it clears storedMarks so the next-typed character starts fresh.
- *
- *  Touches inline marks only - block-level types (heading, blockquote,
- *  code_block, callout) are content shape, not formatting, and a
- *  separate command handles those. */
-export function clearFormatting(view: EditorView, schema: Schema): void {
-  const { from, to, empty } = view.state.selection;
-  const tr = view.state.tr;
-  if (empty) {
-    tr.setStoredMarks([]);
-  } else {
-    for (const name of Object.keys(schema.marks)) {
-      if (name === "link") continue;
-      tr.removeMark(from, to, schema.marks[name]);
-    }
-  }
-  view.dispatch(tr);
 }
 
 /** Read `enableHtmlFormatting` off the plugin without taking a direct
@@ -2491,10 +2615,10 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
     e.preventDefault();
     ctx.closePopover();
     const view = ctx.getView();
-    if (!view) return;
+    if (!view || !view.editable) return;
 
-    if (def.id === "link") {
-      openToolbarLinkMenu(ctx.app, ctx.schema, view, el);
+    if (def.id === "link" || def.id === "insert-link-md") {
+      openToolbarLinkMenu(ctx.app, ctx.schema, view, el, ctx.getSourcePath());
       return;
     }
     if (def.id === "clear-formatting") {
@@ -2552,13 +2676,35 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
     if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
     else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
     else if (def.kind === "list") execListCmd(def, ctx.schema, view);
-    else if (def.kind === "insert") execInsertCmd(def, ctx.schema, view, ctx.app);
+    else if (def.kind === "list-depth") execListDepthCmd(def, view);
+    else if (def.kind === "insert") {
+      execInsertCmd(def, ctx.schema, view, ctx.app, ctx.getSourcePath);
+    }
     else if (def.kind === "heading") setHeading(ctx.schema, view, def.headingLevel ?? 0);
     else if (def.kind === "history") execHistoryCmd(def, view);
 
     window.setTimeout(() => view.focus(), 0);
   });
 
+  return el;
+}
+
+function renderCommandButton(item: CommandLayoutItem, ctx: RenderCtx): HTMLElement {
+  const el = activeWindow.createEl("button");
+  el.classList.add("butter-btn", "clickable-icon", "butter-btn-command");
+  el.setAttribute("aria-label", commandActionLabel(ctx.app, item));
+  el.dataset.commandItemId = item.id;
+  el.dataset.commandId = item.commandId;
+  setIcon(el, commandActionIcon(ctx.app, item));
+  registerCommandEl(ctx.commandMap, item, el);
+
+  el.addEventListener("click", (event) => {
+    event.preventDefault();
+    ctx.closePopover();
+    const view = ctx.getView();
+    if (!view?.editable || !isObsidianCommandAvailable(ctx.app, item.commandId)) return;
+    executeObsidianCommand(ctx.app, item.commandId);
+  });
   return el;
 }
 
@@ -2591,6 +2737,7 @@ function renderSubmenuButton(
     popup.setAttribute("role", "menu");
     popup.setAttribute("aria-label", item.label ? txKnown(item.label) : tx("Submenu"));
     const popupButtons: Array<{ id: string; el: HTMLElement }> = [];
+    const popupCommands: Array<{ id: string; el: HTMLElement }> = [];
 
     for (const child of item.children) {
       const childEl = renderItem(child, ctx, /* nested */ true);
@@ -2598,6 +2745,8 @@ function renderSubmenuButton(
         childEl.setAttribute("role", "menuitem");
         const childId = childEl.dataset.btnId;
         if (childId) popupButtons.push({ id: childId, el: childEl });
+        const commandItemId = childEl.dataset.commandItemId;
+        if (commandItemId) popupCommands.push({ id: commandItemId, el: childEl });
         popup.appendChild(childEl);
       }
     }
@@ -2607,6 +2756,12 @@ function renderSubmenuButton(
         if (!set) continue;
         set.delete(el);
         if (set.size === 0) ctx.buttonMap.delete(id);
+      }
+      for (const { id, el } of popupCommands) {
+        const entry = ctx.commandMap.get(id);
+        if (!entry) continue;
+        entry.elements.delete(el);
+        if (entry.elements.size === 0) ctx.commandMap.delete(id);
       }
     };
     if (popup.children.length === 0) {
@@ -2620,12 +2775,16 @@ function renderSubmenuButton(
     const view = ctx.getView();
     if (view) {
       updateActiveStates(
+        ctx.app,
         ctx.buttonMap,
         ctx.submenuMap,
         ctx.submenuChildMap,
+        ctx.commandMap,
         ctx.schema,
         view,
       );
+      const toolbar = el.closest<HTMLElement>(".butter-toolbar");
+      if (toolbar) refreshRovingTabindex(toolbar, el);
     }
 
     // Keyboard-triggered clicks should land on the first item for
@@ -2651,28 +2810,44 @@ function renderSubmenuButton(
  *  via arrow keys, but skipped by Tab). Arrow keys move focus
  *  across visible buttons; Home/End jump to the ends. Hidden
  *  buttons (display:none) are skipped during navigation. */
+function getRovingButtons(toolbar: HTMLElement): HTMLElement[] {
+  return Array.from(
+    toolbar.querySelectorAll<HTMLElement>(".butter-btn"),
+  ).filter(
+    (el) =>
+      el.offsetParent !== null &&
+      !(el as HTMLButtonElement).disabled &&
+      el.getAttribute("aria-disabled") !== "true",
+  );
+}
+
+function refreshRovingTabindex(
+  toolbar: HTMLElement,
+  preferred: HTMLElement | null = null,
+): void {
+  const all = Array.from(
+    toolbar.querySelectorAll<HTMLElement>(".butter-btn"),
+  );
+  const focusables = getRovingButtons(toolbar);
+  const current =
+    (preferred && focusables.includes(preferred) ? preferred : null) ??
+    focusables.find((el) => el.tabIndex === 0) ??
+    focusables[0] ??
+    null;
+  for (const button of all) button.tabIndex = button === current ? 0 : -1;
+}
+
 function installRovingTabindex(toolbar: HTMLElement): void {
-  const getFocusable = (): HTMLElement[] => {
-    const all = Array.from(
-      toolbar.querySelectorAll<HTMLElement>(".butter-btn"),
-    );
-    return all.filter((el) => el.offsetParent !== null);
-  };
 
   // Initial state: first focusable button is the tab-stop.
-  const focusables = getFocusable();
-  for (let i = 0; i < focusables.length; i++) {
-    focusables[i].tabIndex = i === 0 ? 0 : -1;
-  }
+  refreshRovingTabindex(toolbar);
 
   // On focus inside the toolbar, sync the roving index so Tab returns
   // to whichever button the user last focused.
   toolbar.addEventListener("focusin", (e) => {
     const target = e.target as HTMLElement;
     if (!target.classList.contains("butter-btn")) return;
-    for (const btn of getFocusable()) {
-      btn.tabIndex = btn === target ? 0 : -1;
-    }
+    refreshRovingTabindex(toolbar, target);
   });
 
   toolbar.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -2683,9 +2858,9 @@ function installRovingTabindex(toolbar: HTMLElement): void {
       e.key !== "End"
     )
       return;
-    const list = getFocusable();
+    const list = getRovingButtons(toolbar);
     if (list.length === 0) return;
-    const current = activeDocument.activeElement as HTMLElement | null;
+    const current = toolbar.ownerDocument.activeElement as HTMLElement | null;
     let idx = current ? list.indexOf(current) : -1;
     if (idx === -1) idx = 0;
     let next = idx;
@@ -2711,26 +2886,35 @@ function renderItem(
     if (nested) return null;
     return renderSubmenuButton(item, ctx);
   }
+  if (item.type === "command") return renderCommandButton(item, ctx);
+  if (item.type === "overflow") return null;
   return renderRegularButton(item.id, ctx);
 }
 
 // ── State update ──
 
 function updateActiveStates(
+  app: App,
   buttonMap: Map<string, Set<HTMLElement>>,
   submenuMap: Map<string, HTMLElement>,
   submenuChildMap: Map<string, string[]>,
+  commandMap: RenderCtx["commandMap"],
   schema: Schema,
   view: EditorView,
 ) {
   const { state } = view;
   const activeHeading = getActiveHeadingLevel(state, schema);
+  const editorEditable = view.editable;
   const activeById = new Map<string, boolean>();
 
   for (const btn of ALL_BUTTONS) {
     const els = buttonMap.get(btn.id);
 
     let active = false;
+    for (const el of els ?? []) {
+      el.classList.toggle("is-disabled", !editorEditable);
+      (el as HTMLButtonElement).disabled = !editorEditable;
+    }
     if (btn.kind === "mark" && btn.markName) {
       const mt = schema.marks[btn.markName];
       if (mt) active = isMarkActive(state, mt);
@@ -2754,7 +2938,7 @@ function updateActiveStates(
       // `prosemirror-history` and reflect the live history stack.
       const depthRaw: unknown =
         btn.historyDir === "redo" ? redoDepth(state) : undoDepth(state);
-      const enabled = typeof depthRaw === "number" && depthRaw > 0;
+      const enabled = editorEditable && typeof depthRaw === "number" && depthRaw > 0;
       for (const el of els ?? []) {
         el.classList.toggle("is-disabled", !enabled);
         (el as HTMLButtonElement).disabled = !enabled;
@@ -2770,6 +2954,17 @@ function updateActiveStates(
     const childIds = submenuChildMap.get(submenuId) ?? [];
     const active = childIds.some((id) => activeById.get(id) === true);
     el.classList.toggle("is-active", active);
+    el.classList.toggle("is-disabled", !editorEditable);
+    (el as HTMLButtonElement).disabled = !editorEditable;
+  }
+
+  for (const { item, elements } of commandMap.values()) {
+    const enabled = editorEditable && isObsidianCommandAvailable(app, item.commandId);
+    for (const el of elements) {
+      el.classList.toggle("is-disabled", !enabled);
+      (el as HTMLButtonElement).disabled = !enabled;
+      el.setAttribute("aria-label", commandActionLabel(app, item));
+    }
   }
 }
 
@@ -2937,10 +3132,13 @@ export function createToolbar(
   getLayout: () => Layout,
   getMobileStyle: () => "detached" | "attached" = () => "attached",
   serializeNode?: (node: import("prosemirror-model").Node) => string,
+  getSourcePath: () => string = () => "",
+  dismissMobileKeyboard?: () => void,
 ): { dom: HTMLElement; plugin: Plugin; rebuild: () => void } {
   const buttonMap = new Map<string, Set<HTMLElement>>();
   const submenuMap = new Map<string, HTMLElement>();
   const submenuChildMap = new Map<string, string[]>();
+  const commandMap: RenderCtx["commandMap"] = new Map();
   const isMobile = Platform.isMobile ?? false;
 
   let editorViewRef: EditorView | null = null;
@@ -2949,10 +3147,11 @@ export function createToolbar(
   let popoverCleanup: (() => void) | null = null;
 
   const closePopover = () => {
-    if (activePopover) {
-      runToolbarPopoverCleanup(activePopover);
-      activePopover.remove();
-      activePopover = null;
+    const closingPopover = activePopover;
+    activePopover = null;
+    if (closingPopover) {
+      runToolbarPopoverCleanup(closingPopover);
+      dismissSurfaceWithMotion(closingPopover, () => closingPopover.remove());
     }
     if (activePopoverAnchor) {
       // Reset aria-expanded so screen readers no longer announce the
@@ -2976,6 +3175,12 @@ export function createToolbar(
     const shouldPlace = !popup.style.position && !popup.classList.contains("butter-pos-fixed")
       && !popup.classList.contains("butter-pos-fixed-popover")
       && !popup.classList.contains("butter-mobile-popup-placed");
+    attachSurfaceMotion(
+      popup,
+      popup.classList.contains("butter-toolbar-submenu-popup")
+        ? "submenu"
+        : "popover",
+    );
     activeDocument.body.appendChild(popup);
     const positionCleanup = shouldPlace
       ? bindFixedPopoverToAnchor(popup, anchor)
@@ -3031,7 +3236,10 @@ export function createToolbar(
     buttonMap,
     submenuMap,
     submenuChildMap,
+    commandMap,
     getView: () => editorViewRef,
+    dismissMobileKeyboard,
+    getSourcePath,
     getLayout,
     closePopover,
     setPopover,
@@ -3052,6 +3260,7 @@ export function createToolbar(
     buttonMap.clear();
     submenuMap.clear();
     submenuChildMap.clear();
+    commandMap.clear();
     dom.classList.add("butter-toolbar");
     dom.setAttribute("role", "toolbar");
     dom.setAttribute("data-active-style", activeStyle);
@@ -3080,7 +3289,8 @@ export function createToolbar(
   const rebuild = () => {
     render();
     if (editorViewRef) {
-      updateActiveStates(buttonMap, submenuMap, submenuChildMap, schema, editorViewRef);
+      updateActiveStates(app, buttonMap, submenuMap, submenuChildMap, commandMap, schema, editorViewRef);
+      refreshRovingTabindex(dom);
     }
   };
 
@@ -3094,7 +3304,8 @@ export function createToolbar(
     key: toolbarPluginKey,
     view(editorView) {
       editorViewRef = editorView;
-      updateActiveStates(buttonMap, submenuMap, submenuChildMap, schema, editorView);
+      updateActiveStates(app, buttonMap, submenuMap, submenuChildMap, commandMap, schema, editorView);
+      refreshRovingTabindex(dom);
 
       return {
         update(view, prevState) {
@@ -3104,7 +3315,8 @@ export function createToolbar(
             view.state.doc.eq(prevState.doc)
           )
             return;
-          updateActiveStates(buttonMap, submenuMap, submenuChildMap, schema, view);
+          updateActiveStates(app, buttonMap, submenuMap, submenuChildMap, commandMap, schema, view);
+          refreshRovingTabindex(dom);
         },
         destroy() {
           closePopover();

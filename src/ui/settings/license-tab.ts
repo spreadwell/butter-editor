@@ -1,4 +1,5 @@
 import { Setting, Notice, setIcon } from "obsidian";
+import type { ButtonComponent } from "obsidian";
 import { ButterSettingTab, DeactivateConfirmModal } from "../settings-tab";
 import type { DeviceWireRecord } from "../../integration/license/client";
 import { LicenseClientError } from "../../integration/license/client";
@@ -12,13 +13,55 @@ import {
   tv,
 } from "../../i18n";
 
+export type LicensePhase =
+  | "unlicensed"
+  | "polling"
+  | "trial"
+  | "valid"
+  | "expired"
+  | "unknown"
+  | "offline"
+  | "deactivated"
+  | "invalidated";
+
+const LICENSE_PHASE_ICONS: Readonly<Record<LicensePhase, string>> = {
+  unlicensed: "badge-alert",
+  polling: "loader-2",
+  trial: "hourglass",
+  valid: "badge-check",
+  expired: "badge-x",
+  unknown: "badge-alert",
+  offline: "wifi-off",
+  deactivated: "monitor-x",
+  invalidated: "shield-alert",
+};
+
+export function licensePhaseIcon(phase: LicensePhase): string {
+  return LICENSE_PHASE_ICONS[phase];
+}
+
+/** Use Obsidian 1.13's destructive-button styling while retaining the
+ * existing 1.7.2 compatibility floor. */
+function styleDestructiveButton(button: ButtonComponent): ButtonComponent {
+  const compatible = button as unknown as {
+    setDestructive?: () => unknown;
+    setWarning?: () => unknown;
+  };
+  if (typeof compatible.setDestructive === "function") {
+    compatible.setDestructive();
+    return button;
+  }
+  compatible.setWarning?.();
+  return button;
+}
+
 /**
    * License tab - four-zone layout: brand stamp, hero, settings
    * card, destructive footer. Below the polished frame the Device
-   * + Support sections render as plain native Obsidian setting stacks
-   * for utility access (device id, diagnostic copy, docs/issues/
-   * email/privacy/terms links). Trial activation morphs the frame in
-   * place via `pendingTrialActivation`.
+   * + Devices section renders as plain native Obsidian setting stacks.
+   * Help, diagnostics, and policy links live on the separate Support page.
+   * Trial activation morphs the frame in place via
+   * `pendingTrialActivation`.
    */
   export function renderLicense(this: ButterSettingTab, root: HTMLElement) {
     // Bump the generation so any in-flight poll-tick from a prior
@@ -39,7 +82,6 @@ import {
     this.renderRowsFor(section, phase);
 
     this.renderDevicesSection(root);
-    this.renderSupportSection(root);
 
     // If we're in the polling phase, kick the inline poll. Idempotent
     // because we cleared the timer above.
@@ -56,8 +98,7 @@ import {
    *  has been validated before but we couldn't reach the worker on
    *  the most recent attempt and the last successful check is more
    *  than an hour old. */
-  export function computeLicensePhase(this: ButterSettingTab): | "unlicensed" | "polling" | "trial" | "valid" | "expired" | "unknown"
-    | "offline" | "deactivated" | "invalidated" {
+  export function computeLicensePhase(this: ButterSettingTab): LicensePhase {
     if (this.plugin.isActivatingTrialFlow) return "polling";
     const s = this.plugin.settings;
     const pending = s.pendingTrialActivation;
@@ -135,7 +176,7 @@ export function renderUnlicensedRows(this: ButterSettingTab, parent: HTMLElement
             b.setButtonText(tx("Purchase"))
               .onClick(() => { this.openCheckoutAndPoll(); }),
           );
-      prependIcon(row, "badge-alert", "butter-license-icon-muted");
+      prependIcon(row, licensePhaseIcon("unlicensed"), "butter-license-icon-muted");
     } else {
       const row = new Setting(parent)
         .setName(tx("License required"))
@@ -144,7 +185,7 @@ export function renderUnlicensedRows(this: ButterSettingTab, parent: HTMLElement
           b.setButtonText(tx("Purchase")).setCta()
             .onClick(() => { this.openCheckoutAndPoll(); }),
         );
-      prependIcon(row, "badge-alert", "butter-license-icon-muted");
+      prependIcon(row, licensePhaseIcon("unlicensed"), "butter-license-icon-muted");
     }
 
     this.renderPasteKeyRow(parent, /* asUpdate */ false);
@@ -160,7 +201,7 @@ export function renderPollingRows(this: ButterSettingTab, parent: HTMLElement) {
     const row = new Setting(parent)
       .setName(tx("Activating trial..."))
       .setDesc(tx(desc));
-    prependIcon(row, "loader-2", "butter-activating-spinner");
+    prependIcon(row, licensePhaseIcon("polling"), "butter-activating-spinner");
   }
 
 export function renderTrialRows(this: ButterSettingTab, parent: HTMLElement) {
@@ -181,7 +222,7 @@ export function renderTrialRows(this: ButterSettingTab, parent: HTMLElement) {
         b.setButtonText(tx("Purchase")).setCta()
           .onClick(() => { this.openCheckoutAndPoll(); }),
       );
-    prependIcon(row, "hourglass", "butter-license-icon-trial");
+    prependIcon(row, licensePhaseIcon("trial"), "butter-license-icon-trial");
     this.renderKeyRow(parent);
     this.renderPasteKeyRow(parent, /* asUpdate */ true);
   }
@@ -192,7 +233,12 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
     const row = new Setting(parent)
       .setName(`${tx("Lifetime License")} - ${tierLabel}`)
       .setDesc(tx("Thanks for buying Butter - yours, forever."));
-    prependIcon(row, "badge-check", "butter-license-icon-paid");
+    const phase = this.computeLicensePhase();
+    prependIcon(
+      row,
+      licensePhaseIcon(phase === "offline" ? "offline" : "valid"),
+      phase === "offline" ? "butter-license-icon-muted" : "butter-license-icon-paid",
+    );
     row
       .addButton((b) =>
         b.setButtonText(tx("Manage license")).setCta()
@@ -225,9 +271,10 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
    *  set by refreshLicenseStatus when /session returns
    *  device_deactivated. Cleared on next successful activation. */
   export function renderDeactivatedRows(this: ButterSettingTab, parent: HTMLElement) {
-    new Setting(parent)
+    const row = new Setting(parent)
       .setName(tx("Device deactivated"))
       .setDesc(tx("This install was removed from your license from another device. Paste your key to add it back."));
+    prependIcon(row, licensePhaseIcon("deactivated"), "butter-license-icon-muted");
     this.renderPasteKeyRow(parent, /* asUpdate */ false);
     this.renderRecoveryRow(parent);
   }
@@ -239,18 +286,19 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
   export function renderInvalidatedRows(this: ButterSettingTab, parent: HTMLElement) {
     const s = this.plugin.settings;
     const reason = this.reasonCopyFor(s.lastReason);
-    new Setting(parent)
+    const row = new Setting(parent)
       .setName(tx("License could not be verified"))
-      .setDesc(tv("We couldn't validate your license. {reason}", { reason }))
+      .setDesc(tv("The license couldn't be validated. {reason}", { reason }))
       .addButton((b) =>
         b.setButtonText(tx("Re-check")).setCta().onClick(async () => {
           await this.plugin.refreshLicenseStatus();
-          (this as unknown as { display: () => void }).display();
+          this.refreshSettingsUi();
         }),
       );
+    prependIcon(row, licensePhaseIcon("invalidated"), "butter-license-icon-expired");
     new Setting(parent)
       .setName(tx("Contact support"))
-      .setDesc(tx("If this is unexpected, get in touch and we'll sort it."))
+      .setDesc(tx("If this is unexpected, contact support for help."))
       .addButton((b) =>
         b.setButtonText(tx("Email")).onClick(() => {
           window.open(`mailto:${LINKS.supportEmail}`, "_blank");
@@ -272,7 +320,7 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
       case "client_upgrade_required":
         return tx("Update Butter Editor to continue using this license.");
       case "network":
-        return tx("We couldn't reach the licensing server.");
+        return tx("The licensing server couldn't be reached.");
       default:
         return tx("Try again, or contact support if this persists.");
     }
@@ -298,7 +346,7 @@ export function renderLifetimeRows(this: ButterSettingTab, parent: HTMLElement) 
         b.setButtonText(tx("Purchase")).setCta()
           .onClick(() => { this.openCheckoutAndPoll(); }),
       );
-    prependIcon(row, "badge-x", "butter-license-icon-expired");
+    prependIcon(row, licensePhaseIcon("expired"), "butter-license-icon-expired");
     this.renderPasteKeyRow(parent, /* asUpdate */ false);
   }
 
@@ -308,7 +356,7 @@ export function renderUnknownRows(this: ButterSettingTab, parent: HTMLElement) {
       const row = new Setting(parent)
         .setName(tx("Update Butter Editor to continue using this license."))
         .setDesc(tx("This license requires a newer version of Butter Editor."));
-      prependIcon(row, "badge-alert", "butter-license-icon-muted");
+      prependIcon(row, licensePhaseIcon("unknown"), "butter-license-icon-muted");
       this.renderPasteKeyRow(parent, /* asUpdate */ false);
       return;
     }
@@ -316,7 +364,7 @@ export function renderUnknownRows(this: ButterSettingTab, parent: HTMLElement) {
       .setName(tx("Checking license..."))
       .setDesc(tx("Verifying with the licensing server."))
       .addButton((b) => b.setButtonText(tx("Checking...")).setDisabled(true));
-    prependIcon(row, "badge-alert", "butter-license-icon-muted");
+    prependIcon(row, licensePhaseIcon("unknown"), "butter-license-icon-muted");
   }
 
 // ── Trial / time formatters (used by hero meta) ──────────────
@@ -430,7 +478,7 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
     let recoverEmail = "";
     new Setting(parent)
       .setName(tx("Lost your key?"))
-      .setDesc(tx("We'll email a one-time access link to recover your licenses."))
+      .setDesc(tx("A one-time access link will be emailed to recover your licenses."))
       .addText((t) =>
         t.setPlaceholder("you@example.com")
           .onChange((v) => { recoverEmail = v.trim(); }),
@@ -485,7 +533,6 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
       });
     }
 
-    this.renderDeviceUtilities(section);
   }
 
 /** Pulse-skeleton rows for the in-flight device fetch. Two rows
@@ -514,7 +561,7 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
       .setDesc(tv("Activated {date}{extra}", { date: activated, extra: lastSeen }));
       setting.addButton((b) => {
         b.setButtonText(tx("Deactivate"));
-        (b as unknown as { setWarning: () => typeof b }).setWarning();
+        styleDestructiveButton(b);
         b.onClick(() => {
         if (device.isCurrent) {
           new DeactivateConfirmModal(this.app, async () => {
@@ -542,7 +589,7 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
       .setDesc(desc)
       .addButton((b) => {
         b.setButtonText(tx("Deactivate"));
-        (b as unknown as { setWarning: () => typeof b }).setWarning();
+        styleDestructiveButton(b);
         b.onClick(() => {
           new DeactivateConfirmModal(this.app, async () => {
             await this.deactivateCurrentDevice();
@@ -586,64 +633,6 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
           }
         }),
       );
-  }
-
-// ── Section 3: Support ──────────────────────────────────────
-
-  export function renderSupportSection(this: ButterSettingTab, root: HTMLElement) {
-    const section = this.createSettingGroup(root, tx("Support"), undefined);
-
-    new Setting(section)
-      .setName(tx("Documentation"))
-      .setDesc(tx("Read the docs and FAQ."))
-      .addButton((b) =>
-        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.docs, "_blank"); }),
-      );
-
-    new Setting(section)
-      .setName(tx("Report an issue"))
-      .setDesc(tx("GitHub issue tracker."))
-      .addButton((b) =>
-        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.issues, "_blank"); }),
-      );
-
-    new Setting(section)
-      .setName(tx("Community thread"))
-      .setDesc(tx("Obsidian forum thread."))
-      .addButton((b) =>
-        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.forum, "_blank"); }),
-      );
-
-    new Setting(section)
-      .setName(tx("Email support"))
-      .setDesc(LINKS.supportEmail)
-      .addButton((b) =>
-        b.setButtonText(tx("Email")).onClick(() => {
-          window.open(`mailto:${LINKS.supportEmail}`, "_blank");
-        }),
-      );
-
-    new Setting(section)
-      .setName(tx("Privacy policy"))
-      .addButton((b) =>
-        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.privacy, "_blank"); }),
-      );
-
-    new Setting(section)
-      .setName(tx("Terms of service"))
-      .addButton((b) =>
-        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.terms, "_blank"); }),
-      );
-
-    new Setting(section)
-      .setName(tx("Refund policy"))
-      .addButton((b) =>
-        b.setButtonText(tx("Open")).onClick(() => { window.open(LINKS.refunds, "_blank"); }),
-      );
-
-    new Setting(section)
-      .setName(tx("Plugin version"))
-      .setDesc(`v${this.plugin.manifest.version}`);
   }
 
 // Section 4: Diagnostics

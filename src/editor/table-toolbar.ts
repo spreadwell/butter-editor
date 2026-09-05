@@ -424,7 +424,7 @@ function renderTableButton(
     : activeWindow.createEl("button");
   el.className = isMobile
     ? "mobile-toolbar-option clickable-icon"
-    : "butter-table-toolbar-btn clickable-icon";
+    : "butter-table-toolbar-btn butter-context-toolbar-btn clickable-icon";
   el.setAttribute("aria-label", tx(def.label));
   el.dataset.btnId = def.id;
   setIcon(el, def.icon);
@@ -453,7 +453,7 @@ function renderTableSubmenu(
     : activeWindow.createEl("button");
   el.className = isMobile
     ? "mobile-toolbar-option clickable-icon butter-btn-submenu"
-    : "butter-table-toolbar-btn clickable-icon butter-btn-submenu";
+    : "butter-table-toolbar-btn butter-context-toolbar-btn clickable-icon butter-btn-submenu";
   el.setAttribute("aria-label", item.label ? txKnown(item.label) : tx("Submenu"));
   el.dataset.submenuId = item.id;
   setIcon(el, item.icon || "more-horizontal");
@@ -660,8 +660,8 @@ export function tableToolbarPlugin(
         // rules in styles.css are body-scoped to `body:not(.is-mobile)`
         // so an accidental mount in a mobile context wouldn't pick
         // up these styles.
-        dom.classList.add("butter-table-toolbar");
-        inner.classList.add("butter-table-toolbar-inner");
+        dom.classList.add("butter-table-toolbar", "butter-context-toolbar");
+        inner.classList.add("butter-table-toolbar-inner", "butter-context-toolbar-inner");
       }
       // Don't blur the editor on toolbar click.
       dom.addEventListener("mousedown", (e) => e.preventDefault());

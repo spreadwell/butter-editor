@@ -13,11 +13,18 @@ import {
   TRIAL_LENGTH_DAYS,
 } from "./policy";
 
-export const LICENSE_PROTOCOL_VERSION = "2";
+export const LICENSE_PROTOCOL_VERSION = "3";
 export const LICENSE_PROTOCOL_HEADER = "x-butter-license-protocol";
 
 export type ActivationIntent = "refresh" | "activate";
 export type LicenseType = "trial" | "lifetime";
+
+export interface CredentialMigrationDirective {
+  state: "bridging" | "retired";
+  retireLegacyCredentials: boolean;
+  retireAfter: string;
+  graceDays: number;
+}
 
 export interface IssuedSessionResponse {
   sessionToken: string;
@@ -31,6 +38,7 @@ export interface IssuedSessionResponse {
   licenseExpiresAt?: string | null;
   trialLengthDays?: number;
   deviceLimit?: number;
+  credentialMigration?: CredentialMigrationDirective;
 }
 
 /** Legacy-compatible response used when a trial device has already bought a
@@ -137,6 +145,28 @@ export function parseSessionResponse(value: unknown): SessionResponse | null {
   const deviceLimit = boundedInteger(body.deviceLimit, 1, 100);
   if (trialLengthDays !== undefined) parsed.trialLengthDays = trialLengthDays;
   if (deviceLimit !== undefined) parsed.deviceLimit = deviceLimit;
+
+  const migration = asRecord(body.credentialMigration);
+  if (migration) {
+    const retireAfter = isoDateString(migration.retireAfter);
+    const graceDays = boundedInteger(migration.graceDays, 1, 365);
+    const state = migration.state;
+    const retire = migration.retireLegacyCredentials;
+    if (
+      (state === "bridging" || state === "retired")
+      && typeof retire === "boolean"
+      && retireAfter
+      && graceDays !== undefined
+      && ((state === "bridging" && !retire) || (state === "retired" && retire))
+    ) {
+      parsed.credentialMigration = {
+        state,
+        retireLegacyCredentials: retire,
+        retireAfter,
+        graceDays,
+      };
+    }
+  }
 
   return parsed;
 }

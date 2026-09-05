@@ -1,3 +1,4 @@
+import { restoreOwnedViewport } from "./util/viewport-operation";
 import {
   Plugin,
   MarkdownView,
@@ -9,30 +10,37 @@ import {
   Platform,
   TFile,
   WorkspaceLeaf,
+  requireApiVersion,
 } from "obsidian";
 
 // Extension registration must happen before schema.ts or obsidian-md-bridge
 // evaluate their module bodies. Example extensions are not activated in
 // shipped builds.
-import { parser } from "./core/parser";
 import { serializer } from "./core/serializer";
-import { normalize as normalizeSource } from "./core/normalize";
 import { debug, setVerbose, recordError, getErrorLog, clearErrorLog } from "./integration/debug";
 
 
 import {
   type LayoutItem as ToolbarLayoutItem,
   defaultMainLayout,
-  backfillMissingButtons,
   defaultTableLayout,
   migrateFromHiddenList,
   migrateLegacyHeadingButton,
+  removeButtonsById,
+  replaceButtonId,
   mobileLayoutDefault,
   mobileTableLayoutDefault,
 } from "./ui/toolbar-layout";
 export type { ToolbarLayoutItem };
 import { toggleMark } from "prosemirror-commands";
 import type { MarkType } from "prosemirror-model";
+import {
+  contextMenuDefaultLayout,
+  migrateContextMenuLayoutV3,
+  migrateContextMenuLayoutV4,
+  migrateLegacyContextMenuLayout,
+  normalizeContextMenuLayout,
+} from "./editor/context-menu-layout";
 
 
 
@@ -40,6 +48,7 @@ import type { MarkType } from "prosemirror-model";
 import { openFind, openReplace } from "./editor/search-plugin";
 import {
   installSaveStatus,
+  type SaveState,
   type SaveStatusController,
 } from "./ui/save-status";
 import { SaveDiffModal } from "./ui/save-diff-modal";
@@ -49,15 +58,49 @@ import { ShortcutHelpModal } from "./ui/shortcut-help";
 import { ButterOutlineView, VIEW_TYPE_BUTTER_OUTLINE } from "./ui/outline-view";
 import { scrollHost } from "./util/dom-utils";
 import {
+  BUTTER_VIEWPORT_STATE_KEY,
+  clampUnit,
+  elementViewportFraction,
+  restoreElementViewport,
+  restoreViewportProgress,
+  viewportProbeOffset,
+  viewportProgress,
+  type ButterViewportAnchor,
+} from "./util/view-viewport";
+import {
   markNameForFormattingHotkey,
   patchNativeFormattingCommands,
   type NativeFormattingCommandRecord,
 } from "./util/native-formatting-commands";
+import {
+  patchNativeSearchCommands,
+  type NativeSearchAction,
+  type NativeSearchCommandRecord,
+} from "./util/native-search-commands";
 import { ButterSettingTab } from "./ui/settings-tab";
 import { setPresetColorsProvider } from "./ui/toolbar";
 import { installWordCountBridge } from "./ui/wordcount-bridge";
 import { WelcomeModal } from "./ui/welcome-modal";
+import {
+  ButterWhatsNewView,
+  VIEW_TYPE_BUTTER_WHATS_NEW,
+} from "./ui/whats-new-view";
+import {
+  LATEST_WHATS_NEW_RELEASE,
+  initializeWhatsNewState,
+  shouldAutoOpenWhatsNew,
+  shouldShowWhatsNewCard,
+  whatsNewRelease,
+} from "./integration/whats-new";
+import {
+  hasVisitedFeature,
+  initializeFeatureDiscoverySettings,
+  pendingFeatureAnnouncement,
+  type FeatureAnnouncement,
+  type FeatureDiscoverySurface,
+} from "./ui/feature-discovery";
 import { LicenseClient, LicenseClientError, setPluginVersion } from "./integration/license/client";
+import { LicenseCredentialStorage } from "./integration/license/credential-storage";
 import {
   DEFAULT_STORED_LICENSE_METADATA,
   resolveSessionLicenseMetadata,
@@ -75,6 +118,7 @@ import {
   getI18nLanguage,
   setI18nLanguage,
   tx,
+  txKnown,
   tv,
   type ButterLanguageSetting,
   type MessageKey,
@@ -82,36 +126,47 @@ import {
 import {
   BUTTER_HOVER_SOURCE,
 } from "./editor/nodeviews";
+import {
+  DEFAULT_CONTAINER_DRAG_TRIGGER_OFFSET_PX,
+  DEFAULT_DRAG_COMPACTION_TRIGGER_PX,
+  DEFAULT_DRAG_COMPACTED_HEIGHT_PX,
+  DEFAULT_DRAG_TRIGGER_OFFSET_PX,
+  resolveDragCompactionGeometry,
+  resolveDragTriggerOffsetPx,
+} from "./editor/drag-handles/constants";
+import {
+  DEFAULT_MARKDOWN_SHORTCUT_SETTINGS,
+  normalizeMarkdownShortcutSettings,
+  type MarkdownShortcutSettings,
+} from "./editor/markdown-shortcuts";
 
 export const VIEW_TYPE_BUTTER = "butter-editor";
 export const VIEW_TYPE_BUTTER_LOCKED = "butter-locked-file";
 import { ButterLockedFileView } from "./views/ButterLockedFileView";
 import { ButterEditorView } from "./views/ButterEditorView";
 import { ErrorLogModal } from "./ui/modals/ErrorLogModal";
-import { CanonicalizeVaultModal } from "./ui/modals/CanonicalizeVaultModal";
 
 // ═══════════════════════════════════════════
 //  View-swap helpers - preserve caret across mode changes
 // ═══════════════════════════════════════════
 
 /**
- * Swap a Butter view's leaf to MarkdownView while preserving the
- * user's sense of place - which is dominated by the heading they
- * were currently reading under, not a precise caret position. We
- * capture the topmost above-the-fold heading's source-markdown line
- * and pass it as `eState.line`; MarkdownView's built-in handler
- * scrolls to that line.
+ * Swap a Butter view's leaf to MarkdownView while preserving the rendered
+ * content under the viewport probe. The old heading-only fallback remains for
+ * unusual documents whose blocks do not expose source geometry.
  */
-function swapButterToMarkdown(view: ButterEditorView) {
+async function swapButterToMarkdown(view: ButterEditorView) {
   if (!view.file) return;
-  const line = view.visibleHeadingLine();
-  void view.leaf.setViewState(
+  const anchor = view.captureViewportAnchor();
+  const fallbackLine = view.visibleHeadingLine();
+  await view.leaf.setViewState(
     {
       type: "markdown",
       state: { file: view.file.path, mode: "source" },
     },
-    { line },
+    anchor ? { [BUTTER_VIEWPORT_STATE_KEY]: anchor } : { line: fallbackLine },
   );
+  if (anchor) await restoreViewportAfterSwap(view.leaf, anchor);
 }
 
 /**
@@ -138,12 +193,277 @@ function getCurrentMode(leaf: WorkspaceLeaf): ButterViewMode | null {
   return null;
 }
 
-/** Capture current visible heading line for scroll preservation. */
+/** Capture the legacy heading fallback when exact viewport geometry is absent. */
 function captureLine(leaf: WorkspaceLeaf): number {
   const view = leaf.view;
   if (view instanceof ButterEditorView) return view.visibleHeadingLine();
   if (view instanceof MarkdownView) return visibleHeadingLineMD(view);
   return 0;
+}
+
+function mappedReadingElements(
+  view: MarkdownView,
+): Array<{
+  element: HTMLElement;
+  line: number;
+  startOffset?: number;
+  endOffset?: number;
+}> {
+  const previewEl: HTMLElement | null =
+    view.containerEl.querySelector(".markdown-preview-view") ??
+    view.previewMode?.containerEl ??
+    null;
+  if (!previewEl) return [];
+  const mapped: Array<{
+    element: HTMLElement;
+    line: number;
+    startOffset?: number;
+    endOffset?: number;
+  }> = [];
+  const previewMode = view.previewMode as typeof view.previewMode & {
+    renderer?: {
+      sections?: Array<{
+        el?: HTMLElement;
+        start?: { line?: number; offset?: number };
+        end?: { line?: number; offset?: number };
+      }>;
+    };
+  };
+  for (const section of previewMode?.renderer?.sections ?? []) {
+    const element = section.el;
+    const line = section.start?.line;
+    if (!(element instanceof HTMLElement) || !Number.isFinite(line) || (line ?? -1) < 0) {
+      continue;
+    }
+    const rect = element.getBoundingClientRect();
+    if (rect.height <= 0) continue;
+    const startOffset = section.start?.offset;
+    const endOffset = section.end?.offset;
+    mapped.push({
+      element,
+      line: Math.floor(line ?? 0),
+      startOffset: Number.isFinite(startOffset) ? startOffset : undefined,
+      endOffset: Number.isFinite(endOffset) ? endOffset : undefined,
+    });
+  }
+  if (mapped.length > 0) return mapped;
+  for (const element of Array.from(previewEl.querySelectorAll<HTMLElement>("[data-line]"))) {
+    const line = Number(element.getAttribute("data-line"));
+    if (!Number.isFinite(line) || line < 0) continue;
+    const rect = element.getBoundingClientRect();
+    if (rect.height <= 0) continue;
+    mapped.push({ element, line: Math.floor(line) });
+  }
+  return mapped;
+}
+
+function sourceOffsetAtLine(source: string, line: number): number {
+  let offset = 0;
+  for (let current = 0; current < Math.max(0, Math.floor(line)); current++) {
+    const next = source.indexOf("\n", offset);
+    if (next < 0) return source.length;
+    offset = next + 1;
+  }
+  return offset;
+}
+
+function sourceLineAtOffset(source: string, offset: number): number {
+  const clamped = Math.max(0, Math.min(source.length, Math.floor(offset)));
+  return source.slice(0, clamped).split("\n").length - 1;
+}
+
+function captureMarkdownViewport(view: MarkdownView): ButterViewportAnchor | null {
+  if (view.getMode?.() === "preview") {
+    const previewEl: HTMLElement | null =
+      view.containerEl.querySelector(".markdown-preview-view") ??
+      view.previewMode?.containerEl ??
+      null;
+    if (!previewEl) return null;
+    const host = scrollHost(previewEl) ?? previewEl;
+    const hostRect = host.getBoundingClientRect();
+    const probeOffset = viewportProbeOffset(host);
+    const probeY = hostRect.top + probeOffset;
+    let candidate: {
+      element: HTMLElement;
+      line: number;
+      startOffset?: number;
+      endOffset?: number;
+      distance: number;
+      height: number;
+      top: number;
+    } | null = null;
+    for (const mapped of mappedReadingElements(view)) {
+      const rect = mapped.element.getBoundingClientRect();
+      if (rect.bottom < hostRect.top || rect.top > hostRect.bottom) continue;
+      const distance = probeY < rect.top
+        ? rect.top - probeY
+        : probeY > rect.bottom
+          ? probeY - rect.bottom
+          : 0;
+      if (
+        !candidate ||
+        distance < candidate.distance ||
+        (distance === candidate.distance && rect.height < candidate.height) ||
+        (distance === candidate.distance && rect.height === candidate.height &&
+          rect.top > candidate.top)
+      ) candidate = { ...mapped, distance, height: rect.height, top: rect.top };
+    }
+    if (!candidate) {
+      return {
+        version: 1,
+        sourceOffset: sourceOffsetAtLine(view.getViewData(), visibleHeadingLineMD(view)),
+        line: visibleHeadingLineMD(view),
+        fraction: 0,
+        probeOffset,
+        progress: viewportProgress(host),
+      };
+    }
+    const fraction = elementViewportFraction(host, candidate.element, probeOffset);
+    const source = view.getViewData();
+    const hasOffsetRange = candidate.startOffset != null && candidate.endOffset != null &&
+      candidate.endOffset >= candidate.startOffset;
+    const sourceOffset = hasOffsetRange
+      ? Math.round(candidate.startOffset! +
+          (candidate.endOffset! - candidate.startOffset!) * fraction)
+      : sourceOffsetAtLine(source, candidate.line);
+    return {
+      version: 1,
+      sourceOffset,
+      line: hasOffsetRange ? sourceLineAtOffset(source, sourceOffset) : candidate.line,
+      fraction,
+      probeOffset,
+      progress: viewportProgress(host),
+    };
+  }
+
+  const cm = view.editor?.cm as {
+    scrollDOM?: HTMLElement;
+    state?: { doc?: { lineAt(pos: number): { number: number } } };
+    lineBlockAtHeight?(height: number): { from: number; top: number; height: number };
+  } | undefined;
+  const host = cm?.scrollDOM;
+  if (!cm || !host || !cm.state?.doc || !cm.lineBlockAtHeight) return null;
+  const probeOffset = viewportProbeOffset(host);
+  try {
+    const block = cm.lineBlockAtHeight(host.scrollTop + probeOffset);
+    const line = cm.state.doc.lineAt(block.from).number - 1;
+    return {
+      version: 1,
+      sourceOffset: block.from,
+      line: Math.max(0, line),
+      fraction: block.height > 0
+        ? clampUnit((host.scrollTop + probeOffset - block.top) / block.height)
+        : 0,
+      probeOffset,
+      progress: viewportProgress(host),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function restoreMarkdownViewport(
+  view: MarkdownView,
+  anchor: ButterViewportAnchor,
+): boolean {
+  if (view.getMode?.() === "preview") {
+    const previewEl: HTMLElement | null =
+      view.containerEl.querySelector(".markdown-preview-view") ??
+      view.previewMode?.containerEl ??
+      null;
+    if (!previewEl) return false;
+    const host = scrollHost(previewEl) ?? previewEl;
+    const mapped = mappedReadingElements(view);
+    const exactOffset = anchor.sourceOffset == null
+      ? undefined
+      : mapped
+          .filter((item) => item.startOffset != null && item.endOffset != null &&
+            item.startOffset <= anchor.sourceOffset! && anchor.sourceOffset! <= item.endOffset)
+          .sort((a, b) =>
+            (a.endOffset! - a.startOffset!) - (b.endOffset! - b.startOffset!)
+          )[0];
+    const exact = exactOffset ?? mapped
+      .filter((item) => item.line === Math.floor(anchor.line))
+      .sort((a, b) =>
+        a.element.getBoundingClientRect().height - b.element.getBoundingClientRect().height
+      )[0];
+    const nearest = exact ?? mapped.sort((a, b) =>
+      Math.abs(a.line - anchor.line) - Math.abs(b.line - anchor.line)
+    )[0];
+    if (nearest) {
+      const sectionFraction = anchor.sourceOffset != null &&
+          nearest.startOffset != null && nearest.endOffset != null &&
+          nearest.endOffset > nearest.startOffset
+        ? clampUnit(
+            (anchor.sourceOffset - nearest.startOffset) /
+              (nearest.endOffset - nearest.startOffset),
+          )
+        : anchor.fraction;
+      restoreElementViewport(host, nearest.element, { ...anchor, fraction: sectionFraction });
+    }
+    else restoreViewportProgress(host, anchor.progress);
+    return true;
+  }
+
+  const cm = view.editor?.cm as {
+    scrollDOM?: HTMLElement;
+    state?: {
+      doc?: {
+        length: number;
+        lines: number;
+        line(number: number): { from: number };
+      };
+    };
+    lineBlockAt?(pos: number): { top: number; height: number };
+  } | undefined;
+  const host = cm?.scrollDOM;
+  const doc = cm?.state?.doc;
+  if (!cm || !host || !doc || !cm.lineBlockAt) return false;
+  try {
+    const lineNumber = Math.max(1, Math.min(doc.lines, Math.floor(anchor.line) + 1));
+    const lineStart = doc.line(lineNumber).from;
+    const sourceOffset = anchor.sourceOffset == null
+      ? lineStart
+      : Math.max(0, Math.min(doc.length, anchor.sourceOffset));
+    const block = cm.lineBlockAt(sourceOffset);
+    const max = Math.max(0, host.scrollHeight - host.clientHeight);
+    host.scrollTop = Math.max(
+      0,
+      Math.min(
+        max,
+        block.top + clampUnit(anchor.fraction) * block.height - anchor.probeOffset,
+      ),
+    );
+    return true;
+  } catch {
+    restoreViewportProgress(host, anchor.progress);
+    return true;
+  }
+}
+
+async function restoreViewportAfterSwap(
+  leaf: WorkspaceLeaf,
+  anchor: ButterViewportAnchor,
+): Promise<void> {
+  const target = leaf.view;
+  if (!(target instanceof ButterEditorView || target instanceof MarkdownView)) return;
+  const file = target.file;
+  const mode = target instanceof MarkdownView ? target.getMode?.() : "butter";
+  await restoreOwnedViewport(leaf, target.containerEl,
+    () => leaf.view === target && target.file === file &&
+      (target instanceof MarkdownView ? target.getMode?.() : "butter") === mode,
+    () => {
+      const restored = target instanceof ButterEditorView
+        ? target.restoreViewportAnchor(anchor) : restoreMarkdownViewport(target, anchor);
+      return restored && mode !== "preview";
+    });
+}
+
+function captureViewport(leaf: WorkspaceLeaf): ButterViewportAnchor | null {
+  const view = leaf.view;
+  if (view instanceof ButterEditorView) return view.captureViewportAnchor();
+  if (view instanceof MarkdownView) return captureMarkdownViewport(view);
+  return null;
 }
 
 /** Switch a leaf to the requested mode. No-op if already there. */
@@ -159,7 +479,11 @@ async function switchToMode(
       : null;
   if (!file) return;
   if (getCurrentMode(leaf) === mode) return;
+  const anchor = captureViewport(leaf);
   const line = captureLine(leaf);
+  const ephemeralState = anchor
+    ? { [BUTTER_VIEWPORT_STATE_KEY]: anchor }
+    : { line };
 
   if (mode === "butter") {
     await leaf.setViewState(
@@ -167,8 +491,9 @@ async function switchToMode(
         type: VIEW_TYPE_BUTTER,
         state: { file: file.path },
       },
-      { line },
+      ephemeralState,
     );
+    if (anchor) await restoreViewportAfterSwap(leaf, anchor);
     return;
   }
 
@@ -181,8 +506,9 @@ async function switchToMode(
         source: mode === "source",
       },
     },
-    { line },
+    ephemeralState,
   );
+  if (anchor) await restoreViewportAfterSwap(leaf, anchor);
 }
 
 /** Cycle the leaf to the next mode in the user's configured list. */
@@ -222,9 +548,6 @@ const LOCALIZED_COMMAND_NAMES = {
   "open-outline": "Open outline view",
   "toggle-frontmatter-visibility": "Toggle frontmatter visibility",
   "toggle-comments": "Toggle comments",
-  "normalize-current-note": "Tidy whitespace in current note",
-  "canonicalize-current-note": "Rewrite current note in standard format",
-  "canonicalize-vault": "Rewrite entire vault in standard format (irreversible - back up first)",
   "show-recent-errors": "Show recent errors",
 } as const satisfies Record<string, MessageKey>;
 
@@ -241,21 +564,21 @@ export function modeIcon(mode: ButterViewMode): string {
 }
 
 /**
- * Swap a MarkdownView's leaf to Butter while preserving the visible
- * heading. For CM6 (Live Preview / Source) we read the scroll
- * position from CM6 and find the last heading at-or-above the top
- * of the viewport. For Reading mode, we scan heading DOM rects.
+ * Swap a MarkdownView's leaf to Butter while preserving the source row and
+ * within-row position currently under the viewport probe.
  */
-function swapMarkdownToButter(view: MarkdownView) {
+async function swapMarkdownToButter(view: MarkdownView) {
   if (!view.file) return;
-  const line = visibleHeadingLineMD(view);
-  void view.leaf.setViewState(
+  const anchor = captureMarkdownViewport(view);
+  const fallbackLine = visibleHeadingLineMD(view);
+  await view.leaf.setViewState(
     {
       type: VIEW_TYPE_BUTTER,
       state: { file: view.file.path },
     },
-    { line },
+    anchor ? { [BUTTER_VIEWPORT_STATE_KEY]: anchor } : { line: fallbackLine },
   );
+  if (anchor) await restoreViewportAfterSwap(view.leaf, anchor);
 }
 
 /**
@@ -366,8 +689,8 @@ export interface ButterSettings {
   enableSuggestBridge: boolean;
   /** Enable rich paste + file drop. */
   enablePasteDrop: boolean;
-  /** Turn typed Markdown patterns into formatting while editing. */
-  enableMarkdownShortcuts: boolean;
+  /** Independently control which typed Markdown patterns become formatting. */
+  markdownShortcuts: MarkdownShortcutSettings;
   /** Open .md files in Butter automatically. When ON, any markdown
    *  file opened (via Open Quickly, file explorer click, internal
    *  link, new-note creation, etc.) is switched to the Butter view
@@ -398,14 +721,8 @@ export interface ButterSettings {
    *   • integrated: reserve the view-header row for a compact toolbar.
    */
   toolbarStyle: "attached" | "detached" | "integrated";
-  /**
-   * In integrated toolbar mode, show the inline title as a pill to
-   * the right of the nav buttons (uses Obsidian's view-header title).
-   * When off, the title is hidden in the view header - useful for
-   * users who already have the filename in their tab strip and don't
-   * want the redundancy.
-   */
-  integratedShowTitle: boolean;
+  /** Show the desktop note filename on Butter's rounded header pill. */
+  showFilenamePill: boolean;
   /**
    * Which view modes the cycle action button rotates through, in
    * order. Default includes all four. User can pare down (e.g. just
@@ -414,16 +731,11 @@ export interface ButterSettings {
    * regardless of this setting.
    */
   viewCycleModes: Array<"source" | "live" | "reading" | "butter">;
-  /**
-   * Experimental: run Obsidian-registered CM6 extensions against a
-   * hidden mirror view and surface their decorations inside Butter.
-   * Enables inline widget rendering for Dataview inline, Tasks inline,
-   * Templater live, etc. - at the cost of more memory + CPU per edit.
-   */
-  enableCM6Bridge: boolean;
   frontmatterVisibility: "match" | "visible" | "hidden";
   showComments: boolean;
   showListIndentGuides: boolean;
+  /** Show Butter's clean/warning save-state icon in Obsidian's status bar. */
+  showSaveStatusIcon: boolean;
   /**
    * When on, use Butter's own outline sidebar and disable the core
    * Obsidian Outline plugin (avoids two outlines competing). When
@@ -436,10 +748,17 @@ export interface ButterSettings {
   /** Whether the gutter handle only appears on block hover or
    *  persists on the nearest block at all times. */
   dragHandleVisibility: "hover" | "always";
-  /** Px of "earliness" for the block-drag slot swap. Higher commits the
-   *  swap sooner (less travel); 0 makes the dragged block fully clear
-   *  its neighbor first. Applied symmetrically up/down. */
-  blockDragSensitivity: number;
+  /** Signed px offset from the adjacent slot's exact landing position.
+   * Positive triggers early; negative requires passing the destination. */
+  blockDragTriggerOffsetPx: number;
+  /** Signed px offset used when crossing or entering/exiting callouts and quotes. */
+  blockDragContainerTriggerOffsetPx: number;
+  /** Natural multi-selection height above which Butter compacts its drag footprint. */
+  dragCompactionTriggerPx: number;
+  /** Target height used by a compact multi-selection preview and live footprint. */
+  dragCompactedHeightPx: number;
+  /** Mouse-only defense against extremely brief switch-release dropouts. */
+  mouseReleaseProtection: "off" | "automatic" | "strong";
   /**
    * Advanced - Canonical form preferences.
    *
@@ -573,6 +892,15 @@ export interface ButterSettings {
    *  the user curate a thumb-friendly set of cell actions
    *  separate from the desktop layout. */
   mobileTableToolbarLayout: ToolbarLayoutItem[] | null;
+  /** Ordered built-in actions, submenus, dividers, and dynamic Obsidian/core
+   *  plus third-party contribution slots shown in the general context menu. */
+  contextMenuLayout: ToolbarLayoutItem[] | null;
+  /** Schema version for the unified context-menu tree. */
+  contextMenuLayoutVersion: 4;
+  /** Durable per-announcement acknowledgements for contextual feature hints. */
+  acknowledgedFeatureAnnouncements: string[];
+  /** Feature surfaces already opened; controls lightweight settings badges. */
+  visitedFeatureDiscoveries: string[];
   /** Visual style for the mobile toolbars (main + table).
    *   • `"attached"` (default) - Butter's own thumb-optimized look:
    *     44×44 buttons, backdrop blur, accent-tinted swap buttons.
@@ -600,11 +928,19 @@ export interface ButterSettings {
    */
   hasCompletedOnboarding: boolean;
 
+  /** Durable release-discovery state. Fresh installs are baselined silently;
+   * existing installs receive one stable-release tab and a seven-day card. */
+  whatsNewInitialized: boolean;
+  whatsNewAutoOpen: boolean;
+  whatsNewReleaseVersion: string;
+  whatsNewFirstSeenAt: number;
+  whatsNewDismissedVersion: string;
+  whatsNewAutoOpenedVersion: string;
+
   // ── License ──────────────────────────────────────────────────────
   // The Cloudflare Worker at https://api.buttereditor.com is the
-  // source of truth. The plugin caches a signed session token here
-  // (7-day TTL) so it doesn't need to hit the network on every load,
-  // and reads it back on `loadSettings()` to compute `licenseStatus`.
+  // source of truth. The plugin caches a signed session token locally
+  // (7-day TTL) so it doesn't need to hit the network on every load.
 
   /** Per-install random UUID v4. Generated on first load if missing.
    *  Used as the device identifier for trial dedupe + session tokens.
@@ -623,6 +959,11 @@ export interface ButterSettings {
   /** HMAC-signed session payload returned by /session. Cached so
    *  subsequent plugin loads don't need to re-validate online. */
   sessionToken: string;
+
+  /** Synced, non-secret tombstone. Once the Worker authorizes retirement,
+   * every updated installation omits the transitional plaintext key/token
+   * from data.json and cannot reintroduce them during settings sync. */
+  credentialStorageRetired: boolean;
 
   /** ms-epoch when sessionToken expires. ~7 days from issue. When
    *  within 1 day of expiry, plugin re-validates online on next load. */
@@ -765,22 +1106,26 @@ const DEFAULT_SETTINGS: ButterSettings = {
   presetHighlightColors: [...DEFAULT_PRESET_HIGHLIGHT_COLORS],
   enableSuggestBridge: true,
   enablePasteDrop: true,
-  enableMarkdownShortcuts: false,
+  markdownShortcuts: { ...DEFAULT_MARKDOWN_SHORTCUT_SETTINGS },
   openNewFilesInButter: true,
   disableAnimations: false,
   toolbarActiveStyle: "soft",
   toolbarPosition: "top",
   toolbarStyle: "attached",
-  integratedShowTitle: true,
+  showFilenamePill: false,
   viewCycleModes: ["source", "live", "reading", "butter"],
-  enableCM6Bridge: false,
   frontmatterVisibility: "match",
   showComments: false,
   showListIndentGuides: true,
+  showSaveStatusIcon: false,
   useButterOutline: true,
   dragMotion: "springy",
   dragHandleVisibility: "hover",
-  blockDragSensitivity: 4,
+  blockDragTriggerOffsetPx: DEFAULT_DRAG_TRIGGER_OFFSET_PX,
+  blockDragContainerTriggerOffsetPx: DEFAULT_CONTAINER_DRAG_TRIGGER_OFFSET_PX,
+  dragCompactionTriggerPx: DEFAULT_DRAG_COMPACTION_TRIGGER_PX,
+  dragCompactedHeightPx: DEFAULT_DRAG_COMPACTED_HEIGHT_PX,
+  mouseReleaseProtection: "automatic",
   canonicalBullet: "-",
   canonicalItalic: "*",
   canonicalBold: "**",
@@ -800,9 +1145,19 @@ const DEFAULT_SETTINGS: ButterSettings = {
   mobileToolbarLayout: null,
   tableToolbarLayout: null,
   mobileTableToolbarLayout: null,
+  contextMenuLayout: null,
+  contextMenuLayoutVersion: 4,
+  acknowledgedFeatureAnnouncements: [],
+  visitedFeatureDiscoveries: [],
   mobileToolbarStyle: "attached",
   statusBarHoverFade: true,
   hasCompletedOnboarding: false,
+  whatsNewInitialized: false,
+  whatsNewAutoOpen: true,
+  whatsNewReleaseVersion: "",
+  whatsNewFirstSeenAt: 0,
+  whatsNewDismissedVersion: "",
+  whatsNewAutoOpenedVersion: "",
   // License defaults - empty / zero. `deviceId` is generated on first
   // `loadSettings()` if still empty. `everValidated` stays false until
   // /session succeeds at least once.
@@ -810,6 +1165,7 @@ const DEFAULT_SETTINGS: ButterSettings = {
   licenseKey: "",
   customerId: "",
   sessionToken: "",
+  credentialStorageRetired: false,
   sessionExpiresAt: 0,
   lastValidatedAt: 0,
   everValidated: false,
@@ -851,7 +1207,7 @@ const BUTTER_BODY_CLASSES = [
   "butter-mobile-table-active",
   "butter-mobile-prefer-main",
   "butter-mobile-drawer-open",
-  "butter-is-dragging",
+  "butter-is-drag-scene-v2",
   "butter-cell-drag-active",
   "butter-cell-drag-copy",
   "butter-table-drag-active",
@@ -870,16 +1226,20 @@ export default class ButterEditorPlugin extends Plugin {
    *  save outcome: clean (round-tripped) or normalized (structure was
    *  altered to satisfy the parser). */
   private saveStatus: SaveStatusController | null = null;
+  /** Retained even while the optional status-bar surface is disabled. */
+  private saveStatusState: SaveState = { kind: "clean" };
   /** Reference to our settings tab so callers (e.g. the toolbar's
    *  right-click "Settings" item) can pre-select a sub-tab before
    *  opening the modal. */
   private settingTab: ButterSettingTab | null = null;
   private nativeFormattingCommandRestorers: Array<() => void> = [];
+  private nativeSearchCommandRestorers: Array<() => void> = [];
   private restoreHotkeyManagerFormattingBridge: (() => void) | null = null;
   private handledFormattingHotkeyEvents = new WeakSet<object>();
 
   /** Worker client for licensing. Initialized in onload(). */
   licenseClient!: LicenseClient;
+  private credentialStorage: LicenseCredentialStorage | null = null;
 
   /** Computed on every load + on demand; NOT persisted (the underlying
    *  state is in `settings.sessionToken` etc.). Drives read-only
@@ -970,6 +1330,9 @@ export default class ButterEditorPlugin extends Plugin {
     this.settings.wasDeactivated = false;
     this.settings.wasInvalidated = false;
     this.settings.lastReason = "";
+    if (this.credentialStorage?.applyServerDirective(session.credentialMigration)) {
+      this.settings.credentialStorageRetired = true;
+    }
   }
 
   /** Open Obsidian Settings to Butter's tab, optionally jumping to a
@@ -978,14 +1341,17 @@ export default class ButterEditorPlugin extends Plugin {
   openSettings(
     subtab?:
       | "general"
-      | "behavior"
+      | "editor"
+      | "drag-drop"
       | "toolbar"
+      | "context-menu"
       | "advanced"
-      | "license",
+      | "license"
+      | "support",
     section?: string,
   ): void {
     if (subtab && this.settingTab) {
-      this.settingTab.activeTab = subtab;
+      this.settingTab.requestPage(subtab);
     }
     if (section && this.settingTab) {
       this.settingTab.pendingFocusSection = section;
@@ -1049,7 +1415,7 @@ export default class ButterEditorPlugin extends Plugin {
       if (this.licenseStatus === "valid") {
         this.stopUpgradePolling();
         this.app.workspace.trigger("butter:license-updated");
-        (this.settingTab as { display?: () => void })?.display?.();
+        this.settingTab?.refreshSettingsUi();
       }
     } catch {
       // refreshLicenseStatus is defensive, but keep the checkout poll
@@ -1404,13 +1770,12 @@ export default class ButterEditorPlugin extends Plugin {
     const origGetActiveViewOfType = this.app.workspace.getActiveViewOfType.bind(this.app.workspace);
     const wsPatched = this.app.workspace as unknown as {
       getActiveViewOfType: (type: { name?: string }) => unknown;
-      activeLeaf: WorkspaceLeaf | null;
       _butterActiveEditorProxied?: boolean;
       activeEditor: unknown;
     };
     wsPatched.getActiveViewOfType = (type: { name?: string }) => {
       if (type && type.name === "MarkdownView") {
-        const activeLeaf = wsPatched.activeLeaf;
+        const activeLeaf = this.app.workspace.getMostRecentLeaf();
         if (activeLeaf && activeLeaf.view instanceof ButterEditorView) {
           return activeLeaf.view;
         }
@@ -1435,7 +1800,6 @@ export default class ButterEditorPlugin extends Plugin {
     const wsEditor = this.app.workspace as import("obsidian").Workspace & {
       _butterActiveEditorProxied?: boolean;
       activeEditor?: unknown;
-      activeLeaf?: WorkspaceLeaf | null;
     };
     if (!wsEditor._butterActiveEditorProxied) {
       wsEditor._butterActiveEditorProxied = true;
@@ -1467,8 +1831,8 @@ export default class ButterEditorPlugin extends Plugin {
     // checks `this.licenseStatus` on construction. The bounded ~10s
     // worst case (one /session call) is acceptable startup cost; in
     // the common case (cached token still fresh) this is a no-op.
-    this.licenseClient = new LicenseClient();
-    await this.refreshLicenseStatus();
+    this.licenseClient = new LicenseClient(() => this.credentialStorage?.capability());
+    await this.refreshLicenseStatus(this.credentialStorage?.needsServerReport ?? false);
     // If the first /session call failed (captive portal, DNS, flaky
     // wifi), schedule short-term retries so first-time users don't
     // sit in "unknown" read-only mode for 24 hours.
@@ -1614,7 +1978,7 @@ export default class ButterEditorPlugin extends Plugin {
       const onScroll = (ev: Event) => {
         const target = ev.target as HTMLElement | null;
         if (!target || !target.classList.contains("butter-editor-view")) return;
-        if (activeDocument.body.classList.contains("butter-is-dragging")) return;
+        if (activeDocument.body.classList.contains("butter-is-drag-scene-v2")) return;
         const dragEnd = parseInt(activeDocument.body.dataset.butterDragEndedAt || "0", 10);
         if (Date.now() - dragEnd < 600) return;
         const st = target.scrollTop;
@@ -1664,18 +2028,12 @@ export default class ButterEditorPlugin extends Plugin {
       `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="10" y="3" width="4" height="18" rx="1"/><path d="M6 4l12 16"/></svg>`,
     );
 
-    // Status-bar save indicator. Lucide icon only - `check` when the
-    // last save round-tripped cleanly, `triangle-alert` when a save
-    // had to fall through to canonical with structural normalization.
-    // Click on the warning state opens the diff modal.
-    this.saveStatus = installSaveStatus(this, (state) => {
-      new SaveDiffModal(this.app, state.original, state.saved, state.reason).open();
-    });
+    this.applySaveStatusSetting();
 
     this.registerView(
       VIEW_TYPE_BUTTER,
       (leaf) => new ButterEditorView(leaf, this.settings, this, (result) => {
-        this.saveStatus?.set(result);
+        this.setSaveStatus(result);
       }),
     );
 
@@ -1693,6 +2051,11 @@ export default class ButterEditorPlugin extends Plugin {
       (leaf) => new ButterLockedFileView(leaf, this),
     );
 
+    this.registerView(
+      VIEW_TYPE_BUTTER_WHATS_NEW,
+      (leaf) => new ButterWhatsNewView(leaf, this),
+    );
+
     // Register Butter as a valid `hover-link` source so Obsidian's
     // core page-preview plugin shows hover cards for wikilinks and
     // embeds inside Butter views - same UX as Live Preview / Reading
@@ -1708,6 +2071,7 @@ export default class ButterEditorPlugin extends Plugin {
     this.registerMenus();
     this.registerNewFileHook();
     this.registerNativeFormattingCommandBridge();
+    this.registerNativeSearchCommandBridge();
     this.registerHotkeyManagerFormattingBridge();
     this.registerPolishCommands();
 
@@ -1743,6 +2107,8 @@ export default class ButterEditorPlugin extends Plugin {
       // set the flag so subsequent launches skip silently.
       if (!this.settings.hasCompletedOnboarding) {
         new WelcomeModal(this.app, this).open();
+      } else {
+        void this.maybeAutoOpenWhatsNew();
       }
     });
     this.registerEvent(
@@ -1758,7 +2124,7 @@ export default class ButterEditorPlugin extends Plugin {
         // update the status; until then the indicator shows clean by
         // default. Avoids carrying a "normalized" warning over from a
         // different file the user already moved past.
-        this.saveStatus?.set({ kind: "clean" });
+        this.setSaveStatus({ kind: "clean" });
       }),
     );
 
@@ -1983,6 +2349,10 @@ export default class ButterEditorPlugin extends Plugin {
 
   onunload(): void {
     this.stopUpgradePolling();
+    this.saveStatus?.destroy();
+    this.saveStatus = null;
+    this.settingTab?.dispose();
+    this.settingTab = null;
 
     // FIRST: flush any in-flight scheduled saves across open Butter
     // views. If the user disables Butter mid-typing (within the save
@@ -2042,12 +2412,12 @@ export default class ButterEditorPlugin extends Plugin {
       checkCallback: (checking) => {
         const v = this.app.workspace.getActiveViewOfType(ButterEditorView);
         if (v?.file) {
-          if (!checking) swapButterToMarkdown(v);
+          if (!checking) void swapButterToMarkdown(v);
           return true;
         }
         const md = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (md?.file) {
-          if (!checking) swapMarkdownToButter(md);
+          if (!checking) void swapMarkdownToButter(md);
           return true;
         }
         return false;
@@ -2060,7 +2430,7 @@ export default class ButterEditorPlugin extends Plugin {
       checkCallback: (checking) => {
         const md = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (!md?.file) return false;
-        if (!checking) swapMarkdownToButter(md);
+        if (!checking) void swapMarkdownToButter(md);
         return true;
       },
     });
@@ -2071,14 +2441,30 @@ export default class ButterEditorPlugin extends Plugin {
       checkCallback: (checking) => {
         const v = this.app.workspace.getActiveViewOfType(ButterEditorView);
         if (!v?.file) return false;
-        if (!checking) swapButterToMarkdown(v);
+        if (!checking) void swapButterToMarkdown(v);
         return true;
       },
     });
 
-    // Find / Replace in note. No default hotkeys - Obsidian's policy
-    // discourages default bindings since they can override user-
-    // configured hotkeys. Users bind these via Settings → Hotkeys.
+    const nativeAddPropertyCommand = this.app.commands?.commands?.[
+      "markdown:add-metadata-property"
+    ] as { name?: unknown } | undefined;
+    this.addCommand({
+      id: "add-file-property",
+      name: typeof nativeAddPropertyCommand?.name === "string"
+        ? nativeAddPropertyCommand.name
+        : tx("Add property"),
+      checkCallback: (checking) => {
+        const view = this.app.workspace.getActiveViewOfType(ButterEditorView);
+        if (!view?.canAddFileProperty()) return false;
+        if (!checking) view.beginAddFileProperty();
+        return true;
+      },
+    });
+
+    // Butter-specific palette entries. Stock Ctrl/Cmd+F and Ctrl/Cmd+H are
+    // owned by Obsidian's `editor:open-search*` commands and bridged below,
+    // so user-customized bindings continue to work without duplicate hotkeys.
     this.addCommand({
       id: "find-in-note",
       name: tx("Find in note"),
@@ -2097,7 +2483,7 @@ export default class ButterEditorPlugin extends Plugin {
       checkCallback: (checking) => {
         const v = this.app.workspace.getActiveViewOfType(ButterEditorView);
         const pm = v?.pmViewRef();
-        if (!pm) return false;
+        if (!v || !pm || !v.isEditable()) return false;
         if (!checking) openReplace(pm);
         return true;
       },
@@ -2169,12 +2555,14 @@ export default class ButterEditorPlugin extends Plugin {
   private canToggleButterMark(markName: string, target?: EventTarget | null): boolean {
     const active = this.resolveButterEditor(target);
     if (!active) return false;
+    if (!active.view.isEditable()) return false;
     return Boolean((active.pm.state.schema.marks as Record<string, MarkType | undefined>)[markName]);
   }
 
   private toggleButterMark(markName: string, target?: EventTarget | null): boolean {
     const active = this.resolveButterEditor(target);
     if (!active) return false;
+    if (!active.view.isEditable()) return false;
     const mark = (active.pm.state.schema.marks as Record<string, MarkType | undefined>)[markName];
     if (!mark) return false;
     const handled = toggleMark(mark)(
@@ -2212,6 +2600,7 @@ export default class ButterEditorPlugin extends Plugin {
       const wrappedAddCommand = (command: unknown) => {
         const result = originalAddCommand.call(commandManager, command);
         this.refreshNativeFormattingCommandBridge();
+        this.refreshNativeSearchCommandBridge();
         return result;
       };
       commandManager.addCommand = wrappedAddCommand;
@@ -2249,6 +2638,52 @@ export default class ButterEditorPlugin extends Plugin {
   private restoreNativeFormattingCommandBridge() {
     for (const restore of this.nativeFormattingCommandRestorers) restore();
     this.nativeFormattingCommandRestorers = [];
+  }
+
+  private activeButterSearch(action: NativeSearchAction): {
+    view: ButterEditorView;
+    pm: NonNullable<ReturnType<ButterEditorView["pmViewRef"]>>;
+  } | null {
+    const active = this.resolveButterEditor();
+    if (!active) return null;
+    if (action === "replace" && !active.view.isEditable()) return null;
+    return active;
+  }
+
+  /** Route Obsidian's native current-file search commands into Butter. */
+  private registerNativeSearchCommandBridge() {
+    this.refreshNativeSearchCommandBridge();
+    this.app.workspace.onLayoutReady(() => this.refreshNativeSearchCommandBridge());
+    for (const delayMs of [0, 100, 500, 1500, 3000]) {
+      const timer = window.setTimeout(
+        () => this.refreshNativeSearchCommandBridge(),
+        delayMs,
+      );
+      this.register(() => window.clearTimeout(timer));
+    }
+    this.register(() => this.restoreNativeSearchCommandBridge());
+  }
+
+  private refreshNativeSearchCommandBridge() {
+    this.restoreNativeSearchCommandBridge();
+    const commands = this.app.commands?.commands as
+      | Record<string, NativeSearchCommandRecord | undefined>
+      | undefined;
+    this.nativeSearchCommandRestorers = patchNativeSearchCommands(
+      commands,
+      (action) => this.activeButterSearch(action) != null,
+      (action) => {
+        const active = this.activeButterSearch(action);
+        if (!active) return;
+        if (action === "replace") openReplace(active.pm);
+        else openFind(active.pm);
+      },
+    );
+  }
+
+  private restoreNativeSearchCommandBridge() {
+    for (const restore of this.nativeSearchCommandRestorers) restore();
+    this.nativeSearchCommandRestorers = [];
   }
 
   /**
@@ -2319,6 +2754,12 @@ export default class ButterEditorPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "open-whats-new",
+      name: txKnown("Open What's new in Butter Editor"),
+      callback: () => void this.openWhatsNew(),
+    });
+
+    this.addCommand({
       id: "open-outline",
       name: tx("Open outline view"),
       checkCallback: (checking) => {
@@ -2358,53 +2799,6 @@ export default class ButterEditorPlugin extends Plugin {
       },
     });
 
-    // One-shot source normalizer on the active file. Applies BOTH
-    // normalizers (heading-gap + condense-blanks) to the current
-    // file's content via vault.modify, independent of the global
-    // toggles. Useful for cleaning up a single note without opting
-    // in across the vault.
-    //
-    // If the file has no changes after normalization, no write
-    // happens (avoids spurious mtime bumps).
-    // Two cleanup commands with deliberately distinct scopes:
-    //
-    //   "Tidy whitespace" - string-level only. Runs heading-gap +
-    //   condense-blanks + close-fences once on the source text. Doesn't
-    //   parse the file. Useful for quick whitespace cleanup that doesn't
-    //   touch marker style, table padding, or anything else.
-    //
-    //   "Rewrite in canonical form" - full parse + serialize. Rewrites
-    //   markers (bullet/italic/bold), table padding, indentation, blank-
-    //   line layout. Then applies normalizers if their toggles are on.
-    //   The thorough cleanup; expect a bigger diff.
-    this.addCommand({
-      id: "normalize-current-note",
-      name: tx("Tidy whitespace in current note"),
-      checkCallback: (checking) => {
-        const file = this.app.workspace.getActiveFile();
-        if (!file || file.extension !== "md") return false;
-        if (!checking) void this.normalizeCurrentFile();
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: "canonicalize-current-note",
-      name: tx("Rewrite current note in standard format"),
-      checkCallback: (checking) => {
-        const file = this.app.workspace.getActiveFile();
-        if (!file || file.extension !== "md") return false;
-        if (!checking) void this.canonicalizeFile(file);
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: "canonicalize-vault",
-      name: tx("Rewrite entire vault in standard format (irreversible - back up first)"),
-      callback: () => void this.canonicalizeVaultWithConfirm(),
-    });
-
     // Mobile-friendly error inspection. Mobile Obsidian has no
     // accessible JS console, so console.error is invisible to the
     // user. The error ring buffer in debug.ts captures recent
@@ -2439,207 +2833,78 @@ export default class ButterEditorPlugin extends Plugin {
     await workspace.revealLeaf(leaf);
   }
 
-  /**
-   * Read the active markdown file, apply both normalizers to its
-   * body (preserving frontmatter + line-ending style), and write the
-   * result back. No-op if normalization produces the same bytes.
-   *
-   * Operates at the FILE level (not through the PM view), so it
-   * works regardless of whether the current view is Butter, Live
-   * Preview, Source, or Reading. Also independent of the global
-   * toggles - users can invoke this for one-off cleanup without
-   * opting into automatic normalization vault-wide.
-   */
-  private async normalizeCurrentFile(): Promise<void> {
-    const file = this.app.workspace.getActiveFile();
-    if (!file || file.extension !== "md") return;
-    const original = await this.app.vault.read(file);
-
-    // Detect + strip frontmatter so the normalizer runs on body only.
-    // We re-attach frontmatter verbatim. Butter's parser doesn't
-    // handle YAML frontmatter directly - it's a separate top-matter
-    // construct Obsidian owns.
-    const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---\r?\n)/.exec(original);
-    const frontmatter = fmMatch ? fmMatch[1] : "";
-    const body = fmMatch ? original.slice(fmMatch[1].length) : original;
-
-    // Preserve line ending. Work on LF internally then restore.
-    const crlf = /\r\n/.test(body);
-    const bodyLF = body.replace(/\r\n/g, "\n");
-
-    const normalizedLF = normalizeSource(bodyLF, {
-      headingGap: true,
-      condenseBlanks: true,
-      closeUnclosedFences: true,
+  /** Open a non-file release-note tab without replacing the active note. */
+  public async openWhatsNew(
+    version = LATEST_WHATS_NEW_RELEASE.version,
+  ): Promise<void> {
+    const release = whatsNewRelease(version) ?? LATEST_WHATS_NEW_RELEASE;
+    const { workspace } = this.app;
+    const existing = workspace.getLeavesOfType(VIEW_TYPE_BUTTER_WHATS_NEW)[0];
+    if (existing) {
+      await existing.setViewState({
+        type: VIEW_TYPE_BUTTER_WHATS_NEW,
+        active: true,
+        state: { releaseVersion: release.version },
+      });
+      await workspace.revealLeaf(existing);
+      return;
+    }
+    const leaf = workspace.getLeaf("tab");
+    await leaf.setViewState({
+      type: VIEW_TYPE_BUTTER_WHATS_NEW,
+      active: true,
+      state: { releaseVersion: release.version },
     });
-
-    if (normalizedLF === bodyLF) return; // no change - skip write
-
-    const normalized = crlf
-      ? normalizedLF.replace(/\n/g, "\r\n")
-      : normalizedLF;
-
-    await this.app.vault.modify(file, frontmatter + normalized);
+    await workspace.revealLeaf(leaf);
   }
 
-  /**
-   * Build the canonical-form options object from current settings.
-   * Used by the canonicalize commands and the save path so they
-   * stay in lockstep - same preferences applied wherever canonical
-   * synthesis happens.
-   */
-  private canonicalOptionsFromSettings() {
-    return {
-      bullet: this.settings.canonicalBullet,
-      italic: this.settings.canonicalItalic,
-      bold: this.settings.canonicalBold,
-      codeFence: this.settings.canonicalCodeFence,
-      horizontalRule: this.settings.canonicalHorizontalRule,
-    };
+  public openWhatsNewFromSettings(
+    version = LATEST_WHATS_NEW_RELEASE.version,
+  ): void {
+    const setting = (this.app as unknown as { setting?: { close?: () => void } }).setting;
+    setting?.close?.();
+    window.setTimeout(() => void this.openWhatsNew(version), 0);
   }
 
-  /**
-   * Force-canonicalize a single file. Parse the body, serialize via
-   * canonical (honoring user's marker preferences), apply enabled
-   * normalizers, write back.
-   *
-   * Frontmatter is preserved byte-identical (Butter's parser doesn't
-   * own YAML; that's Obsidian's surface). Line endings + BOM are
-   * preserved at the file shell level.
-   *
-   * Skips writing if the canonical output equals the input - avoids
-   * spurious mtime bumps and sync events for already-canonical files.
-   *
-   * Returns: { changed: boolean, error?: string } so the vault-wide
-   * driver can report aggregate results without throwing on per-file
-   * parse failures.
-   */
-  private async canonicalizeFile(
-    file: TFile,
-  ): Promise<{ changed: boolean; error?: string }> {
-    try {
-      const original = await this.app.vault.read(file);
-
-      // BOM detection.
-      let hasBOM = false;
-      let afterBOM = original;
-      if (original.charCodeAt(0) === 0xfeff) {
-        hasBOM = true;
-        afterBOM = original.slice(1);
-      }
-
-      // Frontmatter passthrough.
-      const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---\r?\n?)/.exec(afterBOM);
-      const frontmatter = fmMatch ? fmMatch[1] : "";
-      const body = fmMatch ? afterBOM.slice(fmMatch[1].length) : afterBOM;
-
-      const isCRLF = body.includes("\r\n");
-      const bodyLF = body.replace(/\r\n/g, "\n");
-
-      // Trailing-newline count from input. Canonical default is 1
-      // when ambiguous; preserve when explicit.
-      const trailMatch = bodyLF.match(/\n*$/);
-      const trailingCount = trailMatch ? Math.max(1, trailMatch[0].length) : 1;
-
-      const doc = parser.parse(bodyLF);
-      if (!doc) {
-        return { changed: false, error: "parse returned null" };
-      }
-
-      let canonical = serializer.serialize(
-        doc,
-        this.canonicalOptionsFromSettings(),
-      );
-
-      // Apply enabled normalizers AFTER canonical-serialize. They're
-      // idempotent and operate on the source string.
-      if (
-        this.settings.normalizeHeadingGap ||
-        this.settings.condenseBlankLines ||
-        this.settings.closeUnclosedFences
-      ) {
-        canonical = normalizeSource(canonical, {
-          headingGap: this.settings.normalizeHeadingGap,
-          condenseBlanks: this.settings.condenseBlankLines,
-          closeUnclosedFences: this.settings.closeUnclosedFences,
-        });
-      }
-
-      // Restore trailing-newline count.
-      canonical = canonical.replace(/\n*$/, "") + "\n".repeat(trailingCount);
-
-      // Reattach frontmatter, line-ending, BOM.
-      let out = frontmatter + canonical;
-      out = out.replace(/\r\n/g, "\n"); // normalize first
-      if (isCRLF) out = out.replace(/\n/g, "\r\n");
-      if (hasBOM) out = String.fromCharCode(0xfeff) + out;
-
-      if (out === original) return { changed: false };
-
-      await this.app.vault.modify(file, out);
-      return { changed: true };
-    } catch (e) {
-      const err = e as { message?: string };
-      return {
-        changed: false,
-        error: String(err?.message ?? e),
-      };
-    }
+  public shouldShowWhatsNewSettingsCard(now = Date.now()): boolean {
+    return shouldShowWhatsNewCard(this.settings, now);
   }
 
-  /**
-   * Show a confirm modal then iterate every .md file in the vault,
-   * canonicalizing each. Reports aggregate counts via Notice.
-   * Long-running (~ms per file × file count) - chunked into yields
-   * so the UI doesn't freeze.
-   */
-  private async canonicalizeVaultWithConfirm(): Promise<void> {
-    const files = this.app.vault.getMarkdownFiles();
-    const ok = await new Promise<boolean>((resolve) => {
-      new CanonicalizeVaultModal(this.app, files.length, resolve).open();
-    });
-    if (!ok) return;
+  public async dismissWhatsNewSettingsCard(): Promise<void> {
+    this.settings.whatsNewDismissedVersion = this.settings.whatsNewReleaseVersion;
+    await this.saveSettings();
+    this.settingTab?.refreshSettingsUi();
+  }
 
-    const startNotice = new Notice(
-      tv("Canonicalizing {count} files...", { count: files.length }),
-      0,
-    );
-    let changed = 0;
-    let unchanged = 0;
-    let errored = 0;
-    const errorSamples: string[] = [];
+  /** Dev Tools hook: make the current release's seven-day card eligible. */
+  public async showWhatsNewSettingsCardForDevelopment(): Promise<void> {
+    this.settings.whatsNewReleaseVersion = LATEST_WHATS_NEW_RELEASE.version;
+    this.settings.whatsNewFirstSeenAt = Date.now();
+    this.settings.whatsNewDismissedVersion = "";
+    await this.saveSettings();
+    this.settingTab?.refreshSettingsUi();
+  }
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const result = await this.canonicalizeFile(file);
-      if (result.error) {
-        errored++;
-        if (errorSamples.length < 5) {
-          errorSamples.push(`${file.path}: ${result.error}`);
-        }
-      } else if (result.changed) {
-        changed++;
-      } else {
-        unchanged++;
-      }
+  /** Dev Tools hook: replay the upgrade page and restore its settings card. */
+  public async replayWhatsNewUpgradeForDevelopment(): Promise<void> {
+    await this.showWhatsNewSettingsCardForDevelopment();
+    this.settings.whatsNewAutoOpenedVersion = LATEST_WHATS_NEW_RELEASE.version;
+    await this.saveSettings();
+    this.openWhatsNewFromSettings(LATEST_WHATS_NEW_RELEASE.version);
+  }
 
-      // Yield to the event loop every 25 files so the UI breathes
-      // and the user can cancel via reload if something hangs.
-      if (i % 25 === 0) {
-        await new Promise((r) => window.setTimeout(r, 0));
-      }
-    }
+  public async setWhatsNewAutoOpen(enabled: boolean): Promise<void> {
+    this.settings.whatsNewAutoOpen = enabled;
+    await this.saveSettings();
+  }
 
-    startNotice.hide();
-    const summary =
-      tv("Canonicalized: {changed} changed, {unchanged} unchanged", { changed, unchanged }) +
-      (errored ? tv(", {errored} errored", { errored }) : "");
-    new Notice(summary, 8000);
-    if (errored) {
-      console.warn(
-        "[butter] Canonicalize errors:\n" + errorSamples.join("\n"),
-      );
-    }
+  private async maybeAutoOpenWhatsNew(): Promise<void> {
+    if (!shouldAutoOpenWhatsNew(this.settings, this.manifest.version)) return;
+    const version = this.settings.whatsNewReleaseVersion;
+    // Record before opening so a layout interruption cannot create a loop.
+    this.settings.whatsNewAutoOpenedVersion = version;
+    await this.saveSettings();
+    await this.openWhatsNew(version);
   }
 
   /** Toggle `body.butter-no-anim` to match the current setting. The
@@ -2761,7 +3026,7 @@ export default class ButterEditorPlugin extends Plugin {
         menu.addItem((item) => {
           item
             .setTitle(tx("Open in Butter editor"))
-            .setIcon("edit-3")
+            .setIcon(modeIcon("butter"))
             .onClick(() => {
               const leaf = this.app.workspace.getLeaf(false);
               void leaf.setViewState({
@@ -2779,8 +3044,8 @@ export default class ButterEditorPlugin extends Plugin {
         menu.addItem((item) => {
           item
             .setTitle(tx("Switch to Butter editor"))
-            .setIcon("edit-3")
-            .onClick(() => swapMarkdownToButter(view));
+            .setIcon(modeIcon("butter"))
+            .onClick(() => void swapMarkdownToButter(view));
         });
       }),
     );
@@ -2905,8 +3170,42 @@ export default class ButterEditorPlugin extends Plugin {
     window.requestAnimationFrame(() => this.tryAutoSwapToButter(file, attempt + 1));
   }
 
+  /** Reload settings changed by Sync or another process and reconcile every
+   * live Butter surface. Obsidian has exposed this lifecycle since 1.5.7, so
+   * it is available throughout Butter's supported 1.7.2+ range. */
+  async onExternalSettingsChange(): Promise<void> {
+    await this.loadSettings();
+    this.applyAnimationsBodyClass();
+    this.applySaveStatusSetting();
+    await this.applyOutlineMode();
+    this.applyThemeCompatModeToAllViews();
+    this.applyMarkdownShortcutSettingToAllViews();
+    this.applyToolbarPositionToAllViews();
+    this.applyToolbarButtonVisibilityToAllViews();
+    this.refreshAllButterViews();
+    if (this.licenseClient) await this.refreshLicenseStatus();
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_BUTTER)) {
+      const view = leaf.view as unknown as ButterEditorView;
+      view.refreshLocalization?.();
+    }
+    this.settingTab?.refreshSettingsUi();
+  }
+
   async loadSettings() {
     const raw = ((await this.loadData()) ?? {}) as Record<string, unknown>;
+    const hadLegacyDragSensitivity = typeof raw.blockDragSensitivity === "number";
+    if (raw.blockDragTriggerOffsetPx == null && hadLegacyDragSensitivity) {
+      // The retired midpoint-band control defaulted to 4. Preserve a user's
+      // earlier/later preference relative to that default while mapping the
+      // former default itself to the new exact-position zero.
+      raw.blockDragTriggerOffsetPx = (raw.blockDragSensitivity as number) - 4;
+    }
+    const hadLegacyMarkdownShortcutSetting =
+      typeof raw.enableMarkdownShortcuts === "boolean";
+    const markdownShortcuts = normalizeMarkdownShortcutSettings(
+      raw.markdownShortcuts,
+      raw.enableMarkdownShortcuts === true,
+    );
     // Sanitize: only carry forward keys we know about. Unknown keys
     // accumulate when settings are renamed or removed in code but
     // the saved data.json keeps the old field. Without this filter,
@@ -2921,7 +3220,71 @@ export default class ButterEditorPlugin extends Plugin {
       if (known.has(k)) filtered[k] = v;
       else hadUnknownKeys = true;
     }
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, filtered);
+    const nextSettings = Object.assign({}, DEFAULT_SETTINGS, filtered);
+    nextSettings.markdownShortcuts = markdownShortcuts;
+    const featureDiscovery = initializeFeatureDiscoverySettings(raw);
+    nextSettings.acknowledgedFeatureAnnouncements =
+      featureDiscovery.acknowledgedFeatureAnnouncements;
+    nextSettings.visitedFeatureDiscoveries =
+      featureDiscovery.visitedFeatureDiscoveries;
+    const whatsNew = initializeWhatsNewState(
+      nextSettings,
+      raw,
+      this.manifest.version,
+      Date.now(),
+    );
+    Object.assign(nextSettings, whatsNew.state);
+    if (whatsNew.changed) hadUnknownKeys = true;
+    if (featureDiscovery.changed) hadUnknownKeys = true;
+    if (hadLegacyMarkdownShortcutSetting) hadUnknownKeys = true;
+    if (hadLegacyDragSensitivity) hadUnknownKeys = true;
+    if (this.settings) {
+      // ButterEditorView receives this object by reference. Preserve its
+      // identity so externally synced settings immediately reach open panes.
+      for (const key of Object.keys(this.settings)) {
+        if (!known.has(key)) {
+          delete (this.settings as unknown as Record<string, unknown>)[key];
+        }
+      }
+      Object.assign(this.settings, nextSettings);
+    } else {
+      this.settings = nextSettings;
+    }
+    if (!this.credentialStorage) {
+      this.credentialStorage = new LicenseCredentialStorage(
+        requireApiVersion("1.11.5") ? this.app.secretStorage : null,
+      );
+    }
+    if (this.credentialStorage.initialize(this.settings).settingsChanged) {
+      hadUnknownKeys = true;
+    }
+    const triggerOffset = resolveDragTriggerOffsetPx(
+      this.settings.blockDragTriggerOffsetPx,
+    );
+    if (this.settings.blockDragTriggerOffsetPx !== triggerOffset) {
+      this.settings.blockDragTriggerOffsetPx = triggerOffset;
+      hadUnknownKeys = true;
+    }
+    const containerTriggerOffset = resolveDragTriggerOffsetPx(
+      this.settings.blockDragContainerTriggerOffsetPx,
+      DEFAULT_CONTAINER_DRAG_TRIGGER_OFFSET_PX,
+    );
+    if (this.settings.blockDragContainerTriggerOffsetPx !== containerTriggerOffset) {
+      this.settings.blockDragContainerTriggerOffsetPx = containerTriggerOffset;
+      hadUnknownKeys = true;
+    }
+    const compaction = resolveDragCompactionGeometry(
+      this.settings.dragCompactionTriggerPx,
+      this.settings.dragCompactedHeightPx,
+    );
+    if (
+      this.settings.dragCompactionTriggerPx !== compaction.triggerHeight ||
+      this.settings.dragCompactedHeightPx !== compaction.compactedHeight
+    ) {
+      this.settings.dragCompactionTriggerPx = compaction.triggerHeight;
+      this.settings.dragCompactedHeightPx = compaction.compactedHeight;
+      hadUnknownKeys = true;
+    }
     const sanitizedLicenseMetadata = sanitizeStoredLicenseMetadata({
       licenseType: this.settings.licenseType,
       licenseStartedAt: this.settings.licenseStartedAt,
@@ -2980,11 +3343,55 @@ export default class ButterEditorPlugin extends Plugin {
         this.settings.tableToolbarHiddenButtons,
       );
     }
-    if (this.settings.mobileToolbarLayout) {
-      backfillMissingButtons(this.settings.mobileToolbarLayout, mobileLayoutDefault());
+    const migratedDesktopLinks = this.settings.toolbarLayout
+      ? replaceButtonId(this.settings.toolbarLayout, "insert-link-md", "link")
+      : 0;
+    const migratedMobileLinks = this.settings.mobileToolbarLayout
+      ? replaceButtonId(this.settings.mobileToolbarLayout, "insert-link-md", "link")
+      : 0;
+    if (migratedDesktopLinks + migratedMobileLinks > 0) hadUnknownKeys = true;
+    const legacyContextMenu = (
+      raw.contextMenuLayoutVersion !== 2
+      && raw.contextMenuLayoutVersion !== 3
+      && raw.contextMenuLayoutVersion !== 4
+    ) || Object.prototype.hasOwnProperty.call(raw, "contextMenuQuickActions")
+      || Object.prototype.hasOwnProperty.call(raw, "contextMenuQuickActionsEnabled");
+    if (legacyContextMenu) {
+      this.settings.contextMenuLayout = migrateLegacyContextMenuLayout(
+        this.settings.contextMenuLayout,
+        raw.contextMenuQuickActions,
+        raw.contextMenuQuickActionsEnabled,
+      );
+      hadUnknownKeys = true;
     }
-    if (this.settings.toolbarLayout) {
-      backfillMissingButtons(this.settings.toolbarLayout, defaultMainLayout());
+    if (raw.contextMenuLayoutVersion !== 3 && raw.contextMenuLayoutVersion !== 4) {
+      this.settings.contextMenuLayout = migrateContextMenuLayoutV3(
+        this.settings.contextMenuLayout,
+      );
+      hadUnknownKeys = true;
+    }
+    if (raw.contextMenuLayoutVersion !== 4) {
+      this.settings.contextMenuLayout = migrateContextMenuLayoutV4(
+        this.settings.contextMenuLayout,
+      );
+      this.settings.contextMenuLayoutVersion = 4;
+      hadUnknownKeys = true;
+    } else if (this.settings.contextMenuLayout !== null) {
+      const normalized = normalizeContextMenuLayout(this.settings.contextMenuLayout);
+      if (JSON.stringify(normalized) !== JSON.stringify(this.settings.contextMenuLayout)) {
+        this.settings.contextMenuLayout = normalized;
+        hadUnknownKeys = true;
+      }
+    }
+    const retiredToolbarButtons = new Set(["insert-date", "insert-time"]);
+    const retiredDesktopCount = this.settings.toolbarLayout
+      ? removeButtonsById(this.settings.toolbarLayout, retiredToolbarButtons)
+      : 0;
+    const retiredMobileCount = this.settings.mobileToolbarLayout
+      ? removeButtonsById(this.settings.mobileToolbarLayout, retiredToolbarButtons)
+      : 0;
+    if (retiredDesktopCount + retiredMobileCount > 0) {
+      hadUnknownKeys = true;
     }
     // Generate a per-install device ID on first load. Used as the
     // stable identifier for trial dedupe + session token binding.
@@ -3045,12 +3452,88 @@ export default class ButterEditorPlugin extends Plugin {
     return this.getTableToolbarLayout();
   }
 
+  public getContextMenuLayout(): ToolbarLayoutItem[] {
+    return this.settings.contextMenuLayout ?? contextMenuDefaultLayout();
+  }
+
+  public getPendingFeatureAnnouncement(
+    surface: FeatureDiscoverySurface,
+  ): FeatureAnnouncement | null {
+    return pendingFeatureAnnouncement(this.settings, surface);
+  }
+
+  public async acknowledgeFeatureAnnouncement(id: string): Promise<void> {
+    if (this.settings.acknowledgedFeatureAnnouncements.includes(id)) return;
+    this.settings.acknowledgedFeatureAnnouncements = [
+      ...this.settings.acknowledgedFeatureAnnouncements,
+      id,
+    ];
+    await this.saveSettings();
+  }
+
+  /** Dev-tools hook for replaying one-time coachmarks and discovery badges. */
+  public async resetFeatureDiscoveryState(): Promise<void> {
+    this.settings.acknowledgedFeatureAnnouncements = [];
+    this.settings.visitedFeatureDiscoveries = [];
+    await this.saveSettings();
+  }
+
+  public hasVisitedFeatureDiscovery(featureId: string): boolean {
+    return hasVisitedFeature(this.settings, featureId);
+  }
+
+  public async completeFeatureDiscoveryVisit(
+    featureId: string,
+    surface: FeatureDiscoverySurface,
+  ): Promise<void> {
+    let changed = false;
+    const announcement = this.getPendingFeatureAnnouncement(surface);
+    if (announcement?.featureId === featureId) {
+      this.settings.acknowledgedFeatureAnnouncements = [
+        ...this.settings.acknowledgedFeatureAnnouncements,
+        announcement.id,
+      ];
+      changed = true;
+    }
+    if (!this.hasVisitedFeatureDiscovery(featureId)) {
+      this.settings.visitedFeatureDiscoveries = [
+        ...this.settings.visitedFeatureDiscoveries,
+        featureId,
+      ];
+      changed = true;
+    }
+    if (changed) await this.saveSettings();
+  }
+
   async saveSettings() {
-    await this.saveData(this.settings);
+    this.credentialStorage?.persistCredentials(this.settings);
+    const persisted = this.credentialStorage
+      ? this.credentialStorage.settingsForPersistence(this.settings)
+      : this.settings;
+    await this.saveData(persisted);
     // Re-apply on every save so the Debug-tab toggle takes effect
     // without reloading the plugin.
     setVerbose(this.settings.verboseLogging);
     this.applyI18nLanguage();
+  }
+
+  /** Reconcile the optional status-bar surface without reloading Obsidian. */
+  public applySaveStatusSetting(): void {
+    if (!this.settings.showSaveStatusIcon) {
+      this.saveStatus?.destroy();
+      this.saveStatus = null;
+      return;
+    }
+    if (this.saveStatus) return;
+    this.saveStatus = installSaveStatus(this, (state) => {
+      new SaveDiffModal(this.app, state.original, state.saved, state.reason).open();
+    });
+    this.saveStatus.set(this.saveStatusState);
+  }
+
+  private setSaveStatus(state: SaveState): void {
+    this.saveStatusState = state;
+    this.saveStatus?.set(state);
   }
 
   public applyI18nLanguage(): void {
@@ -3082,11 +3565,6 @@ export default class ButterEditorPlugin extends Plugin {
 
 // Settings tab moved to src/settings-tab.ts.
 
-/**
- * Modal that confirms a vault-wide canonicalization. Shows the
- * affected file count and warns that the operation isn't undoable
- * from inside Butter - recommends a git commit beforehand.
- */
 /**
  * In-app error log viewer. Mobile Obsidian has no accessible JS
  * console, so this modal surfaces the recent-errors ring buffer for

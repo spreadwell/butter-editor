@@ -44,6 +44,9 @@ const EXACT_PRIVATE_PATHS = new Set([
 ]);
 const PRIVATE_PREFIXES = ["assets/", "release-notes/", "src/"];
 const DENY_PREFIXES = [
+  // Private test entrypoints; runtime imports use the implementation modules.
+  "src/editor/block-spacing.ts",
+  "src/editor/drag-scene-v2/index.ts",
   "src/dev",
   "src/experiments",
   "src/integration/extensions-examples.ts",

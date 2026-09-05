@@ -3,8 +3,8 @@ import { __mdit } from "./bridge/common";
 import * as bridgeParser from "./bridge/parser";
 import * as bridgeSerializer from "./bridge/serializer";
 import { handlers, extensionSourcePatterns, parse, parseWithSourceMap, parseIncrementally, type SourceMapResult } from "./bridge/parser";
-import { nodeSer, serialize, serializeWithSourcePreservation } from "./bridge/serializer";
-import { setBridgeLateApplyHandler, type ButterSyntaxExtension } from "../integration/extensions";
+import { markSpecs, nodeSer, serialize, serializeWithSourcePreservation } from "./bridge/serializer";
+import { setBridgeExtensionHandler, type ButterExtension } from "../integration/extensions";
 import type { CanonicalFormOptions } from "./bridge/common";
 
 const md = __mdit;
@@ -12,34 +12,63 @@ const md = __mdit;
 
 // ── Late-apply hook: wire extensions into live tables ──────────
 // Handles both pre-bridge-init registrations (caught up by
-// setBridgeLateApplyHandler's initial loop) AND runtime registrations
-// (each new registerSyntaxExtension call fires this handler).
+// setBridgeExtensionHandler's initial loop) AND runtime registrations.
 //
 // Schema additions are NOT applied here - the PM schema is immutable
 // after construction. An extension introducing a brand-new schema
 // node name must register before ./schema evaluates its module body
 // (i.e., via side-effect imports ordered before `import ./schema`).
-setBridgeLateApplyHandler((ext: ButterSyntaxExtension) => {
-  if (ext.markdownItRule) {
+setBridgeExtensionHandler((extension: ButterExtension) => {
+  if (extension.installMarkdown) {
     try {
-      ext.markdownItRule(md);
+      extension.installMarkdown(md);
     } catch (err) {
       console.warn(
-        `[butter] extension "${ext.name}" markdownItRule threw at apply:`,
+        `[butter] extension "${extension.name}" Markdown installer failed:`,
         err,
       );
     }
   }
-  if (ext.tokenHandlers) {
-    for (const [k, fn] of Object.entries(ext.tokenHandlers)) {
-      handlers[k] = fn;
+  for (const [name, handler] of Object.entries(
+    extension.tokenHandlers ?? {},
+  )) {
+    if (handlers[name]) {
+      console.warn(
+        `[butter] extension "${extension.name}" token handler "${name}" conflicts with an existing handler; keeping the existing owner.`,
+      );
+    } else {
+      handlers[name] = handler;
     }
   }
-  if (ext.serializer) {
-    nodeSer[ext.name] = ext.serializer;
+  for (const [name, serializer] of Object.entries(
+    extension.nodeSerializers ?? {},
+  )) {
+    if (nodeSer[name]) {
+      console.warn(
+        `[butter] extension "${extension.name}" node serializer "${name}" conflicts with an existing serializer; keeping the existing owner.`,
+      );
+    } else {
+      nodeSer[name] = serializer;
+    }
   }
-  if (ext.sourcePattern) {
-    extensionSourcePatterns.push({ name: ext.name, fn: ext.sourcePattern });
+  for (const [name, serializer] of Object.entries(
+    extension.markSerializers ?? {},
+  )) {
+    if (markSpecs[name]) {
+      console.warn(
+        `[butter] extension "${extension.name}" mark serializer "${name}" conflicts with an existing serializer; keeping the existing owner.`,
+      );
+    } else {
+      markSpecs[name] = serializer;
+    }
+  }
+  for (const [name, pattern] of Object.entries(
+    extension.sourcePatterns ?? {},
+  )) {
+    extensionSourcePatterns.push({
+      name,
+      fn: (node) => pattern(node as PMNode),
+    });
   }
 });
 

@@ -26,7 +26,9 @@ import type { Node as PMNode } from "prosemirror-model";
 import type { EditorView } from "prosemirror-view";
 import type { AtomSpec, AtomField } from "./inline-atom-specs";
 import { applyVaultFilesSuggest } from "../ui/vault-files-suggest";
+import { suggestionScopeForEmbedSource } from "../ui/vault-file-scope";
 import { tx, txKnown } from "../i18n";
+import { dismissMenuOnScroll } from "../ui/menu-scroll-dismiss";
 
 /** A single action row in the bottom drawer. The drawer is built
  *  from an array of these so the caller can tailor the action set
@@ -71,6 +73,8 @@ export interface OpenMobileAtomDrawerOptions {
    *  nav and destructive groups automatically, so Clear-style
    *  destructive actions always land last. */
   actions: MobileSheetAction[];
+  /** Override the generic atom modal with a specialized editor. */
+  onEdit?: () => void;
 }
 
 export interface OpenMobileActionDrawerOptions {
@@ -83,10 +87,13 @@ export interface OpenMobileActionDrawerOptions {
   actions: MobileSheetAction[];
   editLabel?: string;
   onEdit?: () => void;
+  /** Replace this drawer's contents in place instead of dismissing it. */
+  onEditInDrawer?: (menu: Menu) => void;
 }
 
 export function openMobileActionDrawer(opts: OpenMobileActionDrawerOptions): void {
   const menu = new Menu();
+  let editItemEl: HTMLElement | null = null;
 
   const navActions = opts.actions.filter((a) => !a.warning);
   const dangerActions = opts.actions.filter((a) => a.warning);
@@ -107,13 +114,14 @@ export function openMobileActionDrawer(opts: OpenMobileActionDrawerOptions): voi
 
   for (const a of navActions) addAction(a, "nav");
 
-  if (opts.onEdit) {
+  if (opts.onEdit || opts.onEditInDrawer) {
     menu.addItem((item) => {
-    item.setTitle(txKnown(opts.editLabel ?? "Edit..."));
+      item.setTitle(txKnown(opts.editLabel ?? "Edit..."));
       item.setIcon("pencil");
       (item as unknown as { setSection?: (s: string) => unknown })
         .setSection?.("edit");
       item.onClick(() => opts.onEdit?.());
+      editItemEl = (item as unknown as { dom?: HTMLElement }).dom ?? null;
     });
   }
 
@@ -121,7 +129,30 @@ export function openMobileActionDrawer(opts: OpenMobileActionDrawerOptions): voi
 
   const rect = opts.anchor.getBoundingClientRect();
   menu.showAtPosition({ x: rect.left + rect.width / 2, y: rect.bottom + 4 });
+  const stopScrollDismiss = dismissMenuOnScroll(menu, opts.anchor.ownerDocument);
   injectDrawerHeader(menu, opts.chrome);
+
+  if (opts.onEditInDrawer) {
+    const fallbackItems = (menu as unknown as { dom?: HTMLElement }).dom
+      ?.querySelectorAll<HTMLElement>(".menu-item");
+    const source = editItemEl ?? Array.from(fallbackItems ?? [])
+      .find((row) => row.textContent?.trim() === txKnown(opts.editLabel ?? "Edit..."));
+    if (source) {
+      const replacement = source.cloneNode(true) as HTMLElement;
+      source.replaceWith(replacement);
+      const activate = (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        stopScrollDismiss();
+        opts.onEditInDrawer?.(menu);
+      };
+      replacement.addEventListener("click", activate);
+      replacement.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") activate(event);
+      });
+    }
+  }
 }
 
 /** Open the mobile bottom-drawer for an inline atom using the same
@@ -132,7 +163,7 @@ export function openMobileAtomDrawer(opts: OpenMobileAtomDrawerOptions): void {
     chrome: opts.chrome,
     actions: opts.actions,
     editLabel: "Edit...",
-    onEdit: () => new MobileAtomEditModal(opts).open(),
+    onEdit: opts.onEdit ?? (() => new MobileAtomEditModal(opts).open()),
   });
 }
 
@@ -256,12 +287,20 @@ export class MobileAtomEditModal extends Modal {
     });
     // Wire up the same vault-files suggester the desktop popover
     // uses (Obsidian's native AbstractInputSuggest popup with fuzzy
-    // match + folder paths). Users get a searchable list of every
-    // markdown file as they type, no need to remember exact names.
+    // match + folder paths). Note fields stay note-only; image/video
+    // sources expose only their matching attachment family.
     if (field.autocomplete === "vault-files") {
+      const isEmbed = this.opts.spec.typeName === "obsidian_embed" ||
+        this.opts.spec.typeName === "obsidian_embed_inline";
+      const scope = isEmbed
+        ? suggestionScopeForEmbedSource(String(this.opts.node.attrs.src ?? ""))
+        : "markdown";
       applyVaultFilesSuggest(this.opts.app, input, {
+        scope,
         onSelect: (file) => {
-          input.value = file.basename;
+          input.value = isEmbed
+            ? scope === "all" ? file.path.replace(/\.md$/iu, "") : file.path
+            : file.basename;
           // Fire input so any dependent placeholder updates (alias
           // field defaults to target's value, etc).
           input.dispatchEvent(new Event("input"));

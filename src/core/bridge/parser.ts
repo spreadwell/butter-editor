@@ -16,6 +16,63 @@ interface StackFrame {
   content: PMNode[];
 }
 
+interface TokenStructureIndex {
+  openEndLines: Array<number | undefined>;
+  listItemTightness: Array<boolean | undefined>;
+}
+
+/** Index source-range ends and list tightness in one structural token pass. */
+function buildTokenStructureIndex(tokens: readonly Token[]): TokenStructureIndex {
+  const openEndLines: Array<number | undefined> = [];
+  const listItemTightness: Array<boolean | undefined> = [];
+  openEndLines.length = tokens.length;
+  listItemTightness.length = tokens.length;
+  const openStack: number[] = [];
+  const listItemStack: number[] = [];
+
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    const listItemIndex = listItemStack[listItemStack.length - 1];
+    if (listItemIndex != null) {
+      const listItem = tokens[listItemIndex];
+      if (
+        listItemTightness[listItemIndex] == null &&
+        token.type === "paragraph_open" &&
+        token.level === listItem.level + 1
+      ) {
+        listItemTightness[listItemIndex] = token.hidden === true;
+      }
+      if (
+        openEndLines[listItemIndex] == null &&
+        (token.type === "bullet_list_open" ||
+          token.type === "ordered_list_open") &&
+        token.map &&
+        token.level > listItem.level
+      ) {
+        // Butter flattens nested list items into PM siblings. End the parent
+        // before its first child list so their source ranges cannot overlap.
+        openEndLines[listItemIndex] = token.map[0];
+      }
+    }
+
+    if (token.nesting === 1) {
+      openStack.push(index);
+      if (token.type === "list_item_open") listItemStack.push(index);
+      continue;
+    }
+    if (token.nesting !== -1) continue;
+
+    const openIndex = openStack.pop();
+    if (openIndex != null) {
+      const open = tokens[openIndex];
+      openEndLines[openIndex] ??= token.map?.[1] ?? open.map?.[1];
+    }
+    if (token.type === "list_item_close") listItemStack.pop();
+  }
+
+  return { openEndLines, listItemTightness };
+}
+
 export type TokenHandler = (state: ParseState, tok: Token) => void;
 
 export class ParseState {
@@ -30,10 +87,13 @@ export class ParseState {
   // don't need to know about source ranges - the ParseState threads
   // it through on their behalf.
   tokens: Token[] | null = null;
+  openEndLines: Array<number | undefined> | null = null;
+  listItemTightness: Array<boolean | undefined> | null = null;
   lineStarts: number[] | null = null;
   sourceText: string | null = null;
   totalLen = 0;
   currentTokIdx = -1;
+  nextInlineTokenType: string | null = null;
 
   // ── Flat-list context ──
   // Tracks the markdown-it bullet_list/ordered_list nesting we're
@@ -71,6 +131,12 @@ export class ParseState {
     this.marks = Mark.none;
   }
 
+  indexStructure(tokens: readonly Token[]): void {
+    const index = buildTokenStructureIndex(tokens);
+    this.openEndLines = index.openEndLines;
+    this.listItemTightness = index.listItemTightness;
+  }
+
   top(): StackFrame {
     return this.stack[this.stack.length - 1];
   }
@@ -78,8 +144,8 @@ export class ParseState {
   /**
    * Source range of the *currently-processing* token.
    *
-   * - For an "open" token (nesting === 1), walk forward until the
-   *   matching close at the same level and take the close's endLine.
+   * - For an "open" token (nesting === 1), read the matching close's
+   *   end line from the precomputed structural index.
    * - For a self-closing block token (nesting === 0), use tok.map
    *   directly - markdown-it already gives the full line range.
    * - For any token without .map (including inline sub-tokens walked
@@ -98,50 +164,7 @@ export class ParseState {
       return { start: lineToOffset(tok.map[0]), end: lineToOffset(tok.map[1]) };
     }
     if (tok.nesting === 1) {
-      // Scan forward at the same nesting level for the matching close.
-      //
-      // Special case: for `list_item_open`, the flat-list parser
-      // emits the OUTER item as a top-level sibling of any nested
-      // list_items inside it. The outer item's source range must
-      // therefore END before the nested list begins, otherwise the
-      // outer item's range OVERLAPS the nested items' ranges, the
-      // coverage check trips on backward gaps, and parseWithSourceMap
-      // bails to raw_block. Stop at the first nested
-      // `bullet_list_open` / `ordered_list_open` we encounter inside
-      // the item - its `tok.map[0]` becomes our end line.
-      const isListItem = tok.type === "list_item_open";
-      let depth = 1;
-      let endLine = tok.map[1];
-      for (let j = this.currentTokIdx + 1; j < this.tokens.length; j++) {
-        const t = this.tokens[j];
-        if (
-          isListItem &&
-          (t.type === "bullet_list_open" || t.type === "ordered_list_open") &&
-          t.map
-        ) {
-          // Check we're still inside the item (not in a nested
-          // callout/blockquote that's already opened a separate
-          // list - those don't auto-promote to siblings).
-          // The simple `level` heuristic: nested-list-inside-item
-          // tokens are at level+2 (item level + paragraph_close +
-          // bullet_list_open) - actually markdown-it's `level` is
-          // structural. The first nested ul/ol at a level > tok.level
-          // before the matching close is what we want.
-          if (t.level > tok.level) {
-            endLine = t.map[0];
-            break;
-          }
-        }
-        if (t.level !== tok.level) continue;
-        if (t.nesting === 1) depth++;
-        else if (t.nesting === -1) {
-          depth--;
-          if (depth === 0) {
-            endLine = t.map?.[1] ?? endLine;
-            break;
-          }
-        }
-      }
+      const endLine = this.openEndLines?.[this.currentTokIdx] ?? tok.map[1];
       return { start: lineToOffset(tok.map[0]), end: lineToOffset(endLine) };
     }
     return null;
@@ -155,7 +178,14 @@ export class ParseState {
       line + 1 < this.lineStarts.length
         ? this.lineStarts[line + 1]
         : this.totalLen;
-    return this.sourceText.slice(start, end).replace(/\r?\n$/, "");
+    return this.sourceText
+      .slice(start, end)
+      .replace(/(?:\r\n?|\n)$/, "");
+  }
+
+  currentListItemIsTight(): boolean {
+    if (this.currentTokIdx < 0) return true;
+    return this.listItemTightness?.[this.currentTokIdx] ?? true;
   }
 
   /** Merge the current token's sourceRange into attrs (if any). */
@@ -319,6 +349,7 @@ export class ParseState {
   closeMark(type: MarkType) {
     this.marks = type.removeFromSet(this.marks);
   }
+
 }
 
 // ── helpers ──
@@ -335,7 +366,16 @@ function cellAlign(tok: Token): string | null {
 function computeLineStarts(markdown: string): number[] {
   const lineStarts: number[] = [0];
   for (let i = 0; i < markdown.length; i++) {
-    if (markdown[i] === "\n") lineStarts.push(i + 1);
+    if (markdown[i] === "\r") {
+      // markdown-it normalizes CR, LF, and CRLF to one logical LF before it
+      // assigns token.map line numbers. Keep offsets in the ORIGINAL source,
+      // but count the same logical endings so those line numbers still map
+      // back to exact source slices. CRLF is one ending, not two.
+      if (markdown[i + 1] === "\n") i++;
+      lineStarts.push(i + 1);
+    } else if (markdown[i] === "\n") {
+      lineStarts.push(i + 1);
+    }
   }
   return lineStarts;
 }
@@ -462,18 +502,16 @@ function buildHandlers(): Record<string, TokenHandler> {
       s.listItemOpen = true;
       return;
     }
-    // Only the FIRST item in an ordered run with a non-default start
-    // carries the explicit `start` attr; subsequent items count up.
+    // The first item in every ordered run carries its explicit start,
+    // including 1. Keeping `1` distinguishes a new delimiter-separated run
+    // from a continuation in Butter's flat-list model.
     const isFirst = !ctx.firstEmitted;
     ctx.firstEmitted = true;
     s.push(schema.nodes.list_item, {
       kind: ctx.kind,
       depth: ctx.depth,
-      tight: true,
-      start:
-        isFirst && ctx.kind === "ordered" && ctx.start !== 1
-          ? ctx.start
-          : null,
+      tight: s.currentListItemIsTight(),
+      start: isFirst && ctx.kind === "ordered" ? ctx.start : null,
     });
     s.listItemOpen = true;
   };
@@ -537,6 +575,8 @@ function buildHandlers(): Record<string, TokenHandler> {
       label: metaStr(t, "label"),
       content: t.content,
     });
+  h.reference_definition = (s, t) =>
+    s.addNode(schema.nodes.reference_definition, { raw: t.content });
 
   // Inline container.
   //
@@ -562,11 +602,14 @@ function buildHandlers(): Record<string, TokenHandler> {
     const savedIdx = s.currentTokIdx;
     s.currentTokIdx = -1;
     try {
-      for (const c of t.children) {
+      for (let index = 0; index < t.children.length; index++) {
+        const c = t.children[index];
+        s.nextInlineTokenType = t.children[index + 1]?.type ?? null;
         const fn = handlers[c.type];
         if (fn) fn(s, c);
       }
     } finally {
+      s.nextInlineTokenType = null;
       s.currentTokIdx = savedIdx;
     }
   };
@@ -669,53 +712,66 @@ function buildHandlers(): Record<string, TokenHandler> {
     s.closeMark(schema.marks.code);
   };
 
-  // Inline leaf nodes
-  // Heading-internal hard/soft breaks (from setext-style multi-line
-  // headings like `text\ntext\n---`) collapse to a single space.
-  // Multi-line heading content otherwise re-parses as a heading + a
-  // paragraph after one save cycle and trips the round-trip guard:
-  // ATX serialization (`## ` + inline) emits the embedded newline
-  // verbatim, then `## first\nsecond` re-parses as h2 + paragraph.
-  // Collapsing at parse time keeps the doc's inline shape stable.
-  h.hardbreak = (s) => {
-    if (s.top().type.name === "heading") s.addText(" ");
-    else s.addNode(schema.nodes.hard_break);
-  };
-  h.softbreak = (s) => {
-    if (s.top().type.name === "heading") s.addText(" ");
-    else s.addNode(schema.nodes.softbreak);
-  };
+  // Inline leaf nodes. Headings use the same break nodes as every other
+  // inline container; the serializer uses `<br>` there because a physical
+  // newline would end an ATX heading.
+  h.hardbreak = (s) => s.addNode(schema.nodes.hard_break);
+  h.softbreak = (s) => s.addNode(schema.nodes.softbreak);
   h.text = (s, t) => {
-    // Inside a table cell, GFM convention encodes a cell-internal
-    // line break as `<br>` (LP and Reading mode use this; our cell
-    // serializer also emits `<br>` for softbreaks/hardbreaks). Our
-    // markdown-it instance is configured `html: false` so `<br>`
-    // doesn't tokenize as `html_inline` - it stays as part of a
-    // `text` token. Detect it here when we're parsing inline
-    // content inside a `table_header` / `table_cell` and split on
-    // the `<br>` markers, inserting softbreak nodes between
-    // segments. Round-trip then preserves the user's Shift+Enter.
-    const topName = s.top().type.name;
-    const inCell = topName === "table_cell" || topName === "table_header";
-    if (inCell && /<br\s*\/?>/i.test(t.content)) {
-      const parts = t.content.split(/<br\s*\/?>/i);
-      parts.forEach((part, i) => {
-        if (i > 0) s.addNode(schema.nodes.softbreak);
-        if (part) s.addText(part);
-      });
+    // Butter parses with raw HTML disabled, so standard `<br>` tags arrive
+    // inside text tokens. `<br>` is the exact hard-break fallback and
+    // `<br />` the exact soft-break fallback where CommonMark has no native
+    // edge/consecutive spelling. Both remain portable HTML to other readers.
+    const breakPattern = /<br\s*(\/?)>/gi;
+    if (breakPattern.test(t.content)) {
+      breakPattern.lastIndex = 0;
+      let cursor = 0;
+      let match: RegExpExecArray | null;
+      while ((match = breakPattern.exec(t.content)) !== null) {
+        const before = t.content.slice(cursor, match.index);
+        if (before) s.addText(before);
+        s.addNode(match[1] === "/"
+          ? schema.nodes.softbreak
+          : schema.nodes.hard_break);
+        cursor = match.index + match[0].length;
+      }
+      const tail = t.content.slice(cursor);
+      const isSerializerTagBoundary =
+        s.nextInlineTokenType === "obsidian_tag" && tail === " ";
+      if (tail && !isSerializerTagBoundary) s.addText(tail);
       return;
     }
     s.addText(t.content);
   };
 
   h.image = (s, t) => {
-    const rawAlt: string = t.children?.[0]?.content ?? "";
+    // Image labels can tokenize into multiple children when they contain
+    // escapes/entities/format-looking punctuation. Alt semantics are the
+    // concatenated visible content, not merely the first token.
+    const rawAlt: string = t.children?.map((child) => child.content).join("") ?? "";
+    const authoredAlt = t.content ?? "";
+    const authoredSuffix = /\|(full|\d+(?:x\d+)?)$/i.exec(authoredAlt);
+    let suffixIsMetadata = false;
+    if (authoredSuffix) {
+      const pipeIndex = authoredSuffix.index;
+      let precedingBackslashes = 0;
+      for (
+        let index = pipeIndex - 1;
+        index >= 0 && authoredAlt[index] === "\\";
+        index--
+      ) {
+        precedingBackslashes += 1;
+      }
+      suffixIsMetadata = precedingBackslashes % 2 === 0;
+    }
     // `|full` (case-insensitive) marks Butter's full-column-width
     // display mode. Lives in the same alt-suffix slot as `|WIDTH`
     // so it survives round-trip through any Obsidian-aware parser.
     // Non-Butter renderers see "alt|full" as alt text - image still
     // shows, just at natural size.
-    const fullMatch = rawAlt.match(/^(.*?)\|full$/i);
+    const fullMatch = suffixIsMetadata
+      ? rawAlt.match(/^(.*?)\|full$/i)
+      : null;
     if (fullMatch) {
       s.addNode(schema.nodes.image, {
         src: t.attrGet("src"),
@@ -727,7 +783,9 @@ function buildHandlers(): Record<string, TokenHandler> {
       });
       return;
     }
-    const m = rawAlt.match(/^(.*?)\|(\d+)(?:x(\d+))?$/);
+    const m = suffixIsMetadata
+      ? rawAlt.match(/^(.*?)\|(\d+)(?:x(\d+))?$/)
+      : null;
     s.addNode(schema.nodes.image, m
       ? {
           src: t.attrGet("src"), alt: m[1] || null,
@@ -770,6 +828,20 @@ function buildHandlers(): Record<string, TokenHandler> {
 // pre-bridge-init registrations (catchup) and for runtime ones.
 export const handlers: Record<string, TokenHandler> = { ...buildHandlers() };
 
+function firstUnhandledToken(tokens: readonly Token[]): Token | null {
+  for (const token of tokens) {
+    if (!handlers[token.type]) return token;
+    // Only `inline` dispatches its children as independent semantic tokens.
+    // Children on leaf tokens such as image describe that token's payload and
+    // are deliberately consumed by the leaf handler itself.
+    if (token.type === "inline" && token.children) {
+      const nested = firstUnhandledToken(token.children);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
 // ── Task-list post-processing ──
 
 // Matches the task-item marker at the start of a list item's first
@@ -780,9 +852,10 @@ export const handlers: Record<string, TokenHandler> = { ...buildHandlers() };
 // `|$` alternative, an empty task item round-trips as a regular
 // bullet with literal text `[ ]`, which the fingerprint check
 // catches as structural drift and the save guard refuses.
-// `m[0]` consumes both the bracket-pair AND the trailing whitespace
-// run so removePrefixFromParagraph trims them as a single chunk.
-const TASK_RE = /^\[([ xX])\](\s+|$)/;
+// `m[0]` consumes the bracket-pair and exactly one structural separator.
+// Additional authored whitespace is editable paragraph content and must not
+// disappear (notably when the first user character is a space entity).
+const TASK_RE = /^\[([ xX])\](?:[ \t]|$)/;
 
 function removePrefixFromParagraph(para: PMNode, n: number): PMNode {
   const children: PMNode[] = [];
@@ -836,7 +909,15 @@ function transformTaskItems(node: PMNode): PMNode {
 
 export function parse(markdown: string): PMNode | null {
   const tokens = md.parse(markdown, {});
+  const unhandled = firstUnhandledToken(tokens);
+  if (unhandled) {
+    return rawBlockFallbackDocument(
+      markdown,
+      `unhandled Markdown token: ${unhandled.type}`,
+    );
+  }
   const state = new ParseState();
+  state.indexStructure(tokens);
   state.sourceText = markdown;
   state.lineStarts = computeLineStarts(markdown);
   state.totalLen = markdown.length;
@@ -876,79 +957,99 @@ export interface SourceMapResult {
  * recovery fallback when parsing throws or produces structural
  * garbage the schema rejects.
  */
-function rawBlockFallback(
+export function rawBlockFallbackDocument(
   markdown: string,
   reason: string,
-): SourceMapResult {
+): PMNode {
   const rawNode = schema.nodes.raw_block.create({
     raw: markdown,
     reason,
     sourceRange: { start: 0, end: markdown.length },
   });
-  const doc = schema.nodes.doc.create(null, [rawNode]);
+  return schema.nodes.doc.create(null, [rawNode]);
+}
+
+function rawBlockFallback(
+  markdown: string,
+  reason: string,
+): SourceMapResult {
+  const doc = rawBlockFallbackDocument(markdown, reason);
   return { doc, blockRanges: [{ start: 0, end: markdown.length }] };
+}
+
+function validateModeledSourceRanges(
+  markdown: string,
+  ranges: ReadonlyArray<{ start: number; end: number }>,
+): { ok: true } | { ok: false; index: number; reason: string } {
+  if (ranges.length === 0) {
+    return markdown.length === 0
+      ? { ok: true }
+      : { ok: false, index: 0, reason: "non-empty source has no modeled block" };
+  }
+
+  let cursor = 0;
+  for (const range of ranges) {
+    if (
+      !Number.isInteger(range.start) ||
+      !Number.isInteger(range.end) ||
+      range.start < cursor ||
+      range.end < range.start ||
+      range.end > markdown.length
+    ) {
+      return { ok: false, index: cursor, reason: "invalid or overlapping source range" };
+    }
+    const gap = markdown.slice(cursor, range.start);
+    const nonWhitespace = /[^\t\n\r ]/.exec(gap);
+    if (nonWhitespace) {
+      return {
+        ok: false,
+        index: cursor + nonWhitespace.index,
+        reason: "unmodeled non-whitespace between blocks",
+      };
+    }
+    cursor = range.end;
+  }
+
+  const trailing = markdown.slice(cursor);
+  const nonWhitespace = /[^\t\n\r ]/.exec(trailing);
+  return nonWhitespace
+    ? {
+        ok: false,
+        index: cursor + nonWhitespace.index,
+        reason: "unmodeled non-whitespace after the final block",
+      }
+    : { ok: true };
 }
 
 export function parseWithSourceMap(markdown: string): SourceMapResult | null {
   try {
     const result = parseWithSourceMapInner(markdown);
     if (result) {
-      // Post-parse byte-coverage check: reconstruct the input from the
-      // content-only block ranges + the inter-block gap bytes. Any
-      // missed byte means the parse lost structural info (common
-      // cases: pure-whitespace input yielding an empty paragraph
-      // without a token map; HTML blocks emitted in a token shape we
-      // don't fully cover). Rather than silently corrupt on save, fall
-      // back to a whole-file raw_block - source preservation holds.
-      //
-      // Reconstruction = leading-whitespace + block[0].content +
-      // gap[0,1] + block[1].content + ... + block[n-1].content +
-      // trailing-whitespace.
-      //   leading  = markdown.slice(0, firstBlock.start)
-      //   gap[i,j] = markdown.slice(block[i].end, block[j].start)
-      //   trailing = markdown.slice(lastBlock.end, markdown.length)
-      let covered = "";
-      let coverageOk = true;
-      const n = result.doc.childCount;
-      if (n === 0) {
-        coverageOk = markdown.length === 0;
-      } else {
-        for (let i = 0; i < n; i++) {
-          const r = result.doc.child(i).attrs.sourceRange as
-            | { start: number; end: number }
-            | null;
-          if (!r || r.start < 0 || r.end < r.start || r.end > markdown.length) {
-            coverageOk = false;
-            break;
-          }
-          if (i === 0) covered += markdown.slice(0, r.start); // leading
-          covered += markdown.slice(r.start, r.end); // content
-          if (i < n - 1) {
-            const nextR = result.doc.child(i + 1).attrs.sourceRange as
-              | { start: number; end: number }
-              | null;
-            if (!nextR || nextR.start < r.end) {
-              coverageOk = false;
-              break;
-            }
-            covered += markdown.slice(r.end, nextR.start); // gap
-          } else {
-            covered += markdown.slice(r.end, markdown.length); // trailing
-          }
-        }
+      const ranges: Array<{ start: number; end: number }> = [];
+      let rangesComplete = result.doc.childCount === result.blockRanges.length;
+      for (let index = 0; rangesComplete && index < result.doc.childCount; index++) {
+        const range = result.doc.child(index).attrs.sourceRange as
+          | { start: number; end: number }
+          | null;
+        if (!range) rangesComplete = false;
+        else ranges.push(range);
       }
-      if (!coverageOk || covered !== markdown) {
+      const validation = rangesComplete
+        ? validateModeledSourceRanges(markdown, ranges)
+        : { ok: false as const, index: 0, reason: "missing block source range" };
+      if (!validation.ok) {
         console.warn(
-          "[butter-pmx] parse did not cover every byte of input",
+          "[butter-pmx] parse left unmodeled source outside block ranges",
           {
             inputBytes: markdown.length,
             childCount: result.doc.childCount,
-            firstUncoveredIndex: covered.length,
+            firstUnmodeledIndex: validation.index,
+            reason: validation.reason,
           },
         );
         return rawBlockFallback(
           markdown,
-          "parse did not cover every byte of the input",
+          validation.reason,
         );
       }
     }
@@ -1184,21 +1285,24 @@ function parseWithSourceMapInner(markdown: string): SourceMapResult | null {
   }
 
   const tokens = md.parse(markdown, {});
+  const unhandled = firstUnhandledToken(tokens);
+  if (unhandled) {
+    return rawBlockFallback(
+      markdown,
+      `unhandled Markdown token: ${unhandled.type}`,
+    );
+  }
 
   // Pre-compute line-start byte offsets so ParseState can convert
   // markdown-it's 0-indexed line numbers to character positions in
   // O(1) during the token walk.
-  const lineStarts: number[] = [0];
-  for (let i = 0; i < markdown.length; i++) {
-    if (markdown[i] === "\n") lineStarts.push(i + 1);
-  }
-  const lineOffset = (line: number) =>
-    line < lineStarts.length ? lineStarts[line] : markdown.length;
+  const lineStarts = computeLineStarts(markdown);
 
   // Drive the walk with source-map context so push/addNode auto-
   // attach sourceRange attrs to created nodes.
   const state = new ParseState();
   state.tokens = tokens;
+  state.indexStructure(tokens);
   state.sourceText = markdown;
   state.lineStarts = lineStarts;
   state.totalLen = markdown.length;
@@ -1241,10 +1345,6 @@ function parseWithSourceMapInner(markdown: string): SourceMapResult | null {
       | null;
     blockRanges.push(r ?? { start: -1, end: -1 });
   }
-
-  // Silence unused-helper warning - lineOffset is kept around in case
-  // callers want to do their own line math.
-  void lineOffset;
 
   return { doc: docWithInlineRanges, blockRanges };
 }
@@ -1433,27 +1533,10 @@ export function parseIncrementally(
     }
   }
 
-  // Byte-coverage sanity: reconstruct newBody from content-only ranges
-  // interleaved with inter-block gaps (leading + content + gap + ... +
-  // trailing). If the assembled bytes don't match newBody exactly, the
-  // delta math was off - fall back to full parse.
-  let covered = "";
-  const nRanges = blockRanges.length;
-  if (nRanges === 0) {
-    if (newBody.length !== 0) return null;
-  } else {
-    for (let i = 0; i < nRanges; i++) {
-      const r = blockRanges[i];
-      if (i === 0) covered += newBody.slice(0, r.start);
-      covered += newBody.slice(r.start, r.end);
-      if (i < nRanges - 1) {
-        covered += newBody.slice(r.end, blockRanges[i + 1].start);
-      } else {
-        covered += newBody.slice(r.end, newBody.length);
-      }
-    }
-    if (covered !== newBody) return null;
-  }
+  // The unchanged prefix/suffix ranges plus the reparsed changed range must
+  // leave only whitespace between modeled blocks. Any other byte belongs to
+  // syntax we did not model, so incremental reuse must fail closed.
+  if (!validateModeledSourceRanges(newBody, blockRanges).ok) return null;
 
   const newDoc = oldDoc.type.create(
     oldDoc.attrs,
@@ -1466,4 +1549,3 @@ export function parseIncrementally(
 // ═══════════════════════════════════════════════
 //  EXPORTS
 // ═══════════════════════════════════════════════
-

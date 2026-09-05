@@ -32,6 +32,7 @@ import type { EditorView } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
 import { App, Menu, Notice } from "obsidian";
 import { shiftSelectedListItemDepth } from "./list-operations";
+import { LIST_DEPTH_MULTI_SELECTION_META } from "./list-depth";
 import {
   buildSingleBlockMenuItems,
   intersectBlockMenuSpecs,
@@ -40,6 +41,9 @@ import {
   MERGE_MENU_ITEMS,
 } from "./block-menu-spec";
 import { tx, tv } from "../i18n";
+import { dismissMenuOnScroll } from "../ui/menu-scroll-dismiss";
+import { hideMenuSurfaceImmediately } from "../ui/surface-motion";
+import { joinOrderedRunsAfterConversion } from "./flat-list-editing";
 
 export interface MultiBlockSelection {
   /** Doc positions of the top-level blocks currently selected. Each
@@ -162,35 +166,6 @@ export function listTopLevelBlockPositions(state: EditorState): number[] {
 }
 
 /**
- * Compute a list_item's subtree: the item itself plus all subsequent
- * contiguous list_items with depth STRICTLY greater than the source.
- * Returns just `[blockPos]` for non-list_items or list_items that
- * have no nested children. Used by both:
- *   • plain-click handle → auto-select parent+children (so the user
- *     never has to manually fan out a nested list to operate on it)
- *   • drag → carry the whole subtree along (Notion-style move)
- */
-export function computeListSubtree(
-  state: EditorState,
-  blockPos: number,
-): number[] {
-  const node = state.doc.nodeAt(blockPos);
-  if (!node || node.type.name !== "list_item") return [blockPos];
-  const sourceDepth = node.attrs.depth as number;
-  const positions: number[] = [blockPos];
-  let cursor = blockPos + node.nodeSize;
-  while (cursor < state.doc.content.size) {
-    const next = state.doc.nodeAt(cursor);
-    if (!next || next.type.name !== "list_item") break;
-    const nextDepth = next.attrs.depth as number;
-    if (nextDepth <= sourceDepth) break;
-    positions.push(cursor);
-    cursor += next.nodeSize;
-  }
-  return positions;
-}
-
-/**
  * Compute the "scope" of blocks to select on a double-click of a
  * drag handle, per block type:
  *   • list_item: all CONTIGUOUS list_items in the doc
@@ -290,7 +265,7 @@ function selectionNearButNotSameNode(
  * the right if there's no room) - matching single-block placement.
  *
  * Actions (intentionally limited per spec): Copy, Cut, Duplicate,
- * Combine into paragraph (when all selected blocks are inline-like),
+ * Structure-safe combine actions for compatible selections,
  * Delete. After Cut / Delete / Combine the multi-set is cleared.
  */
 export function openMultiBlockContextMenu(
@@ -365,9 +340,19 @@ export function openMultiBlockContextMenu(
     renderBlockMenuItems(menu, sharedItems, (item) => {
       if (item.applyTr) {
         const tr = view.state.tr;
+        const orderedConversions = item.id === "ordered_list"
+          ? nodes
+              .filter(({ node }) =>
+                node.type.name !== "list_item" || node.attrs.kind !== "ordered"
+              )
+              .map(({ pos }) => pos)
+          : [];
         for (let i = nodes.length - 1; i >= 0; i--) {
           const { pos, node } = nodes[i];
           item.applyTr(tr, pos, node);
+        }
+        if (orderedConversions.length > 0) {
+          joinOrderedRunsAfterConversion(tr, orderedConversions);
         }
         if (tr.docChanged) {
           view.dispatch(tr);
@@ -385,6 +370,7 @@ export function openMultiBlockContextMenu(
           item.sideEffect(view, pos, node);
         }
       }
+      hideMenuSurfaceImmediately(menu);
     });
     menu.addSeparator();
   }
@@ -457,22 +443,19 @@ export function openMultiBlockContextMenu(
 
   // Position to the LEFT of the trigger handle (or right if no room).
   // Constants mirror openBlockContextMenu in drag-handles.ts.
-  const HANDLE_OFFSET_LEFT = 30;
   const HANDLE_WIDTH = 22;
   const MENU_GAP = 6;
   const MENU_WIDTH = 240;
   const handleRect = triggerHandle.getBoundingClientRect();
-  // The handle's rect is the visible 22×22 button. The block sits to
-  // the right of it. Compute the block's effective left from the
-  // handle's right + handle-offset-left so positioning matches the
-  // single-block menu's math exactly.
-  const blockLeftApprox = handleRect.left + HANDLE_OFFSET_LEFT;
-  const handleLeft = blockLeftApprox - HANDLE_OFFSET_LEFT;
+  // Position from the handle itself; its stable gutter rail is already
+  // reflected by the fixed DOM rect.
+  const handleLeft = handleRect.left;
   const handleRight = handleLeft + HANDLE_WIDTH;
   const leftX = handleLeft - MENU_GAP - MENU_WIDTH;
   const x = leftX >= 8 ? leftX : handleRight + MENU_GAP;
   const y = Math.max(8, handleRect.top);
   menu.showAtPosition({ x, y });
+  dismissMenuOnScroll(menu, view.dom.ownerDocument);
   void triggerBlockPos;
   return menu;
 }
@@ -497,7 +480,20 @@ export function multiBlockSelectPlugin(
         // If the doc changed, remap positions through the mapping
         // so they continue to point at the same blocks. Drop any
         // position that was deleted by the change.
-        if (tr.docChanged && next.positions.length > 0) {
+        const preservedListDepthPositions = tr.getMeta(
+          LIST_DEPTH_MULTI_SELECTION_META,
+        ) as number[] | undefined;
+        if (tr.docChanged && preservedListDepthPositions) {
+          const positions = preservedListDepthPositions.filter(
+            (pos) => tr.doc.nodeAt(pos)?.type.name === "list_item",
+          );
+          next = {
+            positions,
+            anchor: next.anchor != null && positions.includes(next.anchor)
+              ? next.anchor
+              : positions[0] ?? null,
+          };
+        } else if (tr.docChanged && next.positions.length > 0) {
           const remappedPositions: number[] = [];
           for (const p of next.positions) {
             const r = tr.mapping.mapResult(p);
@@ -599,6 +595,9 @@ export function multiBlockSelectPlugin(
       const onPointerDown = (e: PointerEvent) => {
         const target = e.target as Element | null;
         if (!target) return;
+        const isToolbarSurface = Boolean(target.closest?.(
+          ".butter-toolbar, .butter-toolbar-submenu-popup",
+        ));
 
         // Scope this handler to events relevant to THIS view's host.
         // Drag handles live on document.body (position:fixed), so
@@ -608,6 +607,10 @@ export function multiBlockSelectPlugin(
         const host = editorView.dom.parentElement;
         if (host && !host.contains(target)) {
           if (target.closest?.(".butter-drag-handle")) return;
+          // Toolbar controls operate on the current selection. This includes
+          // submenu triggers and their body-mounted popups: clearing on the
+          // trigger would leave the eventual action with only the caret block.
+          if (isToolbarSurface) return;
           const multi = getMultiBlockSelection(editorView.state);
           if (multi.positions.length > 0) {
             dispatchMultiBlock(
@@ -748,6 +751,9 @@ export function multiBlockSelectPlugin(
         if (!target) return;
         if (target.closest(".butter-drag-handle")) return;
         if (target.closest(".butter-selection-overlay")) return;
+        if (target.closest(
+          ".butter-toolbar, .butter-toolbar-submenu-popup",
+        )) return;
 
         const multi = getMultiBlockSelection(editorView.state);
         const pmSel = editorView.state.selection;

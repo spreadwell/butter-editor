@@ -20,6 +20,10 @@ import { setIcon } from "obsidian";
 export type SaveState =
   | { kind: "clean" }
   | {
+      kind: "blocked";
+      reason: string;
+    }
+  | {
       kind: "normalized";
       original: string;
       saved: string;
@@ -59,7 +63,9 @@ export function installSaveStatus(
       setIcon(el, "triangle-alert");
       el.setAttribute(
         "aria-label",
-        "Butter - saved with structural normalization (click for details)",
+        state.kind === "blocked"
+          ? "Butter - save blocked to protect the file"
+          : "Butter - saved with structural normalization (click for details)",
       );
     }
   };

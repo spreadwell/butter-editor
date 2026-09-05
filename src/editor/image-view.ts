@@ -28,6 +28,12 @@ import type {
   NodeView,
 } from "prosemirror-view";
 import { openRichContextMenu } from "../ui/link-context-menu";
+import {
+  attachImageBodyPlacementDrag,
+  imageLayoutActions,
+} from "./image-placement";
+import { IMAGE_RESIZE_MIN_WIDTH } from "./embed-image-resize";
+import { attachImageEditButton } from "./image-edit-button";
 
 
 // External URL scheme - these load via the network or browser stack
@@ -168,10 +174,31 @@ export function imageView(app: App, getSourcePath: () => string) {
     wrap.className = "butter-image";
     wrap.contentEditable = "false";
 
+    // Standalone and inline Markdown images share one schema node. Mark the
+    // mixed-content form explicitly so its resize corner can sit on the image
+    // bounds instead of following the standalone selector frame into the text
+    // line's clipped overflow area.
+    const syncInlinePlacementClass = (currentNode: PMNode) => {
+      try {
+        const pos = getPos();
+        if (typeof pos !== "number") return;
+        const $pos = view.state.doc.resolve(pos);
+        const parent = $pos.parent;
+        const inline = parent.inlineContent &&
+          !(parent.childCount === 1 && parent.firstChild === currentNode);
+        wrap.classList.toggle("butter-image-inline", inline);
+      } catch {
+        // A NodeView can be queried while a replacement transaction is
+        // detaching it. The next mounted view receives the correct class.
+      }
+    };
+    syncInlinePlacementClass(node);
+
     const rawSrc = (node.attrs.src as string) || "";
     const resolved = resolveImageSrc(app, rawSrc, getSourcePath());
 
     let img: HTMLImageElement | null = null;
+    let detachPlacementDrag: (() => void) | null = null;
 
     // Swap the wrap's contents to the missing-placeholder form. Used
     // both upfront (unresolvable src) and after `<img>.onerror` for
@@ -208,6 +235,7 @@ export function imageView(app: App, getSourcePath: () => string) {
       // the src had failed `resolveImageSrc` upfront.
       img.addEventListener("error", fallToPlaceholder);
       wrap.appendChild(img);
+      detachPlacementDrag = attachImageBodyPlacementDrag({ image: img, view, getPos });
     } else {
       fallToPlaceholder();
     }
@@ -229,11 +257,13 @@ export function imageView(app: App, getSourcePath: () => string) {
     // (presets or custom px) all in one place. Replaces the older
     // size-only submenu so the GUI covers every attribute people
     // commonly want to tweak without resorting to markdown.
-    wrap.addEventListener("contextmenu", (ev) => {
+    const openContextMenu = (ev: MouseEvent) => {
       ev.preventDefault();
       ev.stopPropagation();
       openImageContextMenu(app, view, getPos, node, ev, wrap);
-    });
+    };
+    wrap.addEventListener("contextmenu", openContextMenu);
+    const detachEditButton = attachImageEditButton(wrap, openContextMenu);
 
     let dragging = false;
     let startX = 0;
@@ -241,11 +271,12 @@ export function imageView(app: App, getSourcePath: () => string) {
     let startW = 0;
     let startH = 0;
     let naturalRatio = 1;
+    const resizeBody = wrap.ownerDocument.body;
 
     const onPointerMove = (e: PointerEvent) => {
       if (!dragging || !img) return;
       const dx = e.clientX - startX;
-      const nextW = Math.max(32, Math.round(startW + dx));
+      const nextW = Math.max(IMAGE_RESIZE_MIN_WIDTH, Math.round(startW + dx));
       const keepRatio = !e.shiftKey;
       const nextH = keepRatio
         ? Math.round(nextW / naturalRatio)
@@ -254,12 +285,21 @@ export function imageView(app: App, getSourcePath: () => string) {
       img.height = nextH;
     };
 
-    const onPointerUp = (e: PointerEvent) => {
+    const finishResize = (e: PointerEvent, commit: boolean) => {
       if (!dragging || !img) return;
       dragging = false;
+      handle.classList.remove("is-resizing");
+      resizeBody.classList.remove("butter-is-image-resizing");
       handle.releasePointerCapture?.(e.pointerId);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+
+      if (!commit) {
+        img.width = startW;
+        img.height = startH;
+        return;
+      }
 
       const pos = getPos();
       if (pos == null) return;
@@ -271,11 +311,16 @@ export function imageView(app: App, getSourcePath: () => string) {
       view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, attrs));
     };
 
+    const onPointerUp = (e: PointerEvent) => finishResize(e, true);
+    const onPointerCancel = (e: PointerEvent) => finishResize(e, false);
+
     const onPointerDown = (e: PointerEvent) => {
       if (!img) return;
       e.preventDefault();
       e.stopPropagation();
       dragging = true;
+      handle.classList.add("is-resizing");
+      resizeBody.classList.add("butter-is-image-resizing");
       startX = e.clientX;
       startY = e.clientY;
       startW = img.offsetWidth || img.naturalWidth || 200;
@@ -289,6 +334,7 @@ export function imageView(app: App, getSourcePath: () => string) {
       handle.setPointerCapture?.(e.pointerId);
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerCancel);
     };
 
     handle.addEventListener("pointerdown", onPointerDown);
@@ -297,6 +343,7 @@ export function imageView(app: App, getSourcePath: () => string) {
       dom: wrap,
       update(updated) {
         if (updated.type.name !== "image") return false;
+        syncInlinePlacementClass(updated);
         // Always compare against the LIVE attrs (refreshed on every
         // update, not the closure-captured original) so subsequent
         // updates don't see stale values and skip work.
@@ -347,11 +394,15 @@ export function imageView(app: App, getSourcePath: () => string) {
       },
       stopEvent(event) {
         const target = event.target as Node | null;
-        return target === handle || handle.contains(target);
+        return target === handle || handle.contains(target) ||
+          Boolean(target?.instanceOf(Element) &&
+            target.closest(".butter-image-edit-button"));
       },
       ignoreMutation(mutation) {
         // Size mutations during drag are us, not the editor.
-        return mutation.target === img || mutation.target === handle;
+        return mutation.target === img || mutation.target === handle ||
+          (mutation.target.instanceOf(Element) &&
+            Boolean(mutation.target.closest(".butter-image-edit-button")));
       },
       destroy() {
         // If the NodeView tears down mid-drag, the window-level pointer
@@ -361,7 +412,16 @@ export function imageView(app: App, getSourcePath: () => string) {
         // teardown where pointerup already fired.
         window.removeEventListener("pointermove", onPointerMove);
         window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerCancel);
+        if (dragging) {
+          dragging = false;
+          resizeBody.classList.remove("butter-is-image-resizing");
+        }
+        handle.classList.remove("is-resizing");
         handle.removeEventListener("pointerdown", onPointerDown);
+        wrap.removeEventListener("contextmenu", openContextMenu);
+        detachEditButton();
+        detachPlacementDrag?.();
       },
     };
   };
@@ -415,6 +475,12 @@ function openImageContextMenu(
   const currentAlt = (node.attrs.alt as string) ?? "";
   const currentWidth = node.attrs.width as number | null;
   const currentHeight = node.attrs.height as number | null;
+  const renderedRect = imageDom.querySelector("img")?.getBoundingClientRect();
+  const layoutActions = imageLayoutActions(
+    view,
+    getPos() ?? -1,
+    renderedRect ? { width: renderedRect.width, height: renderedRect.height } : undefined,
+  );
 
   const commit = (values: Record<string, string>): boolean => {
     const newSrc = values.src.trim();
@@ -469,18 +535,14 @@ function openImageContextMenu(
         initial: currentSrc,
         placeholder: "file.png or https://…",
         autocomplete: "vault-files",
+        suggestScope: "image",
         suggestSkipWhen: (raw) => /^(https?:|data:|blob:|file:)/i.test(raw),
-        onSuggestSelect: (file) => {
+        onSuggestSelect: (file, input) => {
           // Image src is the full vault path (not just basename) so
           // metadataCache can resolve it independent of the open
           // file's location.
-          const input = activeDocument.querySelector<HTMLInputElement>(
-            ".butter-rich-menu-fields input[type='text']",
-          );
-          if (input) {
-            input.value = file.path;
-            input.dispatchEvent(new Event("input"));
-          }
+          input.value = file.path;
+          input.dispatchEvent(new Event("input"));
         },
       },
       {
@@ -505,7 +567,17 @@ function openImageContextMenu(
         placeholder: "aspect ratio",
       },
     ],
-    actions: [],
+    actions: layoutActions.map((action) => ({
+      id: `image-layout-${action.id}`,
+      label: action.label,
+      icon: action.icon,
+      separatorBefore: action === layoutActions[0],
+      receivesValues: false,
+      onClick: () => {
+        action.run();
+        view.focus();
+      },
+    })),
     onCommit: (values) => {
       commit(values);
       view.focus();

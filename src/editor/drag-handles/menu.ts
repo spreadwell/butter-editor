@@ -8,12 +8,16 @@ import { App, Menu } from "obsidian";
 
 import {
   buildSingleBlockMenuItems,
+  buildBlockLifecycleMenuItems,
+  renderBlockLifecycleMenuItems,
   renderBlockMenuItems,
   applyBlockContextMenuChrome,
   blockMenuLabel,
   blockMenuHeaderIcon,
 } from "../block-menu-spec";
 import { tx, tv } from "../../i18n";
+import { dismissMenuOnScroll } from "../../ui/menu-scroll-dismiss";
+import { hideMenuSurfaceImmediately } from "../../ui/surface-motion";
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -40,64 +44,35 @@ export function openBlockContextMenu(
 
   const items = buildSingleBlockMenuItems({ view, pos, node, app });
   if (items.length > 0) {
-    renderBlockMenuItems(menu, items, (item) => {
+    renderBlockMenuItems(menu, items, (item, activation) => {
       if ("applyTr" in item && item.applyTr) {
         const tr = view.state.tr;
         item.applyTr(tr, pos, node);
         if (tr.docChanged) view.dispatch(tr);
         view.focus();
       } else if ("sideEffect" in item && item.sideEffect) {
-        item.sideEffect(view, pos, node);
+        item.sideEffect(view, pos, node, activation);
       }
+      hideMenuSurfaceImmediately(menu);
     });
     menu.addSeparator();
   }
 
-  // Universal items: Copy, Cut, Duplicate, Delete
-  menu.addItem((mi) => {
-    mi.setTitle(tx("Copy"));
-    mi.setIcon("copy");
-    mi.onClick(async () => {
-      try {
-        await navigator.clipboard.writeText(serializeNode(node));
-      } catch { /* */ }
-    });
-  });
-
-  menu.addItem((mi) => {
-    mi.setTitle(tx("Cut"));
-    mi.setIcon("scissors");
-    mi.onClick(async () => {
-      try {
-        await navigator.clipboard.writeText(serializeNode(node));
-        view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize));
+  renderBlockLifecycleMenuItems(
+    menu,
+    buildBlockLifecycleMenuItems(serializeNode),
+    (item, activation) => {
+      if (item.applyTr) {
+        const tr = view.state.tr;
+        item.applyTr(tr, pos, node);
+        if (tr.docChanged) view.dispatch(tr);
         view.focus();
-      } catch { /* */ }
-    });
-  });
-
-  menu.addItem((mi) => {
-    mi.setTitle(tx("Duplicate"));
-    mi.setIcon("copy-plus");
-    mi.onClick(() => {
-      const insertAt = pos + node.nodeSize;
-      const clone = node.type.create(node.attrs, node.content, node.marks);
-      view.dispatch(view.state.tr.insert(insertAt, clone));
-    });
-  });
-
-  menu.addSeparator();
-
-  menu.addItem((mi) => {
-    mi.setTitle(tx("Delete"));
-    mi.setIcon("trash-2");
-    mi.setWarning?.(true);
-    mi.dom?.classList.add("is-warning");
-    mi.onClick(() => {
-      view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize));
-      view.focus();
-    });
-  });
+      } else if (item.sideEffect) {
+        item.sideEffect(view, pos, node, activation);
+      }
+      hideMenuSurfaceImmediately(menu);
+    },
+  );
 
   // Position to the left of the handle (or right if no room).
   const handleRect = handle.getBoundingClientRect();
@@ -105,6 +80,7 @@ export function openBlockContextMenu(
   const x = leftX >= 8 ? leftX : handleRect.right + MENU_GAP;
   const y = Math.max(8, handleRect.top);
   menu.showAtPosition({ x, y });
+  dismissMenuOnScroll(menu, view.dom.ownerDocument);
   return menu;
 }
 

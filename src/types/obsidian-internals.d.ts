@@ -21,7 +21,6 @@
 import "obsidian";
 import type { TFile as ObsTFile } from "obsidian";
 import type { EditorView as CMEditorView } from "@codemirror/view";
-import type { Extension as CMExtension } from "@codemirror/state";
 
 declare module "obsidian" {
   // ── Workspace internals ──────────────────────────────────────────
@@ -41,9 +40,6 @@ declare module "obsidian" {
     editorSuggest?: {
       suggests: ButterEditorSuggestLike[];
     };
-
-    /** CM6 extensions registered via `registerEditorExtension`. */
-    editorExtensions?: CMExtension[];
 
     /** Register a custom hover-link source so Obsidian's core
      *  page-preview surfaces hover cards for this view. */
@@ -105,6 +101,14 @@ declare module "obsidian" {
 
     /** Frontmatter property type registry (powers the Properties panel). */
     metadataTypeManager?: {
+      properties?: Record<
+        string,
+        {
+          name?: string;
+          widget?: string;
+          occurrences?: number;
+        } | undefined
+      >;
       assignedWidgets?: Record<
         string,
         { widget?: string; type?: string } | undefined
@@ -116,6 +120,17 @@ declare module "obsidian" {
           icon?: string;
           name?: () => string;
           reservedKeys?: string[];
+          render?: (
+            containerEl: HTMLElement,
+            value: unknown,
+            context: {
+              app: App;
+              key: string;
+              sourcePath: string;
+              onChange: (value: unknown) => void;
+              blur: () => void;
+            },
+          ) => unknown;
         } | undefined
       >;
       setType?(key: string, type: string): void;
@@ -161,7 +176,7 @@ declare module "obsidian" {
     dom?: HTMLElement;
   }
 
-  // ── Editor (CM6 bridge) ────────────────────────────────────────
+  // ── Editor (native Markdown views) ─────────────────────────────
 
   interface Editor {
     /** The underlying CM6 EditorView. Public API doesn't expose this. */
@@ -178,4 +193,3 @@ declare module "obsidian" {
   }
 
 }
-

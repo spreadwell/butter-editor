@@ -109,6 +109,12 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 
 const PUBLIC_ASSET_PATHS = new Set([
+  "assets/whats-new/0.12.0/butter-callout-folding.gif",
+  "assets/whats-new/0.12.0/butter-enhanced-context-menu.gif",
+  "assets/whats-new/0.12.0/butter-heading-folding.gif",
+  "assets/whats-new/0.12.0/butter-image-handling.gif",
+  "assets/whats-new/0.12.0/butter-settings-overhaul.gif",
+  "assets/whats-new/0.12.0/butter-spellcheck-context-menu.gif",
   "assets/btr-blocks.gif",
   "assets/btr-color.gif",
   "assets/btr-custom-toolbar.gif",

@@ -7,6 +7,9 @@ import {
   Notice,
   Platform,
   WorkspaceLeaf,
+  parseYaml,
+  stringifyYaml,
+  type TFile,
 } from "obsidian";
 import { EditorState, Plugin as PMPlugin, Selection } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
@@ -18,6 +21,7 @@ import { gapCursor } from "prosemirror-gapcursor";
 // Extension registration must happen before schema.ts or obsidian-md-bridge
 // evaluate their module bodies. Example extensions are not activated in
 // shipped builds.
+import { materializeButterEditorExtensions } from "../integration/extensions";
 import { schema } from "../core/schema";
 import { parser } from "../core/parser";
 import { serializer } from "../core/serializer";
@@ -36,6 +40,7 @@ import {
   defaultMainLayout,
   defaultTableLayout,
   editorTopChromeBottom,
+  visibleContextToolbarBottom,
   mobileLayoutDefault,
   mobileTableLayoutDefault,
 } from "../ui/toolbar-layout";
@@ -44,21 +49,24 @@ import { slashMenuPlugin } from "../ui/slash-menu";
 import { pasteDropPlugin } from "../editor/paste-drop";
 import { overlapResolverPlugin } from "../core/overlap-resolver";
 import { suggestBridgePlugin } from "../util/suggest-bridge";
-import { cm6BridgePlugins } from "../integration/cm6-bridge";
 import { tableEditingPlugins } from "../editor/table-editing";
 import { tableToolbarPlugin } from "../editor/table-toolbar";
 import type { Node as PMNode } from "prosemirror-model";
 import {
-  docAtomFingerprint,
-  firstFingerprintDivergence,
-} from "../core/doc-fingerprint";
+  preflightExactSave,
+  type SavePreflightResult,
+} from "../core/save-preflight";
 import { normalizeDocForSave } from "../core/doc-normalize";
 import { checkboxPlugin } from "../editor/checkbox-plugin";
 import { commentOnlyParagraphPlugin } from "../editor/comment-only-paragraph";
 import { listNumberingPlugin } from "../editor/list-numbering";
+import { headingFoldPlugin } from "../editor/heading-folding";
 import { selectionOverlayPlugin } from "../editor/selection-overlay";
 import { multiBlockSelectPlugin } from "../editor/multi-block-select";
-import { listOperationsPlugin } from "../editor/list-operations";
+import {
+  listOperationsPlugin,
+  toggleTaskOnCurrentLine,
+} from "../editor/list-operations";
 import { searchPlugin } from "../editor/search-plugin";
 import { codeHighlightPlugin } from "../editor/code-highlight";
 import { imageView } from "../editor/image-view";
@@ -67,8 +75,11 @@ import {
   type SaveState,
 } from "../ui/save-status";
 import { dragHandlesPlugin } from "../editor/drag-handles";
-import { blockSpacingPlugin } from "../editor/block-spacing";
-import { blockIdStamperPlugin } from "../editor/block-id-stamper";
+import {
+  blockIdStamperPlugin,
+  ensureBlockIds,
+} from "../editor/block-id-stamper";
+import { blockAnimatorPlugin } from "../editor/block-animator";
 import { clickToSpawnPlugin } from "../editor/click-to-spawn";
 import { inlineAtomEditPlugin } from "../editor/inline-atom-edit";
 import { autoSplitImagesPlugin } from "../editor/auto-split-images";
@@ -79,13 +90,32 @@ import {
   rawBlockSafetyPlugin,
   RAW_BLOCK_SYNC_META,
 } from "../core/raw-block-safety";
-import { tx, tv } from "../i18n";
+import { tx } from "../i18n";
 import { SaveScheduler } from "../ui/save-scheduler";
 import { suppressNativeMobileToolbar } from "../ui/mobile-native-toolbar";
-import { scrollHostTop, runClipboardCommand } from "../util/dom-utils";
+import {
+  capturePropertyClipboardTarget,
+  shouldUseNativePropertyContextMenu,
+  scrollHost,
+  scrollHostTop,
+} from "../util/dom-utils";
+import {
+  BUTTER_VIEWPORT_STATE_KEY,
+  elementViewportFraction,
+  isButterViewportAnchor,
+  restoreElementViewport,
+  restoreViewportProgress,
+  viewportProbeOffset,
+  viewportProgress,
+  type ButterViewportAnchor,
+} from "../util/view-viewport";
 import { mountLicenseBanner, type LicenseBanner } from "../ui/license-banner";
+import { stableDefaultNodeViews } from "../editor/stable-default-nodeviews";
+import { retainUnchangedBlockIds } from "../editor/runtime-block-identity";
+import { selectionThroughRetainedBlocks } from "../editor/runtime-selection";
 import {
   NodeViewManager,
+  BUTTER_HOVER_SOURCE,
   codeBlockView,
   embedView,
   embedInlineView,
@@ -101,6 +131,11 @@ import {
   blockIdView,
   rawBlockView,
 } from "../editor/nodeviews";
+import { parsePropertyTextWikilinks } from "../ui/property-wikilinks";
+import { dismissMenuOnScroll } from "../ui/menu-scroll-dismiss";
+import { linkEditorKeyboardPlugin } from "../ui/link-editor";
+import { applyPropertyKeySuggest } from "../ui/property-key-suggest";
+import { footnotePresentationPlugin } from "../editor/footnote-presentation";
 
 export const VIEW_TYPE_BUTTER = "butter-editor";
 export const VIEW_TYPE_BUTTER_LOCKED = "butter-locked-file";
@@ -108,21 +143,108 @@ import type ButterEditorPlugin from "../main";
 import { cycleView, modeIcon, refreshButterMobileBodyClass, StatusState } from "../main";
 import type { ButterSettings } from "../main";
 
+// Each visible inline title labels exactly one editable region. A monotonic
+// session-local suffix keeps aria-labelledby exact when the same note is open
+// in more than one pane; the IDs are DOM-only and never enter Markdown.
+let editorAccessibleLabelSequence = 0;
+
+type SourceLineEnding = "\n" | "\r\n" | "\r";
+
+export interface TemporalPropertyInputSpec {
+  inputType: "date" | "datetime-local" | "text";
+  value: string;
+  compatibility: "native" | "date-only-datetime" | "raw";
+}
+
+function isValidCalendarDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  return candidate.getUTCFullYear() === year &&
+    candidate.getUTCMonth() === month - 1 &&
+    candidate.getUTCDate() === day;
+}
+
+/**
+ * HTML temporal controls silently blank values they cannot represent. Keep
+ * every stored value visible: a date-only value assigned the vault-wide
+ * datetime type uses a date control, while malformed or otherwise
+ * incompatible values use a raw text control.
+ */
+export function resolveTemporalPropertyInput(
+  type: string,
+  value: unknown,
+): TemporalPropertyInputSpec | null {
+  if (type !== "date" && type !== "datetime") return null;
+  const raw = value == null
+    ? ""
+    : typeof value === "string" || typeof value === "number" ||
+        typeof value === "boolean"
+      ? String(value)
+      : "";
+  if (raw === "") {
+    return {
+      inputType: type === "datetime" ? "datetime-local" : "date",
+      value: "",
+      compatibility: "native",
+    };
+  }
+  if (isValidCalendarDate(raw)) {
+    return {
+      inputType: "date",
+      value: raw,
+      compatibility: type === "datetime" ? "date-only-datetime" : "native",
+    };
+  }
+  const datetime = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?$/.exec(raw);
+  if (type === "datetime" && datetime &&
+      isValidCalendarDate(datetime[1]) &&
+      Number(datetime[2]) <= 23 &&
+      Number(datetime[3]) <= 59 &&
+      (datetime[4] == null || Number(datetime[4]) <= 59)) {
+    return {
+      inputType: "datetime-local",
+      value: raw.slice(0, 16),
+      compatibility: "native",
+    };
+  }
+  return { inputType: "text", value: raw, compatibility: "raw" };
+}
+
+function normalizeSourceLineEndings(value: string): string {
+  return value.replace(/\r\n?|\n/g, "\n");
+}
+
+function detectSourceLineEnding(value: string): SourceLineEnding {
+  // Keep the established CRLF preference for mixed files, then recognize the
+  // CommonMark-valid bare-CR form before falling back to LF.
+  if (value.includes("\r\n")) return "\r\n";
+  if (value.includes("\r")) return "\r";
+  return "\n";
+}
+
+const FRONTMATTER_SOURCE_RE =
+  /^---(?:\r\n?|\n)([\s\S]*?)(?:\r\n?|\n)---(?:\r\n?|\n)*/;
+
 export class ButterEditorView extends TextFileView {
   private pmView: EditorView | null = null;
   private nodeViewManager: NodeViewManager | null = null;
   private propertiesEl: HTMLElement | null = null;
+  private propertiesRenderDeferred = false;
   private inlineTitleEl: HTMLElement | null = null;
+  private headerTitleRenameEl: HTMLElement | null = null;
   private toolbarDom: HTMLElement | null = null;
   /** Re-renders the main toolbar from the current layout settings.
    *  Invoked from the settings tab after a customizer edit. */
   private rebuildMainToolbar: (() => void) | null = null;
   private frontmatter: string = "";
   /** Line-ending style of the file as it was on disk. Preserved so
-   *  a CRLF source (typical on Windows-authored / git-autocrlf vaults)
-   *  is saved back as CRLF - without this, every save rewrites every
-   *  line and shows up as a whole-file diff in git. */
-  private lineEnding: "\n" | "\r\n" = "\n";
+   *  LF, CRLF (typical on Windows-authored / git-autocrlf vaults), and
+   *  CommonMark-valid bare CR are saved back in their original style. */
+  private lineEnding: SourceLineEnding = "\n";
   /** Count of trailing newlines in the original file body (after
    *  frontmatter). Preserved verbatim on save so a file with 0, 1,
    *  2, or N trailing newlines round-trips exactly. */
@@ -152,10 +274,41 @@ export class ButterEditorView extends TextFileView {
    *  onto. Flipped to true on focus intent (tap when blurred) and
    *  back to false on `keyboardWillHide`. Always true on desktop. */
   private mobileEditable = true;
+  /** True while an explicit Hide-keyboard request is settling on iOS. */
+  private mobileKeyboardDismissalActive = false;
+  private mobileKeyboardDismissalTimer = 0;
   /** Set by `installMobileToolbarBehavior` to a callback that
    *  re-applies the editable state to PM. Drag-handles' tap-to-
    *  focus path calls this to flip the lock open. */
   public mobileSetEditable: ((editable: boolean) => void) | null = null;
+
+  /** Explicit edit intent (editor tap/insert return) ends a prior dismissal. */
+  public requestMobileEditing(): void {
+    this.clearMobileKeyboardDismissal();
+    this.mobileSetEditable?.(true);
+  }
+
+  /** Lock and blur before WebKit can restore ProseMirror selection focus. */
+  public dismissMobileKeyboard(): void {
+    if (!Platform.isMobile) return;
+    this.mobileKeyboardDismissalActive = true;
+    window.clearTimeout(this.mobileKeyboardDismissalTimer);
+    this.mobileKeyboardDismissalTimer = window.setTimeout(
+      () => this.clearMobileKeyboardDismissal(),
+      1500,
+    );
+    this.mobileSetEditable?.(false);
+    suppressNativeMobileToolbar();
+    this.pmView?.dom.blur();
+    const active = activeDocument.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+  }
+
+  private clearMobileKeyboardDismissal(): void {
+    this.mobileKeyboardDismissalActive = false;
+    window.clearTimeout(this.mobileKeyboardDismissalTimer);
+    this.mobileKeyboardDismissalTimer = 0;
+  }
   /** If setEphemeralState fires before PM finishes mounting (common
    *  on view-type swaps), we stash the state and replay it right
    *  after the PM view is live. */
@@ -165,15 +318,6 @@ export class ButterEditorView extends TextFileView {
    *  view open, refreshed by the `butter:license-changed` workspace
    *  event, destroyed on view close. */
   private licenseBanner: LicenseBanner | null = null;
-  /** Cached full-doc markdown, keyed by PM doc reference. Invalidated
-   *  whenever the doc changes (new reference). Saves re-serializing
-   *  when multiple code paths ask for the same view data in one frame
-   *  (save + echo-check, etc.). */
-  private markdownCache: { doc: unknown; text: string } | null = null;
-  /** Timestamp (Date.now()) of the last doc mutation - kept for
-   *  diagnostics / status-bar readouts. Save-scheduling proper is
-   *  owned by {@link saveScheduler}. */
-  private lastEditTime = 0;
   /** Debouncer that coordinates save-to-disk timing across typing
    *  bursts, continuous editing, blur, tab-hide, and unload. See
    *  src/save-scheduler.ts for the full model. Bound to
@@ -181,6 +325,22 @@ export class ButterEditorView extends TextFileView {
    *  single save entry point. Initialized lazily on first PM
    *  mount because requestSave needs the view to exist. */
   private saveScheduler: SaveScheduler | null = null;
+  /** Monotonic local-edit generation. A save only marks the generation it
+   * captured as persisted; edits arriving during an async write stay dirty. */
+  private editGeneration = 0;
+  private persistedGeneration = 0;
+  /**
+   * Last full-file text this view actually rendered or successfully saved.
+   * Obsidian assigns TextFileView.data before calling setViewData(), so the
+   * inherited field cannot distinguish an incoming reload from the current
+   * rendered value. This mirror is identity detection only; native
+   * TextFileView remains the sole persistence/merge owner.
+   */
+  private acceptedViewData: string | null = null;
+  /** Serializes calls into the native TextFileView writer; it never writes. */
+  private saveQueue: Promise<void> = Promise.resolve();
+  private preparedSave: { doc: PMNode; text: string } | null = null;
+  private lastBlockedDoc: PMNode | null = null;
   /** DOM-event handlers we installed for the scheduler's flush
    *  triggers. Tracked so onClose() can tear them down. */
   private schedulerListeners: Array<() => void> = [];
@@ -205,7 +365,7 @@ export class ButterEditorView extends TextFileView {
     const plugins = this.pmView.state.plugins.map((plugin) =>
       (plugin.spec as { isInputRules?: boolean }).isInputRules
         ? buildInputRules(schema, {
-            enableMarkdownShortcuts: this.settings.enableMarkdownShortcuts,
+            markdownShortcuts: this.settings.markdownShortcuts,
           })
         : plugin,
     );
@@ -358,6 +518,14 @@ export class ButterEditorView extends TextFileView {
     editorDom: HTMLElement,
   ): void {
     const VISIBLE_CLASS = "butter-mobile-toolbar-visible";
+    const editorDocument = editorDom.ownerDocument;
+
+    const ensureToolbarMounted = (): void => {
+      if (this.destroyed) return;
+      if (!toolbarDom.isConnected || toolbarDom.parentElement !== editorDocument.body) {
+        editorDocument.body.appendChild(toolbarDom);
+      }
+    };
 
     // Mirrors Obsidian's `hasKeyboardVisible` flag in `J6` (the
     // native mobile-toolbar class). Flipped to true on
@@ -368,7 +536,7 @@ export class ButterEditorView extends TextFileView {
     let hasKeyboardVisible = false;
 
     const focusIsInEditorOrToolbar = (): boolean => {
-      const active = activeDocument.activeElement;
+      const active = editorDocument.activeElement;
       if (!(active instanceof Element)) return false;
       // Toolbar-button taps briefly steal focus from the editor;
       // treat focus-on-toolbar as "still editing" so the bar
@@ -377,15 +545,22 @@ export class ButterEditorView extends TextFileView {
     };
 
     const updateState = () => {
+      ensureToolbarMounted();
       const focused = focusIsInEditorOrToolbar();
-      // Mirror Obsidian's update logic. iOS: focus is enough;
-      // Android: also require the keyboard to be visible.
+      const isAndroid = Boolean(
+        (Platform as { isAndroidApp?: boolean }).isAndroidApp,
+      );
+      const isIos = Boolean((Platform as { isIosApp?: boolean }).isIosApp);
+      // WebKit can retain an editable selection and visible keyboard while
+      // reporting body (or another transient node) as activeElement. On iOS,
+      // accept either real editor focus or the native keyboard-visible signal.
+      // Android still requires the native signal in addition to focus.
       const shouldShow =
-        focused &&
-        (!(Platform as { isAndroidApp?: boolean }).isAndroidApp ||
-          hasKeyboardVisible);
+        (focused || (isIos && hasKeyboardVisible)) &&
+        (!isAndroid || hasKeyboardVisible);
       toolbarDom.classList.toggle(VISIBLE_CLASS, shouldShow);
       refreshButterMobileBodyClass();
+      if (shouldShow) editorDocument.body.classList.add("butter-mobile-active");
     };
 
     let pendingRaf = 0;
@@ -407,6 +582,16 @@ export class ButterEditorView extends TextFileView {
       window as unknown as HTMLElement,
       "keyboardWillShow" as keyof HTMLElementEventMap,
       () => {
+        if (this.mobileKeyboardDismissalActive) {
+          hasKeyboardVisible = false;
+          setEditable(false);
+          this.pmView?.dom.blur();
+          const active = activeDocument.activeElement;
+          if (active instanceof HTMLElement) active.blur();
+          suppressNativeMobileToolbar();
+          schedule();
+          return;
+        }
         hasKeyboardVisible = true;
         setEditable(true);
         schedule();
@@ -474,6 +659,12 @@ export class ButterEditorView extends TextFileView {
       },
     );
 
+    this.registerDomEvent(
+      window as unknown as HTMLElement,
+      "keyboardDidHide" as keyof HTMLElementEventMap,
+      () => this.clearMobileKeyboardDismissal(),
+    );
+
 
     this.registerDomEvent(editorDom, "focusin", schedule);
     this.registerDomEvent(editorDom, "focusout", () => {
@@ -498,6 +689,111 @@ export class ButterEditorView extends TextFileView {
     this.licenseBanner?.refresh();
   }
 
+  /** Obsidian renders the normal header title for custom FileViews, but its
+   * Markdown-only click handler does not make that title editable. Bridge the
+   * existing native element rather than creating replacement header chrome. */
+  private installHeaderTitleRenameBridge(): void {
+    if (Platform.isMobile) return;
+    const title = this.containerEl.querySelector<HTMLElement>(
+      ".view-header-title",
+    );
+    if (!title || title === this.headerTitleRenameEl) return;
+    this.headerTitleRenameEl = title;
+
+    let editing = false;
+    let cancelled = false;
+    let originalName = "";
+    let breadcrumbWidth = 0;
+    let animationVersion = 0;
+    const breadcrumb = title.parentElement?.querySelector<HTMLElement>(
+      ":scope > .view-header-title-parent",
+    ) ?? null;
+
+    const collapseBreadcrumb = (): void => {
+      if (!breadcrumb) return;
+      animationVersion += 1;
+      breadcrumbWidth = breadcrumb.getBoundingClientRect().width;
+      breadcrumb.setCssProps({
+        "--butter-header-breadcrumb-width": `${breadcrumbWidth}px`,
+      });
+      breadcrumb.classList.add("butter-header-breadcrumb-animated");
+      void breadcrumb.offsetWidth;
+      breadcrumb.classList.add("is-collapsed");
+    };
+
+    const restoreBreadcrumb = (): void => {
+      if (!breadcrumb) return;
+      const version = ++animationVersion;
+      breadcrumb.classList.remove("is-collapsed");
+      window.setTimeout(() => {
+        if (editing || version !== animationVersion || !breadcrumb.isConnected) {
+          return;
+        }
+        breadcrumb.classList.remove("butter-header-breadcrumb-animated");
+        breadcrumb.style.removeProperty("--butter-header-breadcrumb-width");
+      }, 160);
+    };
+
+    const finishEditing = (): void => {
+      title.removeAttribute("contenteditable");
+      title.removeAttribute("tabindex");
+      title.removeAttribute("spellcheck");
+      restoreBreadcrumb();
+    };
+
+    this.registerDomEvent(title, "mousedown", () => {
+      if (editing || !this.file) return;
+      editing = true;
+      cancelled = false;
+      originalName = this.file.basename;
+      // This must happen during mousedown, before Chromium's focus/caret
+      // default action. Setting it on click is one event phase too late.
+      title.contentEditable = "true";
+      title.tabIndex = -1;
+      title.spellcheck =
+        (this.app.vault.getConfig?.("spellcheck") as boolean | undefined) ?? true;
+      collapseBreadcrumb();
+    });
+
+    this.registerDomEvent(title, "keydown", (event) => {
+      if (!editing) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        title.blur();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cancelled = true;
+        title.textContent = originalName;
+        title.blur();
+      }
+    });
+
+    this.registerDomEvent(title, "blur", () => {
+      if (!editing) return;
+      editing = false;
+      finishEditing();
+      const nextName = title.textContent?.trim() ?? "";
+      if (cancelled || !nextName || nextName === originalName || !this.file) {
+        title.textContent = originalName;
+        return;
+      }
+
+      const file = this.file;
+      const parentPath = file.parent?.path;
+      const prefix = parentPath && parentPath !== "/" ? `${parentPath}/` : "";
+      void this.app.fileManager
+        .renameFile(file, `${prefix}${nextName}.${file.extension}`)
+        .catch((error: unknown) => {
+          if (title.isConnected) title.textContent = originalName;
+          recordError(
+            "header-title-rename",
+            String((error as Error)?.message ?? error),
+          );
+          new Notice(tx("Rename failed"));
+        });
+    });
+  }
+
   public applyToolbarPosition() {
     if (Platform.isMobile) return; // mobile keeps body-attached behavior
     const leaf = this.containerEl; // .workspace-leaf-content (header + content)
@@ -506,7 +802,9 @@ export class ButterEditorView extends TextFileView {
 
     const bannerActive = !(this.plugin.licenseStatus === "valid" || this.plugin.licenseStatus === "trial");
     const style = bannerActive ? "attached" : this.settings.toolbarStyle;
-    const pos = bannerActive ? "top" : this.settings.toolbarPosition;
+    const pos = bannerActive || style === "integrated"
+      ? "top"
+      : this.settings.toolbarPosition;
     this.toolbarDom.setAttribute("data-toolbar-style", style);
     this.toolbarDom.setAttribute("data-toolbar-pos", pos);
     content.setAttribute("data-toolbar-pos", pos);
@@ -517,17 +815,16 @@ export class ButterEditorView extends TextFileView {
     // the fade-height rules to size correctly per toolbar side.
     leaf.setAttribute("data-toolbar-style", style);
     leaf.setAttribute("data-toolbar-pos", pos);
+    leaf.setAttribute(
+      "data-filename-pill",
+      String(this.settings.showFilenamePill),
+    );
 
-    // Tear down integrated state from a previous style switch - the
-    // marker class on view-header and any inline-title display
-    // override need to come off before re-applying anything else.
+    // Tear down integrated state from a previous style switch before
+    // re-applying anything else.
     const viewHeader = leaf.querySelector<HTMLElement>(".view-header");
-    const inlineTitle = content.querySelector<HTMLElement>(".inline-title");
     if (viewHeader && style !== "integrated") {
       viewHeader.classList.remove("butter-integrated-header");
-    }
-    if (inlineTitle && style !== "integrated") {
-      inlineTitle.style.removeProperty("display");
     }
 
     // The .butter-toolbar-stack wrapper is the shared parent that
@@ -574,20 +871,6 @@ export class ButterEditorView extends TextFileView {
           viewHeader.appendChild(this.toolbarDom);
         }
       }
-      // Inline-title visibility tracks the integrated-show-title
-      // setting. Hidden state survives toolbar re-applies because we
-      // set inline display:none (CSS doesn't compete).
-      if (inlineTitle) {
-        inlineTitle.style.display = this.settings.integratedShowTitle
-          ? ""
-          : "none";
-      }
-      // View-header's own title-container also tracks the setting
-      // it's the "pill" the user sees. CSS handles visibility via
-      // an attr we set on view-header.
-      viewHeader.dataset.butterShowTitle = this.settings.integratedShowTitle
-        ? "1"
-        : "0";
       return;
     }
 
@@ -711,6 +994,242 @@ export class ButterEditorView extends TextFileView {
     return bestLine;
   }
 
+  /** Capture the rendered content under a stable point near the viewport top.
+   * Source line + within-block fraction transfer cleanly between Butter and
+   * Obsidian renderers even when their total document heights differ. */
+  public captureViewportAnchor(): ButterViewportAnchor | null {
+    if (!this.pmView) return null;
+    const host = scrollHost(this.pmView.dom);
+    if (!host) return null;
+    const hostRect = host.getBoundingClientRect();
+    const probeOffset = viewportProbeOffset(host);
+    const probeY = hostRect.top + probeOffset;
+    let candidate: {
+      element: HTMLElement;
+      node: PMNode;
+      pos: number;
+      start: number;
+      end: number;
+      distance: number;
+      height: number;
+    } | null = null;
+
+    this.pmView.state.doc.descendants((node, pos) => {
+      if (!node.isBlock) return true;
+      const range = node.attrs.sourceRange as
+        | { start?: unknown; end?: unknown }
+        | null;
+      if (
+        !range ||
+        typeof range.start !== "number" ||
+        typeof range.end !== "number" ||
+        range.start < 0 ||
+        range.end < range.start
+      ) return true;
+      const dom = this.pmView?.nodeDOM(pos);
+      if (!(dom instanceof HTMLElement)) return true;
+      const rect = dom.getBoundingClientRect();
+      if (rect.height <= 0 || rect.bottom < hostRect.top || rect.top > hostRect.bottom) {
+        return true;
+      }
+      const distance = probeY < rect.top
+        ? rect.top - probeY
+        : probeY > rect.bottom
+          ? probeY - rect.bottom
+          : 0;
+      if (
+        !candidate ||
+        distance < candidate.distance ||
+        (distance === candidate.distance && rect.height < candidate.height)
+      ) {
+        candidate = {
+          element: dom,
+          node,
+          pos,
+          start: range.start,
+          end: range.end,
+          distance,
+          height: rect.height,
+        };
+      }
+      return true;
+    });
+
+    const viewportCandidate = candidate as {
+      element: HTMLElement;
+      node: PMNode;
+      pos: number;
+      start: number;
+      end: number;
+      distance: number;
+      height: number;
+    } | null;
+    if (!viewportCandidate) {
+      return {
+        version: 1,
+        line: this.visibleHeadingLine(),
+        fraction: 0,
+        probeOffset,
+        progress: viewportProgress(host),
+      };
+    }
+
+    const fraction = elementViewportFraction(host, viewportCandidate.element, probeOffset);
+    const frontmatterLines = this.frontmatter
+      ? Math.max(0, this.frontmatter.split("\n").length - 1)
+      : 0;
+    const lineAtOffset = (offset: number): number => {
+      const clamped = Math.max(0, Math.min(this.originalBody.length, offset));
+      return frontmatterLines + (this.originalBody.slice(0, clamped).match(/\n/g)?.length ?? 0);
+    };
+    let bodySourceOffset = Math.round(
+      viewportCandidate.start +
+        (viewportCandidate.end - viewportCandidate.start) * fraction,
+    );
+    if (viewportCandidate.node.isTextblock && viewportCandidate.node.content.size > 0) {
+      const rect = viewportCandidate.element.getBoundingClientRect();
+      const point = this.pmView.posAtCoords({
+        left: Math.max(rect.left + 1, this.pmView.dom.getBoundingClientRect().left + 1),
+        top: probeY,
+      });
+      if (point) {
+        const contentStart = viewportCandidate.pos + 1;
+        const relative = Math.max(
+          0,
+          Math.min(viewportCandidate.node.content.size, point.pos - contentStart),
+        );
+        bodySourceOffset = Math.round(
+          viewportCandidate.start +
+            (viewportCandidate.end - viewportCandidate.start) *
+              (relative / viewportCandidate.node.content.size),
+        );
+      }
+    }
+    const line = lineAtOffset(bodySourceOffset);
+    return {
+      version: 1,
+      sourceOffset: this.frontmatter.length + bodySourceOffset,
+      line,
+      fraction,
+      probeOffset,
+      progress: viewportProgress(host),
+    };
+  }
+
+  /** Restore a logical viewport anchor without moving the caret or focus. */
+  public restoreViewportAnchor(anchor: ButterViewportAnchor): boolean {
+    if (!this.pmView) return false;
+    const host = scrollHost(this.pmView.dom);
+    if (!host) return false;
+    const frontmatterLines = this.frontmatter
+      ? Math.max(0, this.frontmatter.split("\n").length - 1)
+      : 0;
+    let sourceOffset = anchor.sourceOffset == null
+      ? 0
+      : Math.max(0, anchor.sourceOffset - this.frontmatter.length);
+    if (anchor.sourceOffset == null) {
+      const bodyLine = Math.max(0, Math.floor(anchor.line) - frontmatterLines);
+      for (let line = 0; line < bodyLine; line++) {
+        const next = this.originalBody.indexOf("\n", sourceOffset);
+        if (next < 0) {
+          sourceOffset = this.originalBody.length;
+          break;
+        }
+        sourceOffset = next + 1;
+      }
+    }
+
+    let exact: {
+      element: HTMLElement;
+      node: PMNode;
+      pos: number;
+      start: number;
+      end: number;
+      span: number;
+    } | null = null;
+    let nearest: { element: HTMLElement; distance: number; span: number } | null = null;
+    this.pmView.state.doc.descendants((node, pos) => {
+      if (!node.isBlock) return true;
+      const range = node.attrs.sourceRange as
+        | { start?: unknown; end?: unknown }
+        | null;
+      if (
+        !range ||
+        typeof range.start !== "number" ||
+        typeof range.end !== "number"
+      ) return true;
+      const dom = this.pmView?.nodeDOM(pos);
+      if (!(dom instanceof HTMLElement)) return true;
+      const rect = dom.getBoundingClientRect();
+      if (rect.height <= 0) return true;
+      const span = Math.max(0, range.end - range.start);
+      if (range.start <= sourceOffset && sourceOffset <= range.end) {
+        if (!exact || span < exact.span) {
+          exact = {
+            element: dom,
+            node,
+            pos,
+            start: range.start,
+            end: range.end,
+            span,
+          };
+        }
+      } else {
+        const distance = sourceOffset < range.start
+          ? range.start - sourceOffset
+          : sourceOffset - range.end;
+        if (
+          !nearest ||
+          distance < nearest.distance ||
+          (distance === nearest.distance && span < nearest.span)
+        ) nearest = { element: dom, distance, span };
+      }
+      return true;
+    });
+
+    const exactTarget = exact as {
+      element: HTMLElement;
+      node: PMNode;
+      pos: number;
+      start: number;
+      end: number;
+      span: number;
+    } | null;
+    const nearestTarget = nearest as {
+      element: HTMLElement;
+      distance: number;
+      span: number;
+    } | null;
+    if (
+      anchor.sourceOffset != null &&
+      exactTarget?.node.isTextblock &&
+      exactTarget.node.content.size > 0 &&
+      exactTarget.span > 0
+    ) {
+      const ratio = Math.max(
+        0,
+        Math.min(1, (sourceOffset - exactTarget.start) / exactTarget.span),
+      );
+      const pmPos = exactTarget.pos + 1 + Math.round(
+        exactTarget.node.content.size * ratio,
+      );
+      const coords = this.pmView.coordsAtPos(pmPos);
+      const max = Math.max(0, host.scrollHeight - host.clientHeight);
+      host.scrollTop = Math.max(
+        0,
+        Math.min(
+          max,
+          host.scrollTop + coords.top - host.getBoundingClientRect().top - anchor.probeOffset,
+        ),
+      );
+    } else {
+      const target = exactTarget?.element ?? nearestTarget?.element;
+      if (target) restoreElementViewport(host, target, anchor);
+      else restoreViewportProgress(host, anchor.progress);
+    }
+    return true;
+  }
+
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -760,6 +1279,20 @@ export class ButterEditorView extends TextFileView {
   getDisplayText(): string {
     return this.file?.basename ?? "Butter Editor";
   }
+
+  async onRename(file: TFile): Promise<void> {
+    await super.onRename(file);
+    if (this.inlineTitleEl) this.inlineTitleEl.textContent = file.basename;
+    (this.leaf as unknown as { updateHeader?: () => void }).updateHeader?.();
+    const headerTitle = this.containerEl.querySelector<HTMLElement>(
+      ".view-header-title",
+    );
+    if (headerTitle) headerTitle.textContent = file.basename;
+    // Defensively rebind if an Obsidian version replaces the header title
+    // element while refreshing the leaf chrome.
+    this.installHeaderTitleRenameBridge();
+  }
+
   // No tab icon. TextFileView's default `getIcon()` returns "document"
   // so a Butter tab would otherwise show that. Returning an empty
   // string tells Obsidian's tab UI to render no icon, giving the tab
@@ -768,17 +1301,38 @@ export class ButterEditorView extends TextFileView {
     return "";
   }
 
+  onPaneMenu(
+    menu: Menu,
+    source: string,
+  ): void {
+    super.onPaneMenu(menu, source);
+    const nativeCommand = this.app.commands?.commands?.[
+      "markdown:add-metadata-property"
+    ] as { name?: unknown } | undefined;
+    const title = typeof nativeCommand?.name === "string"
+      ? nativeCommand.name
+      : tx("Add property");
+    menu.addItem((item) => {
+      item
+        .setTitle(title)
+        .setIcon("lucide-plus-circle")
+        .setDisabled(!this.canAddFileProperty())
+        .onClick(() => this.beginAddFileProperty());
+      item.setSection?.("action");
+    });
+  }
+
   // ── Frontmatter ──
 
   private stripFrontmatter(data: string): string {
     // Capture byte-level file metadata for round-trip preservation.
     //   - BOM: rare but legitimate (some foreign tooling produces it);
     //     preserve rather than silently strip.
-    //   - Line endings: CRLF vs LF. Recaptured on save per-file.
+    //   - Line endings: LF, CRLF, or bare CR. Recaptured on save per-file.
     //   - Trailing newlines: 0, 1, 2+ - preserve verbatim.
     this.originalHasBOM = data.charCodeAt(0) === 0xfeff;
     if (this.originalHasBOM) data = data.slice(1);
-    this.lineEnding = data.includes("\r\n") ? "\r\n" : "\n";
+    this.lineEnding = detectSourceLineEnding(data);
 
     // Eat ALL trailing newlines after the closing `---`, not just
     // one. Many vaults store a blank line between frontmatter and
@@ -789,7 +1343,7 @@ export class ButterEditorView extends TextFileView {
     // folding the separator newlines into the preserved frontmatter
     // string, they're re-emitted byte-identically on save.
     let body: string;
-    const match = data.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n)*/);
+    const match = data.match(FRONTMATTER_SOURCE_RE);
     if (match) {
       this.frontmatter = match[0];
       body = data.slice(match[0].length);
@@ -800,11 +1354,40 @@ export class ButterEditorView extends TextFileView {
 
     // Count trailing newlines in the body (normalized LF). Used on
     // save to emit exactly the same trailing-byte state.
-    const bodyNormalized = body.replace(/\r\n/g, "\n");
+    const bodyNormalized = normalizeSourceLineEndings(body);
     const m = bodyNormalized.match(/\n*$/);
     this.originalTrailingNewlines = m ? m[0].length : 0;
 
     return body;
+  }
+
+  /** Apply a property mutation to Butter's owned file projection. */
+  private mutateFrontmatterSource(
+    mutator: (frontmatter: Record<string, unknown>) => void,
+  ): void {
+    const normalized = normalizeSourceLineEndings(this.frontmatter);
+    const match = normalized.match(/^---\n([\s\S]*?)\n---(\n*)$/);
+    if (!match) {
+      const frontmatter: Record<string, unknown> = {};
+      mutator(frontmatter);
+      if (Object.keys(frontmatter).length === 0) return;
+      const yaml = normalizeSourceLineEndings(stringifyYaml(frontmatter))
+        .replace(/\n*$/, "");
+      this.frontmatter = `---\n${yaml}\n---\n`;
+      this.editGeneration += 1;
+      return;
+    }
+
+    const parsed: unknown = parseYaml(match[1]);
+    const frontmatter = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+    mutator(frontmatter);
+
+    const yaml = normalizeSourceLineEndings(stringifyYaml(frontmatter))
+      .replace(/\n*$/, "");
+    this.frontmatter = `---\n${yaml}\n---${match[2]}`;
+    this.editGeneration += 1;
   }
 
   /**
@@ -847,6 +1430,55 @@ export class ButterEditorView extends TextFileView {
   // ── Properties (unchanged from original) ──
 
   private propertiesComponent: Component | null = null;
+  private pendingPropertyKeyFocus: { filePath: string; key: string } | null = null;
+  private pendingPropertyValueFocus: { filePath: string; key: string } | null = null;
+  private pendingPropertyDraft = false;
+
+  private propertiesAreVisible(): boolean {
+    if (!this.file) return false;
+    const visibility = this.plugin.settings.frontmatterVisibility;
+    return visibility !== "hidden" &&
+      !(visibility === "match" &&
+        this.app.vault.getConfig?.("propertiesInDocument") === "hidden");
+  }
+
+  canAddFileProperty(): boolean {
+    return !this.destroyed && this.propertiesAreVisible() && this.isEditable();
+  }
+
+  beginAddFileProperty(): void {
+    if (!this.canAddFileProperty() || !this.file) return;
+    this.pendingPropertyDraft = true;
+    this.pendingPropertyKeyFocus = { filePath: this.file.path, key: "" };
+    this.renderProperties();
+    const draftInput = this.propertiesEl?.querySelector<HTMLInputElement>(
+      '[data-butter-property-draft="true"] .metadata-property-key-input',
+    );
+    if (draftInput) {
+      this.pendingPropertyKeyFocus = null;
+      const focusDraft = () => {
+        if (!this.pendingPropertyDraft || !draftInput.isConnected) return;
+        draftInput.focus();
+        const EventCtor = draftInput.ownerDocument.defaultView?.Event ?? Event;
+        draftInput.dispatchEvent(new EventCtor("input", { bubbles: true }));
+      };
+      focusDraft();
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(focusDraft);
+      } else {
+        window.setTimeout(focusDraft, 0);
+      }
+    }
+  }
+
+  private cancelPendingPropertyDraft(): void {
+    if (!this.pendingPropertyDraft) return;
+    this.pendingPropertyDraft = false;
+    this.pendingPropertyKeyFocus = null;
+    window.setTimeout(() => {
+      if (!this.destroyed) this.renderProperties();
+    }, 0);
+  }
 
   private static TYPE_ICONS: Record<string, string> = {
     text: "lucide-text",
@@ -859,6 +1491,22 @@ export class ButterEditorView extends TextFileView {
     multitext: "lucide-list",
     unknown: "lucide-file-question",
   };
+
+  /**
+   * Obsidian's Properties UI does not edit nested YAML structures. Rendering
+   * one as a blank text field (or as `[object Object]` list pills) is unsafe:
+   * an ordinary change event can silently replace the preserved structure.
+   * Flat scalar lists remain supported; objects and arrays containing another
+   * object/array are rendered through the non-editable path below.
+   */
+  private static isUnsupportedNestedPropertyValue(value: unknown): boolean {
+    if (Array.isArray(value)) {
+      return value.some(
+        (item) => item !== null && typeof item === "object",
+      );
+    }
+    return value !== null && typeof value === "object";
+  }
 
   private getPropertyType(
     key: string,
@@ -890,28 +1538,54 @@ export class ButterEditorView extends TextFileView {
 
   renderProperties() {
     if (!this.propertiesEl) return;
+    const active = this.propertiesEl.ownerDocument.activeElement;
+    const editingProperty = active !== null &&
+      this.propertiesEl.contains(active) &&
+      (active.matches("input, textarea, select") ||
+        (active as HTMLElement).isContentEditable);
+    if (editingProperty) {
+      if (!this.propertiesRenderDeferred) {
+        this.propertiesRenderDeferred = true;
+        (active as HTMLElement).addEventListener("blur", () => {
+          this.propertiesRenderDeferred = false;
+          if (!this.destroyed && this.propertiesEl) {
+            window.setTimeout(() => this.renderProperties(), 0);
+          }
+        }, { once: true });
+      }
+      return;
+    }
+    this.propertiesRenderDeferred = false;
     this.propertiesEl.empty();
     if (this.propertiesComponent) {
       this.propertiesComponent.unload();
       this.propertiesComponent = null;
     }
-    if (!this.frontmatter || !this.file) {
+    if (!this.file || (!this.frontmatter && !this.pendingPropertyDraft)) {
       this.propertiesEl.addClass("butter-hidden");
       return;
     }
-    const vis = this.plugin.settings.frontmatterVisibility;
-    const shouldHide = vis === "hidden" ||
-      (vis === "match" && this.app.vault.getConfig?.("propertiesInDocument") === "hidden");
-    if (shouldHide) {
+    if (!this.propertiesAreVisible()) {
       this.propertiesEl.addClass("butter-hidden");
       return;
     }
     this.propertiesEl.removeClass("butter-hidden");
     const cache = this.app.metadataCache.getFileCache(this.file);
     const fmRaw: unknown = cache?.frontmatter;
-    const fm = (fmRaw && typeof fmRaw === "object" ? fmRaw : null) as
-      | Record<string, unknown>
-      | null;
+    let fm = (fmRaw && typeof fmRaw === "object" && !Array.isArray(fmRaw)
+      ? fmRaw
+      : null) as Record<string, unknown> | null;
+    if (!fm && this.frontmatter) {
+      const sourceMatch = normalizeSourceLineEndings(this.frontmatter)
+        .match(/^---\n([\s\S]*?)\n---(?:\n*)$/);
+      if (sourceMatch) {
+        const parsed: unknown = parseYaml(sourceMatch[1]);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          fm = parsed as Record<string, unknown>;
+        }
+      }
+    }
+    if (!fm && this.pendingPropertyDraft) fm = {};
     if (!fm) {
       this.propertiesEl.addClass("butter-hidden");
       return;
@@ -920,7 +1594,8 @@ export class ButterEditorView extends TextFileView {
     this.propertiesComponent = new Component();
     this.propertiesComponent.load();
 
-    const propCount = Object.keys(fm).filter((k) => k !== "position").length;
+    const propCount = Object.keys(fm).filter((k) => k !== "position").length +
+      (this.pendingPropertyDraft ? 1 : 0);
     const metaContainer = this.propertiesEl.createDiv({
       cls: "metadata-container",
       attr: { "data-property-count": String(propCount) },
@@ -941,6 +1616,23 @@ export class ButterEditorView extends TextFileView {
     const properties = content.createDiv({ cls: "metadata-properties" });
     const file = this.file;
     const app = this.app;
+    const processFrontMatter = (
+      mutator: (frontmatter: Record<string, unknown>) => void,
+    ): void => {
+      void this.enqueueNativeFileOperation(async () => {
+        if (this.destroyed || this.file !== file) return;
+        // Frontmatter and body are one file and therefore have one writer.
+        // Mutate the staged TextFileView projection, then let the same native
+        // writer persist both pieces. Body saves queued while this is in flight
+        // run afterward with the updated frontmatter source.
+        this.mutateFrontmatterSource(mutator);
+        await this.performNativeSave(false);
+      }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        recordError("frontmatter", message);
+        new Notice(`${tx("Butter: save failed -")} ${message}`);
+      });
+    };
 
     /** Render any frontmatter value to a flat string for input fields.
      *  Skips deep stringification of plain objects (which would yield
@@ -951,19 +1643,36 @@ export class ButterEditorView extends TextFileView {
       if (typeof v === "number" || typeof v === "boolean") return String(v);
       return ""; // arrays / plain objects shouldn't be flattened here
     };
-    for (const [key, value] of Object.entries(fm)) {
+    const propertyEntries = Object.entries(fm).filter(([key]) => key !== "position");
+    if (this.pendingPropertyDraft) propertyEntries.push(["", null]);
+    for (const [key, value] of propertyEntries) {
       if (key === "position") continue;
-      const { type, icon } = this.getPropertyType(key, value);
+      const isDraft = this.pendingPropertyDraft && key === "";
+      const unsupportedNested =
+        ButterEditorView.isUnsupportedNestedPropertyValue(value);
+      const { type, icon } = unsupportedNested
+        ? { type: "unknown", icon: ButterEditorView.TYPE_ICONS.unknown }
+        : this.getPropertyType(key, value);
       const prop = properties.createDiv({
         cls: "metadata-property",
         attr: {
           "data-property-key": key.toLowerCase(),
           "data-property-type": type,
+          ...(isDraft ? { "data-butter-property-draft": "true" } : {}),
+          ...(unsupportedNested
+            ? { "data-butter-unsupported-nested": "true" }
+            : {}),
           tabIndex: 0,
         },
       });
 
       const showPropertyMenu = (e: MouseEvent) => {
+        if (isDraft) return;
+        if (shouldUseNativePropertyContextMenu(e, prop)) return;
+        // Capture the control before Obsidian's menu takes focus. Chromium
+        // refuses execCommand("paste"), so Paste must target this exact input
+        // after the asynchronous Clipboard API resolves.
+        const clipboardTarget = capturePropertyClipboardTarget(e, prop);
         e.preventDefault();
         const menu = new Menu();
         const mgr = this.app.metadataTypeManager;
@@ -1000,21 +1709,29 @@ export class ButterEditorView extends TextFileView {
           }
         }
         menu.addItem((item: MenuItem) => {
-          item.setTitle(tx("Cut")).setIcon("lucide-scissors").onClick(() =>
-            runClipboardCommand(activeDocument, "cut"),
-          );
+          item
+            .setTitle(tx("Cut"))
+            .setIcon("lucide-scissors")
+            .setDisabled(!clipboardTarget)
+            .onClick(() => { clipboardTarget?.run("cut"); });
           item.setSection?.("clipboard");
         });
         menu.addItem((item: MenuItem) => {
-          item.setTitle(tx("Copy")).setIcon("lucide-copy").onClick(() =>
-            runClipboardCommand(activeDocument, "copy"),
-          );
+          item
+            .setTitle(tx("Copy"))
+            .setIcon("lucide-copy")
+            .setDisabled(!clipboardTarget)
+            .onClick(() => { clipboardTarget?.run("copy"); });
           item.setSection?.("clipboard");
         });
         menu.addItem((item: MenuItem) => {
-          item.setTitle(tx("Paste")).setIcon("lucide-clipboard-check").onClick(
-            () => runClipboardCommand(activeDocument, "paste"),
-          );
+          item
+            .setTitle(tx("Paste"))
+            .setIcon("lucide-clipboard-check")
+            .setDisabled(!clipboardTarget)
+            .onClick(() => {
+              if (clipboardTarget) void clipboardTarget.paste();
+            });
           item.setSection?.("clipboard");
         });
         menu.addItem((item: MenuItem) => {
@@ -1022,7 +1739,7 @@ export class ButterEditorView extends TextFileView {
             .setTitle(tx("Remove"))
             .setIcon("lucide-trash-2")
             .onClick(() => {
-              void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+              processFrontMatter((fm: Record<string, unknown>) => {
                 delete fm[key];
               });
               window.setTimeout(() => this.renderProperties(), 100);
@@ -1032,41 +1749,130 @@ export class ButterEditorView extends TextFileView {
         });
         menu.setParentElement?.(prop);
         menu.showAtMouseEvent(e);
+        dismissMenuOnScroll(menu, prop.ownerDocument);
       };
       prop.addEventListener("contextmenu", showPropertyMenu);
 
       const iconEl = prop.createDiv({ cls: "metadata-property-icon" });
       setIcon(iconEl, icon);
-      iconEl.addEventListener("click", (e) => {
-        e.preventDefault();
-        if (!prop.hasClass("has-active-menu")) showPropertyMenu(e);
-      });
+      if (isDraft) {
+        iconEl.setAttribute("aria-disabled", "true");
+      } else {
+        iconEl.addEventListener("click", (e) => {
+          e.preventDefault();
+          if (!prop.hasClass("has-active-menu")) showPropertyMenu(e);
+        });
+      }
 
       const keyEl = prop.createDiv({ cls: "metadata-property-key" });
       const keyInput = keyEl.createEl("input", {
         cls: "metadata-property-key-input",
         value: key,
         type: "text",
-        attr: { autocapitalize: "none", enterkeyhint: "next" },
+        attr: {
+          autocapitalize: "none",
+          enterkeyhint: "next",
+          "aria-label": key || tx("Add property"),
+        },
       });
-      keyInput.addEventListener("blur", () => {
-        const newKey = keyInput.value.trim();
+      let propertyRenameCommitted = false;
+      const commitPropertyKey = (candidate: string): boolean => {
+        const newKey = candidate.trim();
         if (!newKey) {
+          if (isDraft) this.cancelPendingPropertyDraft();
+          else keyInput.value = key;
+          return false;
+        }
+        if (newKey === key || propertyRenameCommitted) return true;
+        const duplicateKey = Object.keys(fm).find(
+          (existingKey) => existingKey !== key &&
+            existingKey.toLowerCase() === newKey.toLowerCase(),
+        );
+        if (duplicateKey) {
           keyInput.value = key;
-          return;
+          const duplicateRow = Array.from(
+            properties.querySelectorAll<HTMLElement>(".metadata-property"),
+          ).find((row) =>
+            row.dataset.propertyKey === duplicateKey.toLowerCase()
+          );
+          duplicateRow?.focus();
+          return false;
         }
-        if (newKey !== key) {
-          void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-            fm[newKey] = fm[key];
-            delete fm[key];
-          });
-          window.setTimeout(() => this.renderProperties(), 100);
-        }
+        propertyRenameCommitted = true;
+        if (isDraft) this.pendingPropertyDraft = false;
+        processFrontMatter((frontmatter: Record<string, unknown>) => {
+          const concurrentDuplicate = Object.keys(frontmatter).some(
+            (existingKey) => existingKey !== key &&
+              existingKey.toLowerCase() === newKey.toLowerCase(),
+          );
+          if (concurrentDuplicate) return;
+          if (isDraft) {
+            frontmatter[newKey] = null;
+          } else {
+            if (!Object.prototype.hasOwnProperty.call(frontmatter, key)) return;
+            frontmatter[newKey] = frontmatter[key];
+            delete frontmatter[key];
+          }
+        });
+        window.setTimeout(() => this.renderProperties(), 100);
+        return true;
+      };
+      if (isDraft) {
+        // Register on the document before constructing Obsidian's suggester.
+        // Its own document-capture listener consumes Escape with
+        // stopImmediatePropagation, so input-level listeners never see it.
+        const draftDocument = keyInput.ownerDocument;
+        const escapeTarget: Window | Document =
+          draftDocument.defaultView ?? draftDocument;
+        const onDraftEscape = (e: KeyboardEvent) => {
+          if (e.target !== keyInput || e.key !== "Escape" || e.isComposing) return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          this.cancelPendingPropertyDraft();
+          keyInput.blur();
+          window.setTimeout(() => this.pmView?.focus(), 0);
+        };
+        escapeTarget.addEventListener("keydown", onDraftEscape as EventListener, true);
+        this.propertiesComponent?.register(() => {
+          escapeTarget.removeEventListener(
+            "keydown",
+            onDraftEscape as EventListener,
+            true,
+          );
+        });
+      }
+      const propertySuggest = applyPropertyKeySuggest(app, keyInput, {
+        currentKey: key,
+        existingKeys: Object.keys(fm).filter((name) => name !== "position"),
+        onSelect: (newKey) => {
+          if (commitPropertyKey(newKey)) {
+            this.pendingPropertyValueFocus = {
+              filePath: file.path,
+              key: newKey,
+            };
+            keyInput.blur();
+          }
+        },
+      });
+      this.propertiesComponent?.register(() => propertySuggest.close());
+      if (this.pendingPropertyKeyFocus?.filePath === file.path &&
+          this.pendingPropertyKeyFocus.key === key) {
+        this.pendingPropertyKeyFocus = null;
+        window.setTimeout(() => {
+          if (this.destroyed || !keyInput.isConnected) return;
+          keyInput.focus();
+          const EventCtor = keyInput.ownerDocument.defaultView?.Event ?? Event;
+          keyInput.dispatchEvent(new EventCtor("input", { bubbles: true }));
+        }, 0);
+      }
+      keyInput.addEventListener("blur", () => {
+        commitPropertyKey(keyInput.value);
       });
       keyInput.addEventListener("keydown", (e) => {
+        if (e.isComposing || e.defaultPrevented) return;
         if (e.key === "Enter" || e.key === "Tab") {
           e.preventDefault();
-          keyInput.blur();
+          if (commitPropertyKey(keyInput.value)) keyInput.blur();
         } else if (e.key === "Escape") {
           keyInput.value = key;
           prop.focus();
@@ -1089,6 +1895,157 @@ export class ButterEditorView extends TextFileView {
         }, 0);
       });
       valContainer.addClass("butter-prop-val-text");
+
+      if (unsupportedNested) {
+        const readOnlyInput = valContainer.createEl("input", {
+          cls: "metadata-input metadata-input-text butter-property-readonly-value",
+          type: "text",
+          value: tx("Read-only"),
+          attr: {
+            tabIndex: -1,
+            title: tx("Read-only"),
+            "aria-label": tx("Read-only"),
+            "aria-readonly": "true",
+          },
+        });
+        readOnlyInput.readOnly = true;
+        readOnlyInput.disabled = true;
+        continue;
+      }
+
+      const temporalInput = resolveTemporalPropertyInput(type, value);
+      const renderTemporalInput = (spec: TemporalPropertyInputSpec) => {
+        const dateInput = valContainer.createEl("input", {
+          cls: `metadata-input metadata-input-text mod-${type}`,
+          type: spec.inputType,
+          value: spec.value,
+          attr: {
+            tabIndex: 0,
+            "data-butter-temporal-compatibility": spec.compatibility,
+          },
+        });
+        dateInput.addEventListener("change", () => {
+          processFrontMatter((frontmatter: Record<string, unknown>) => {
+            frontmatter[key] = dateInput.value;
+          });
+        });
+      };
+
+      // Obsidian's registered datetime widget may ultimately create a native
+      // datetime-local input. Bypass it only when the stored shape cannot be
+      // represented by that control, preventing a populated YAML value from
+      // appearing empty.
+      if (temporalInput && temporalInput.compatibility !== "native") {
+        renderTemporalInput(temporalInput);
+        continue;
+      }
+
+      // Delegate supported values to Obsidian's own property widgets. Besides
+      // keeping control behavior visually native, its text and multitext
+      // widgets render quoted YAML wikilinks as clickable internal links while
+      // unfocused, then expose the exact `[[...]]` source only during editing.
+      const widget = this.app.metadataTypeManager?.registeredTypeWidgets?.[type];
+      if (widget?.render) {
+        const widgetContext = {
+          app: this.app,
+          key,
+          sourcePath: file.path,
+          onChange: (nextValue: unknown) => {
+            processFrontMatter((frontmatter) => {
+              frontmatter[key] = nextValue;
+            });
+          },
+          blur: () => {
+            const activeElement = valContainer.ownerDocument.activeElement as
+              | HTMLElement
+              | null;
+            activeElement?.blur?.();
+          },
+        };
+        const mixedWikilinks = type === "text" && typeof value === "string"
+          ? parsePropertyTextWikilinks(value)
+          : null;
+        const hasSurroundingText = mixedWikilinks?.some(
+          (segment) => segment.kind === "text" && segment.text.length > 0,
+        ) === true;
+        if (mixedWikilinks && hasSurroundingText) {
+          const display = valContainer.createDiv({
+            cls: "metadata-input-longtext butter-property-mixed-wikilinks",
+            attr: {
+              tabIndex: 0,
+              role: "textbox",
+              "aria-readonly": "true",
+              "aria-label": `${key}: ${String(value)}`,
+            },
+          });
+          for (const segment of mixedWikilinks) {
+            if (segment.kind === "text") {
+              display.appendChild(display.ownerDocument.createTextNode(segment.text));
+              continue;
+            }
+            const link = display.createEl("a", {
+              cls: "internal-link butter-property-wikilink",
+              text: segment.label,
+              href: segment.target,
+              attr: {
+                "data-href": segment.target,
+                contentEditable: "false",
+              },
+            });
+            link.addEventListener("click", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void this.app.workspace.openLinkText(
+                segment.target,
+                file.path,
+                event.ctrlKey || event.metaKey,
+              );
+            });
+            link.addEventListener("mouseover", (event) => {
+              this.app.workspace.trigger("hover-link", {
+                event,
+                source: BUTTER_HOVER_SOURCE,
+                hoverParent: link,
+                targetEl: link,
+                linktext: segment.target,
+                sourcePath: file.path,
+              });
+            });
+          }
+          const beginEdit = () => {
+            if (!display.isConnected) return;
+            valContainer.empty();
+            widget.render?.(valContainer, value, widgetContext);
+            const editor = valContainer.querySelector<HTMLElement>(
+              "input, textarea, [contenteditable='true']",
+            );
+            editor?.focus();
+            if (editor?.isContentEditable) {
+              const selection = editor.ownerDocument.getSelection();
+              const range = editor.ownerDocument.createRange();
+              range.selectNodeContents(editor);
+              range.collapse(false);
+              selection?.removeAllRanges();
+              selection?.addRange(range);
+            }
+            editor?.addEventListener("blur", () => {
+              if (!this.destroyed && this.file === file) {
+                window.setTimeout(() => this.renderProperties(), 0);
+              }
+            }, { once: true });
+          };
+          display.addEventListener("click", beginEdit);
+          display.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === "F2") {
+              event.preventDefault();
+              beginEdit();
+            }
+          });
+        } else {
+          widget.render(valContainer, value, widgetContext);
+        }
+        continue;
+      }
 
       const isMulti =
         type === "tags" || type === "aliases" || type === "multitext";
@@ -1114,7 +2071,7 @@ export class ButterEditorView extends TextFileView {
             setIcon(removeBtn, "lucide-x");
             removeBtn.addEventListener("click", (e) => {
               e.stopPropagation();
-              void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+              processFrontMatter((fm: Record<string, unknown>) => {
                 const arr = fm[key];
                 if (Array.isArray(arr)) {
                   fm[key] = arr.filter((v: unknown) => String(v) !== String(item));
@@ -1144,7 +2101,7 @@ export class ButterEditorView extends TextFileView {
           if (e.key === "Enter" && addInput.textContent?.trim()) {
             e.preventDefault();
             const newVal = addInput.textContent.trim();
-            void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+            processFrontMatter((fm: Record<string, unknown>) => {
               let arr = fm[key];
               if (!Array.isArray(arr)) {
                 arr = [];
@@ -1164,21 +2121,15 @@ export class ButterEditorView extends TextFileView {
         });
         if (value) cb.checked = true;
         cb.addEventListener("change", () => {
-          void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+          processFrontMatter((fm: Record<string, unknown>) => {
             fm[key] = cb.checked;
           });
         });
       } else if (type === "date" || type === "datetime") {
-        const dateInput = valContainer.createEl("input", {
-          cls: `metadata-input metadata-input-text mod-${type}`,
-          type: type === "datetime" ? "datetime-local" : "date",
-          value: fmValueToString(value).slice(0, type === "datetime" ? 16 : 10),
-          attr: { tabIndex: 0 },
-        });
-        dateInput.addEventListener("change", () => {
-          void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-            fm[key] = dateInput.value;
-          });
+        renderTemporalInput(temporalInput ?? {
+          inputType: "text",
+          value: fmValueToString(value),
+          compatibility: "raw",
         });
       } else if (type === "number") {
         const numInput = valContainer.createEl("input", {
@@ -1188,7 +2139,7 @@ export class ButterEditorView extends TextFileView {
           attr: { tabIndex: 0 },
         });
         numInput.addEventListener("change", () => {
-          void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+          processFrontMatter((fm: Record<string, unknown>) => {
             fm[key] = Number(numInput.value);
           });
         });
@@ -1201,10 +2152,32 @@ export class ButterEditorView extends TextFileView {
           attr: { tabIndex: 0 },
         });
         textInput.addEventListener("change", () => {
-          void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+          processFrontMatter((fm: Record<string, unknown>) => {
             fm[key] = textInput.value;
           });
         });
+      }
+    }
+
+    const pendingValueFocus = this.pendingPropertyValueFocus;
+    if (pendingValueFocus?.filePath === file.path) {
+      const pendingRow = Array.from(
+        properties.querySelectorAll<HTMLElement>(".metadata-property"),
+      ).find((row) =>
+        row.dataset.propertyKey === pendingValueFocus.key.toLowerCase()
+      );
+      const valueControl = pendingRow?.querySelector<HTMLElement>(
+        ".metadata-property-value [contenteditable='true'], " +
+        ".metadata-property-value input:not([disabled]), " +
+        ".metadata-property-value textarea:not([disabled]), " +
+        ".metadata-property-value .combobox-button[tabindex='0'], " +
+        ".metadata-property-value [tabindex='0']",
+      );
+      if (valueControl) {
+        this.pendingPropertyValueFocus = null;
+        window.setTimeout(() => {
+          if (!this.destroyed && valueControl.isConnected) valueControl.focus();
+        }, 0);
       }
     }
 
@@ -1215,15 +2188,7 @@ export class ButterEditorView extends TextFileView {
     const addBtnIcon = addBtn.createSpan({ cls: "text-button-icon" });
     setIcon(addBtnIcon, "lucide-plus");
     addBtn.createSpan({ cls: "text-button-label", text: tx("Add property") });
-    addBtn.addEventListener("click", () => {
-      void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-        let k = "property";
-        let i = 1;
-        while (fm[k] !== undefined) k = `property${i++}`;
-        fm[k] = "";
-      });
-      window.setTimeout(() => this.renderProperties(), 100);
-    });
+    addBtn.addEventListener("click", () => this.beginAddFileProperty());
   }
 
   // ── Lifecycle ──
@@ -1240,6 +2205,7 @@ export class ButterEditorView extends TextFileView {
 
     // View-type indicator on the tab/header
     this.containerEl.addClass("butter-view-root");
+    this.installHeaderTitleRenameBridge();
 
     // (License banner mount moved down below properties)
 
@@ -1259,6 +2225,9 @@ export class ButterEditorView extends TextFileView {
 
     // Inline title
     const inlineTitle = container.createDiv({ cls: "inline-title" });
+    const editorAccessibleLabelId =
+      `butter-editor-label-${++editorAccessibleLabelSequence}`;
+    inlineTitle.id = editorAccessibleLabelId;
     inlineTitle.contentEditable = "true";
     inlineTitle.spellcheck =
       (this.app.vault.getConfig?.("spellcheck") as boolean | undefined) ?? true;
@@ -1305,6 +2274,8 @@ export class ButterEditorView extends TextFileView {
       }),
     );
 
+    const getSourcePath = () => this.file?.path ?? "";
+
     // Toolbar
     const plugin = this.app.plugins?.plugins?.["butter-editor"] as
       | ButterEditorPlugin
@@ -1328,6 +2299,8 @@ export class ButterEditorView extends TextFileView {
       // mobile context-button paths). Same one the desktop drag-
       // handle context menu uses.
       (node) => serializer.serialize(schema.node("doc", null, [node])),
+      getSourcePath,
+      () => this.dismissMobileKeyboard(),
     );
     toolbarDom.setAttribute("data-active-style", this.settings.toolbarActiveStyle);
     this.toolbarDom = toolbarDom;
@@ -1404,18 +2377,23 @@ export class ButterEditorView extends TextFileView {
       // and Style settings don't apply there, so just expose Settings.
       if (!Platform.isMobile) {
         const setPos = async (p: "top" | "bottom") => {
+          if (plugin.settings.toolbarStyle === "integrated") return;
           plugin.settings.toolbarPosition = p;
           await plugin.saveSettings();
           plugin.applyToolbarPositionToAllViews();
         };
-        const setStyle = async (s: "attached" | "detached") => {
+        const setStyle = async (s: "attached" | "detached" | "integrated") => {
           plugin.settings.toolbarStyle = s;
+          if (s === "integrated") {
+            plugin.settings.toolbarPosition = "top";
+          }
           await plugin.saveSettings();
           plugin.applyToolbarPositionToAllViews();
         };
         menu.addItem((item) => {
           item.setTitle(tx("Position"));
           item.setIcon("move-vertical");
+          item.setDisabled(plugin.settings.toolbarStyle === "integrated");
           const sub = item.setSubmenu();
           sub.addItem((s) => {
             s.setTitle(tx("Top"));
@@ -1446,6 +2424,12 @@ export class ButterEditorView extends TextFileView {
             if (plugin.settings.toolbarStyle === "detached") s.setChecked(true);
             s.onClick(() => void setStyle("detached"));
           });
+          sub.addItem((s) => {
+            s.setTitle(tx("Integrated"));
+            s.setIcon("panel-top");
+            if (plugin.settings.toolbarStyle === "integrated") s.setChecked(true);
+            s.onClick(() => void setStyle("integrated"));
+          });
         });
         menu.addSeparator();
       }
@@ -1456,6 +2440,7 @@ export class ButterEditorView extends TextFileView {
           .onClick(() => plugin.openSettings("toolbar"));
       });
       menu.showAtMouseEvent(e);
+      dismissMenuOnScroll(menu, toolbarDom.ownerDocument);
     });
 
     // Mark the view container with the user's toolbar-position
@@ -1483,16 +2468,16 @@ export class ButterEditorView extends TextFileView {
     // is installed AFTER the PM view is created - see the call to
     // `installMobileToolbarBehavior` below.
     if (Platform.isMobile) {
-      activeDocument.body.appendChild(toolbarDom);
+      editorRoot.ownerDocument.body.appendChild(toolbarDom);
     } else {
       this.applyToolbarPosition();
     }
     this.refreshContentPaddingVar();
 
-    const getSourcePath = () => this.file?.path ?? "";
     const getFile = () => this.file ?? null;
 
-    const body = this.stripFrontmatter(this.data ?? "");
+    this.acceptedViewData ??= this.data ?? "";
+    const body = this.stripFrontmatter(this.acceptedViewData);
     this.renderProperties();
 
     this.registerEvent(
@@ -1507,33 +2492,48 @@ export class ButterEditorView extends TextFileView {
     // blow on specific input combinations. Catch + fall back rather
     // than crash the entire view (and through it, the plugin).
     let result: ReturnType<typeof parser.parseWithSourceMap> | null = null;
+    let parseFailure: unknown = null;
     try {
       result = parser.parseWithSourceMap(body);
     } catch (err) {
+      parseFailure = err;
       console.error(
-        "[butter-editor] parser.parseWithSourceMap threw on this file. Falling back to empty doc; source is preserved on disk.",
+        "[butter-editor] parser.parseWithSourceMap threw on this file. Falling back to a source-preserving raw block.",
         err,
       );
     }
-    const doc = result?.doc || schema.node("doc", null, [schema.node("paragraph")]);
-    this.captureSourceState(body, result?.doc ?? null);
+    const doc = ensureBlockIds(
+      result?.doc ?? parser.rawBlockFallbackDocument(
+        body,
+        parseFailure instanceof Error
+          ? `initial parse failed: ${parseFailure.message}`
+          : "initial parse returned no document",
+      ),
+    );
+    this.captureSourceState(body, doc);
 
     this.nodeViewManager = new NodeViewManager();
     const mgr = this.nodeViewManager;
+    const extensionRuntime = materializeButterEditorExtensions();
 
     const plugins = [
       toolbarPlugin,
       autocompletePlugin(this.app, schema),
       slashMenuPlugin(this.app, schema),
       buildInputRules(schema, {
-        enableMarkdownShortcuts: this.settings.enableMarkdownShortcuts,
+        markdownShortcuts: this.settings.markdownShortcuts,
       }),
-      buildKeymap(schema),
+      buildKeymap(schema, {
+        markdownShortcuts: () => this.settings.markdownShortcuts,
+      }),
+      linkEditorKeyboardPlugin(this.app, getSourcePath),
       blockIdStamperPlugin(),
-      blockSpacingPlugin(),
+      blockAnimatorPlugin(),
       commentOnlyParagraphPlugin(),
       checkboxPlugin(),
       listNumberingPlugin(),
+      footnotePresentationPlugin(),
+      headingFoldPlugin(),
       multiBlockSelectPlugin({
         app: this.app,
         serializeNode: (node) =>
@@ -1542,27 +2542,33 @@ export class ButterEditorView extends TextFileView {
       selectionOverlayPlugin(),
       listOperationsPlugin(),
       codeHighlightPlugin(this.app),
-      searchPlugin(),
+      searchPlugin({
+        getMainToolbarDom: () => this.toolbarDom,
+        getMobileStyle: () => this.settings.mobileToolbarStyle,
+      }),
       dragHandlesPlugin({
         app: this.app,
         serializeNode: (node) =>
           serializer.serialize(schema.node("doc", null, [node])),
         dragHandleVisibility: () => this.settings.dragHandleVisibility,
         dragMotion: () => this.settings.dragMotion,
-        dragTriggerBias: () => this.settings.blockDragSensitivity,
-        disableAnimations: () => this.settings.disableAnimations,
-        unlockMobileEditable: () => this.mobileSetEditable?.(true),
+        dragTriggerOffset: () => this.settings.blockDragTriggerOffsetPx,
+        containerDragTriggerOffset: () =>
+          this.settings.blockDragContainerTriggerOffsetPx,
+        dragCompactionTriggerPx: () => this.settings.dragCompactionTriggerPx,
+        dragCompactedHeightPx: () => this.settings.dragCompactedHeightPx,
+        mouseReleaseProtection: () => this.settings.mouseReleaseProtection,
+        unlockMobileEditable: () => this.requestMobileEditing(),
         chromeBottom: () => {
           const header = this.containerEl?.querySelector<HTMLElement>(".view-header");
           const stack = this.containerEl?.querySelector<HTMLElement>(".butter-toolbar-stack");
-          const tableBar = stack?.querySelector<HTMLElement>(".butter-table-toolbar:not(.is-hidden)");
           const hb = header?.getBoundingClientRect().bottom ?? 0;
           const sb = stack?.getBoundingClientRect().bottom ?? 0;
-          const tb = tableBar?.getBoundingClientRect().bottom ?? 0;
+          const cb = visibleContextToolbarBottom(this.containerEl);
           const toolbarPosition = this.containerEl?.getAttribute("data-toolbar-pos") === "bottom"
             ? "bottom"
             : "top";
-          return editorTopChromeBottom(toolbarPosition, hb, sb, tb);
+          return editorTopChromeBottom(toolbarPosition, hb, sb, cb);
         },
       }),
       // Cell-range drag MUST register BEFORE tableEditing() so its
@@ -1585,7 +2591,7 @@ export class ButterEditorView extends TextFileView {
         () => this.settings.mobileToolbarStyle,
       ),
       tableRowColDragPlugin(),
-      clickToSpawnPlugin(() => this.mobileSetEditable?.(true)),
+      clickToSpawnPlugin(() => this.requestMobileEditing()),
       inlineAtomEditPlugin(this.app, {
         canEdit: () => {
           const s = this.plugin.licenseStatus;
@@ -1602,7 +2608,22 @@ export class ButterEditorView extends TextFileView {
       history(),
       dropCursor(),
       gapCursor(),
-      contextMenuPlugin(schema),
+      contextMenuPlugin(schema, {
+        app: this.app,
+        getEditor: () => {
+          this.editor?.refresh();
+          return this.editor as unknown as import("obsidian").Editor | null;
+        },
+        getInfo: () => this as unknown as import("obsidian").MarkdownFileInfo,
+        getContextMenuLayout: () => this.plugin.getContextMenuLayout(),
+        getPendingFeatureAnnouncement: (surface) =>
+          this.plugin.getPendingFeatureAnnouncement(surface),
+        acknowledgeFeatureAnnouncement: (id) =>
+          this.plugin.acknowledgeFeatureAnnouncement(id),
+        openContextMenuSettings: () => this.plugin.openSettings("context-menu"),
+        serializeNode: (node) =>
+          serializer.serialize(schema.node("doc", null, [node])),
+      }),
       trimDblClickSelectionPlugin(),
       // Resolves em/strong overlap at transaction-end so the saved
       // file stays pure markdown (no `<em>`/`<strong>` HTML fallback).
@@ -1626,23 +2647,18 @@ export class ButterEditorView extends TextFileView {
       );
     }
 
-    if (this.settings.enableCM6Bridge) {
-      plugins.push(
-        ...cm6BridgePlugins(this.app, {
-          serialize: (d) => serializer.serialize(d),
-          parse: (md) => parser.parse(md),
-          schema,
-        }),
-      );
-    }
-
     plugins.push(
       new PMPlugin({
         view: () => ({
           update: (view, prevState) => {
             if (this.suppressChange) return;
             if (!view.state.doc.eq(prevState.doc)) {
-              this.lastEditTime = Date.now();
+              this.editGeneration += 1;
+              // TextFileView's public contract requires this on every local
+              // edit so Obsidian knows the view is dirty and protects it from
+              // external replacement/close-time loss. Our scheduler remains
+              // the immediate-flush/continuous-edit ceiling layer.
+              this.requestSave();
               // Route every edit through the scheduler; it manages
               // idle + ceiling + event-driven flush triggers.
               this.saveScheduler?.onEdit();
@@ -1651,24 +2667,33 @@ export class ButterEditorView extends TextFileView {
         }),
       }),
     );
+    // Core plugins are intentionally earlier: ProseMirror resolves plugin
+    // props in array order. Extension plugins remain native PM plugins, with
+    // their state/view/destroy lifecycle owned by ProseMirror.
+    plugins.push(...extensionRuntime.plugins);
 
     // EditorState.create runs PM's content validation which recursively
     // walks fillBefore / createAndFill. On our schema's content graph
     // that recursion sits near Electron's stack limit (Node's is much
     // larger - tests don't trip it). Certain doc shapes can blow past
-    // it. Wrap in try/catch + fall back to an empty paragraph doc so
-    // a single bad parse doesn't take the entire plugin offline. The
-    // file's source remains on disk untouched; user can reload after
-    // we ship the underlying schema-graph fix.
+    // it. Wrap in try/catch and fall back to an atomic raw_block carrying
+    // every source byte. An empty paragraph fallback looked harmless but
+    // could later overwrite the real file if any save path reached it.
     let state: EditorState;
     try {
       state = EditorState.create({ doc, schema, plugins });
     } catch (err) {
       console.error(
-        "[butter-editor] EditorState.create threw (likely PM fillBefore stack overflow on this doc). Falling back to empty paragraph doc.",
+        "[butter-editor] EditorState.create threw (likely PM fillBefore stack overflow on this doc). Falling back to a source-preserving raw block.",
         err,
       );
-      const fallback = schema.node("doc", null, [schema.node("paragraph")]);
+      const fallback = ensureBlockIds(
+        parser.rawBlockFallbackDocument(
+          body,
+          `EditorState.create failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+      this.captureSourceState(body, fallback);
       state = EditorState.create({ doc: fallback, schema, plugins });
     }
 
@@ -1677,15 +2702,24 @@ export class ButterEditorView extends TextFileView {
       editable: () => this.isEditable(),
       // Identify the contenteditable region to assistive tech.
       // role=textbox + aria-multiline distinguishes it from a one-
-      // line input. No `aria-label` because Obsidian's tooltip
-      // system renders aria-label as a hover tooltip - on a giant
-      // editing surface that becomes constant visual noise. SR users
-      // still get sensible behavior via role + context.
+      // line input; aria-labelledby supplies the required accessible
+      // name without triggering Obsidian's aria-label tooltip behavior.
       attributes: {
         role: "textbox",
         "aria-multiline": "true",
+        // The visible note title is the editor's accessible name. Referencing
+        // it avoids Obsidian's aria-label tooltip behavior and follows ARIA's
+        // preference for aria-labelledby when label text exists in the DOM.
+        "aria-labelledby": editorAccessibleLabelId,
       },
       nodeViews: {
+        // Source provenance and session block IDs are deliberately invisible
+        // to DOM rendering. Preserve default node wrappers when only that
+        // metadata changes during a native same-file/external reload.
+        ...stableDefaultNodeViews(schema),
+        // External NodeViews may fill extension-owned node types; Butter's
+        // built-ins below deliberately win any name collision.
+        ...extensionRuntime.nodeViews,
         code_block: codeBlockView(this.app, getSourcePath, mgr, this),
         obsidian_embed: embedView(this.app, getSourcePath, mgr, this),
         obsidian_embed_inline: embedInlineView(this.app, getSourcePath, mgr, this),
@@ -1695,7 +2729,7 @@ export class ButterEditorView extends TextFileView {
         wikilink: wikilinkView(this.app, getSourcePath),
         obsidian_tag: tagView(this.app),
         block_comment: blockCommentView(),
-        inline_footnote: inlineFootnoteView(),
+        inline_footnote: inlineFootnoteView(this.app, getSourcePath, mgr),
         footnote_ref: footnoteRefView(),
         footnote_def: footnoteDefView(this.app, getSourcePath, mgr),
         block_id: blockIdView(),
@@ -1731,10 +2765,17 @@ export class ButterEditorView extends TextFileView {
       this.pmView,
       (d) => serializer.serialize(d),
       (newMarkdown) => {
-        this.setViewData(newMarkdown, false);
-        this.lastEditTime = Date.now();
-        this.saveScheduler?.onEdit();
-      }
+        this.replaceLocalMarkdown(newMarkdown);
+      },
+      (cycle) => {
+        const pmView = this.pmView;
+        if (!pmView) return;
+        toggleTaskOnCurrentLine(
+          pmView.state,
+          pmView.dispatch.bind(pmView),
+          cycle,
+        );
+      },
     );
 
     // Initialize the save scheduler. Every edit lands here; blur,
@@ -1748,21 +2789,22 @@ export class ButterEditorView extends TextFileView {
     // triggering, so layering Obsidian's 2s debounce on top would
     // mean event flushes (blur, window-blur, etc.) don't actually
     // hit disk for 2 seconds. `save()` writes immediately.
-    this.saveScheduler = new SaveScheduler(() => {
+    this.saveScheduler = new SaveScheduler(async () => {
       // Wrap the scheduler-driven save in async error capture. Without
       // this, an async vault.modify rejection (disk full, file locked
       // by sync clients, network drive drop, EACCES) silently escapes
       // to the event loop as an unhandled promise rejection - the user
       // sees nothing while their typing piles up unsaved.
-      void (async () => {
-        try {
-          await this.save();
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          recordError("save", `vault.modify failed: ${msg}`);
-          new Notice(`${tx("Butter: save failed -")} ${msg}`);
-        }
-      })();
+      try {
+        await this.save();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        recordError("save", `save failed: ${msg}`);
+        new Notice(`${tx("Butter: save failed -")} ${msg}`);
+        // SaveScheduler owns retry/pending state. Re-throw so flush(), file
+        // switching, and teardown cannot mistake a failed write for success.
+        throw err;
+      }
     });
     this.installSchedulerTriggers();
 
@@ -1777,7 +2819,7 @@ export class ButterEditorView extends TextFileView {
   }
 
   async onClose() {
-    this.destroyed = true;
+    this.clearMobileKeyboardDismissal();
     // Tear down the license banner. registerEvent handles the
     // workspace listener cleanup automatically.
     if (this.licenseBanner) {
@@ -1787,9 +2829,11 @@ export class ButterEditorView extends TextFileView {
     // Flush pending save NOW so we don't lose the user's most
     // recent typing when the view closes (common on file switch).
     if (this.saveScheduler) {
-      this.saveScheduler.flush();
+      await this.saveScheduler.flush();
       this.saveScheduler = null;
     }
+    await this.saveQueue;
+    this.destroyed = true;
     // Detach DOM-event triggers installed by installSchedulerTriggers.
     for (const teardown of this.schedulerListeners) {
       try { teardown(); } catch { /* already gone */ }
@@ -1821,404 +2865,463 @@ export class ButterEditorView extends TextFileView {
     }
   }
 
-  getViewData(): string {
-    if (!this.pmView) return this.data;
-    return this.serializeCurrent();
+  private canonicalSaveOptions() {
+    return {
+      bullet: this.settings.canonicalBullet,
+      italic: this.settings.canonicalItalic,
+      bold: this.settings.canonicalBold,
+      codeFence: this.settings.canonicalCodeFence,
+      horizontalRule: this.settings.canonicalHorizontalRule,
+    };
+  }
+
+  /** Finalize a serializer body identically for both preflight paths. */
+  private finalizeSaveBody(serializedBody: string): string {
+    let body = normalizeSourceLineEndings(serializedBody);
+    const preserveTrailing = Boolean(
+      this.settings.preserveOriginalSource &&
+      this.preserveSource &&
+      this.originalDoc,
+    );
+    body = body.replace(/\n*$/, "") + "\n".repeat(
+      preserveTrailing ? this.originalTrailingNewlines : 1,
+    );
+    if (
+      this.settings.normalizeHeadingGap ||
+      this.settings.condenseBlankLines ||
+      this.settings.closeUnclosedFences
+    ) {
+      body = normalizeSource(body, {
+        headingGap: this.settings.normalizeHeadingGap,
+        condenseBlanks: this.settings.condenseBlankLines,
+        closeUnclosedFences: this.settings.closeUnclosedFences,
+      });
+    }
+    return body;
+  }
+
+  private assembleSaveText(body: string): string {
+    let text = normalizeSourceLineEndings(this.frontmatter + body);
+    if (this.lineEnding !== "\n") {
+      text = text.replace(/\n/g, this.lineEnding);
+    }
+    return this.originalHasBOM ? `\ufeff${text}` : text;
+  }
+
+  private preflightCurrent(
+    rawDoc = this.pmView?.state.doc ?? null,
+  ): SavePreflightResult | null {
+    if (!rawDoc) return null;
+    const tableNormalized = normalizeTablesInDoc(rawDoc, rawDoc.type.schema);
+    if (
+      this.originalDoc &&
+      this.hasRawBlock(this.originalDoc) &&
+      !this.hasRawBlock(tableNormalized)
+    ) {
+      return {
+        ok: false,
+        blocked: true,
+        attempts: [{
+          ok: false,
+          path: "source-preserving",
+          stage: "compare",
+          error: "loaded raw source artifact disappeared from the live document",
+        }],
+      };
+    }
+    const canPreserve = Boolean(
+      this.settings.preserveOriginalSource &&
+      this.preserveSource &&
+      this.originalDoc,
+    );
+    return preflightExactSave({
+      currentDoc: tableNormalized,
+      originalBody: this.originalBody,
+      originalDoc: this.originalDoc,
+      canonicalOptions: this.canonicalSaveOptions(),
+      primaryPath: canPreserve ? "source-preserving" : "canonical",
+      finalizeBody: (body) => this.finalizeSaveBody(body),
+    });
+  }
+
+  private preflightFailureReason(result: Extract<SavePreflightResult, { ok: false }>): string {
+    return result.attempts
+      .map((attempt) => `${attempt.path}/${attempt.stage}: ${attempt.error}`)
+      .join(" | ");
+  }
+
+  private exactViewData(doc: PMNode): string {
+    return this.exactSaveCandidate(doc).text;
+  }
+
+  private exactSaveCandidate(doc: PMNode): {
+    text: string;
+    normalizedDoc: PMNode;
+  } {
+    const preflight = this.preflightCurrent(doc);
+    if (!preflight || !preflight.ok) {
+      const reason = preflight
+        ? this.preflightFailureReason(preflight)
+        : "editor is not available";
+      this.reportSaveResult?.({ kind: "blocked", reason });
+      recordError("save", `Exact preflight blocked the write: ${reason}`);
+      if (this.lastBlockedDoc !== doc) {
+        this.lastBlockedDoc = doc;
+        new Notice(
+          `${tx("Butter: save failed -")} safety check blocked the write; your file was not changed.`,
+          12000,
+        );
+      }
+      throw new Error(`Butter exact-save preflight blocked: ${reason}`);
+    }
+    return {
+      text: this.assembleSaveText(preflight.candidate),
+      normalizedDoc: preflight.normalizedDoc,
+    };
+  }
+
+  private mapPresentationPosition(
+    live: PMNode,
+    target: PMNode,
+    position: number,
+    association: -1 | 1,
+    fallback: number,
+  ): number {
+    const resolved = live.resolve(position);
+    let targetParent = target;
+    let targetParentStart = 0;
+
+    // Presentation normalization preserves block cardinality. Follow the
+    // exact child-index path to the same parent instead of asking a bounding
+    // ReplaceStep to guess where a cursor inside an unchanged middle block
+    // belongs.
+    for (let depth = 0; depth < resolved.depth; depth++) {
+      const index = resolved.index(depth);
+      if (index >= targetParent.childCount) return fallback;
+      let offset = 0;
+      for (let childIndex = 0; childIndex < index; childIndex++) {
+        offset += targetParent.child(childIndex).nodeSize;
+      }
+      const targetChild = targetParent.child(index);
+      const liveChild = resolved.node(depth + 1);
+      if (targetChild.type !== liveChild.type) return fallback;
+      targetParentStart += offset + 1;
+      targetParent = targetChild;
+    }
+
+    let targetOffset: number;
+    if (resolved.parent.inlineContent && targetParent.inlineContent) {
+      targetOffset = this.mapPresentationInlineOffset(
+        resolved.parent,
+        targetParent,
+        resolved.parentOffset,
+        resolved.index(resolved.depth),
+        resolved.textOffset,
+        association,
+      );
+    } else {
+      const index = resolved.index(resolved.depth);
+      if (index > targetParent.childCount) return fallback;
+      targetOffset = 0;
+      for (let childIndex = 0; childIndex < index; childIndex++) {
+        targetOffset += targetParent.child(childIndex).nodeSize;
+      }
+    }
+
+    return targetParentStart + Math.max(
+      0,
+      Math.min(targetOffset, targetParent.content.size),
+    );
+  }
+
+  private mapPresentationInlineOffset(
+    liveParent: PMNode,
+    targetParent: PMNode,
+    offset: number,
+    sourceIndex: number,
+    textOffset: number,
+    association: -1 | 1,
+  ): number {
+    // Normalize the exact source prefix and accept it only when it is an exact
+    // prefix of the target. This gives a linear, monotonic offset map across
+    // any number of disjoint insertions (for example, spaces before multiple
+    // Obsidian tags) without an edit-distance algorithm.
+    try {
+      const prefixParent = liveParent.copy(liveParent.content.cut(0, offset));
+      const prefixDoc = liveParent.type.schema.nodes.doc.create(
+        null,
+        prefixParent,
+      );
+      const normalizedPrefixDoc = normalizeDocForSave(prefixDoc, {
+        mode: "presentation",
+      });
+      const normalizedPrefix = normalizedPrefixDoc.firstChild;
+      if (
+        normalizedPrefix?.type === targetParent.type &&
+        normalizedPrefix.sameMarkup(targetParent) &&
+        normalizedPrefix.content.size <= targetParent.content.size &&
+        targetParent.content
+          .cut(0, normalizedPrefix.content.size)
+          .eq(normalizedPrefix.content)
+      ) {
+        return normalizedPrefix.content.size;
+      }
+    } catch {
+      // A prefix can be schema-invalid for an extension node. Reference
+      // anchors below remain exact for all retained children.
+    }
+
+    const targetOffsetOf = (needle: PMNode): number | null => {
+      let childOffset = 0;
+      for (let index = 0; index < targetParent.childCount; index++) {
+        const child = targetParent.child(index);
+        if (child === needle) return childOffset;
+        childOffset += child.nodeSize;
+      }
+      return null;
+    };
+
+    if (textOffset > 0 && sourceIndex < liveParent.childCount) {
+      const sourceChild = liveParent.child(sourceIndex);
+      const anchored = targetOffsetOf(sourceChild);
+      if (anchored !== null) return anchored + textOffset;
+    } else {
+      const after = sourceIndex < liveParent.childCount
+        ? liveParent.child(sourceIndex)
+        : null;
+      const before = sourceIndex > 0
+        ? liveParent.child(sourceIndex - 1)
+        : null;
+      const preferred = association < 0 ? [before, after] : [after, before];
+      for (const child of preferred) {
+        if (!child) continue;
+        const anchored = targetOffsetOf(child);
+        if (anchored === null) continue;
+        return child === before ? anchored + child.nodeSize : anchored;
+      }
+    }
+
+    // The cursor is inside content that presentation normalization actually
+    // replaced (for example `$x$` becoming one inline-math atom). There is no
+    // interior Markdown-source position in the rendered atom, so map to the
+    // corresponding representable boundary. This branch is not used for
+    // unchanged children or for disjoint insertions.
+    {
+      const liveContent = liveParent.content;
+      const targetContent = targetParent.content;
+      const start = liveContent.findDiffStart(targetContent);
+      const rawEnd = liveContent.findDiffEnd(targetContent);
+      if (start === null || rawEnd === null) {
+        return offset;
+      } else {
+        let liveEnd = rawEnd.a;
+        let targetEnd = rawEnd.b;
+        const overlap = start - Math.min(liveEnd, targetEnd);
+        if (overlap > 0) {
+          liveEnd += overlap;
+          targetEnd += overlap;
+        }
+        const liveLength = liveEnd - start;
+        const targetLength = targetEnd - start;
+        if (offset < start) {
+          return offset;
+        } else if (offset > liveEnd) {
+          return targetEnd + offset - liveEnd;
+        } else if (liveLength === 0) {
+          return association < 0 ? start : targetEnd;
+        } else if (liveLength === targetLength) {
+          return offset;
+        } else {
+          return association < 0 ? start : targetEnd;
+        }
+      }
+    }
+  }
+
+  private presentationSelection(
+    live: PMNode,
+    target: PMNode,
+    selection: Selection,
+    fallbackMapping: Parameters<Selection["map"]>[1],
+  ): Selection {
+    const json = selection.toJSON() as Record<string, unknown>;
+    const mapped: Record<string, unknown> = { ...json };
+    const anchor = typeof json.anchor === "number" ? json.anchor : null;
+    const head = typeof json.head === "number" ? json.head : null;
+    const collapsed = anchor !== null && head !== null && anchor === head;
+
+    for (const key of ["anchor", "head", "pos"] as const) {
+      const value = json[key];
+      if (typeof value !== "number") continue;
+      const association: -1 | 1 = collapsed || key !== "anchor" ? 1 : -1;
+      mapped[key] = this.mapPresentationPosition(
+        live,
+        target,
+        value,
+        association,
+        fallbackMapping.map(value, association),
+      );
+    }
+
+    try {
+      if (
+        json.type === "text" &&
+        (
+          typeof mapped.anchor !== "number" ||
+          typeof mapped.head !== "number" ||
+          !target.resolve(mapped.anchor).parent.inlineContent ||
+          !target.resolve(mapped.head).parent.inlineContent
+        )
+      ) {
+        return selection.map(target, fallbackMapping);
+      }
+      return Selection.fromJSON(target, mapped);
+    } catch {
+      return selection.map(target, fallbackMapping);
+    }
+  }
+
+  private presentationTargetForSave(
+    live: PMNode,
+    persistedTarget: PMNode,
+  ): PMNode {
+    const presentationTarget = normalizeDocForSave(live, {
+      mode: "presentation",
+    });
+    const persistedFromPresentation = normalizeDocForSave(
+      presentationTarget,
+    );
+    if (!persistedFromPresentation.eq(persistedTarget)) {
+      throw new Error(
+        "save presentation normalization diverged from persisted semantics",
+      );
+    }
+    return presentationTarget;
   }
 
   /**
-   * Memoized serialization. On large docs a full serialize is the
-   * main cost of save, so we cache by PM doc reference and reuse the
-   * string on any subsequent call that sees the same doc - avoids
-   * repeat work when Obsidian + our own code both ask for viewData
-   * in the same frame (save + echo-check, etc).
+   * Make durable save-time normalization visible in the one live ProseMirror
+   * state before bytes are written. Presentation-only empty blocks and marked
+   * edge whitespace remain in the target. One bounding PM replacement keeps
+   * reconciliation linear; the explicit structural selection projection
+   * prevents that replacement from swallowing a cursor in a stable block.
+   * ProseMirror remains the sole state and DOM reconciler.
    */
-  private serializeCurrent(): string {
-    if (!this.pmView) return this.data;
-    const rawDoc = this.pmView.state.doc;
-    if (this.markdownCache && this.markdownCache.doc === rawDoc) {
-      return this.markdownCache.text;
+  private reconcileLiveDocForSave(target: PMNode): PMNode {
+    if (!this.pmView) throw new Error("editor is not available");
+    const live = this.pmView.state.doc;
+    if (live.eq(target)) return live;
+
+    const start = live.content.findDiffStart(target.content);
+    const rawEnd = live.content.findDiffEnd(target.content);
+    if (start === null || rawEnd === null) {
+      throw new Error("save normalization changed semantics without a PM diff");
     }
-    // Defensive table normalization: re-tag `table_header` /
-    // `table_cell` cell types based on each cell's row position,
-    // so historical reorder bugs (header row dragged to body or
-    // vice versa) recover on the next save instead of locking the
-    // file behind a permanent round-trip-guard rejection. The
-    // round-trip guard further down compares this same `doc`
-    // against the re-parse of the serialized output, so both sides
-    // of the comparison see the normalized table.
-    const tableNormalized = normalizeTablesInDoc(rawDoc, this.pmView.state.schema);
-    // Pre-serialize doc normalization: rewrite shapes markdown can't
-    // represent (block_id mid-paragraph, orphan list_item depths,
-    // heading inline softbreaks + edge whitespace, sole embed_inline
-    // in paragraph, text nodes with embedded newlines) into their
-    // canonical equivalents BEFORE the serializer runs. Both the
-    // fingerprint check below and the serialize itself see the same
-    // normalized shape, so the round-trip guard only fires on TRUE
-    // serializer bugs — not on PM tree states the user could
-    // legitimately reach via merge / wrap / depth edits. User's
-    // in-memory PM tree is unchanged; this is purely the save-path
-    const doc = normalizeDocForSave(tableNormalized);
-    // Paranoid save-path guard: if the loaded doc had a raw_block
-    // (parse failed, source is being preserved verbatim) but the
-    // current PM doc doesn't, refuse to save and return the original
-    // file bytes. Normally the rawBlockSafetyPlugin's
-    // filterTransaction blocks any such transition, but this guard
-    // catches anything that somehow slips through (PM bug, direct
-    // state mutation, us accidentally dispatching a sync-tagged
-    // transaction that drops the raw_block). Zero tolerance for
-    // data loss on an already-bad parse-failure day.
-    if (this.originalDoc && this.hasRawBlock(this.originalDoc)) {
-      if (!this.hasRawBlock(doc)) {
-        console.error(
-          "[butter-pmx] raw_block disappeared from PM doc but was " +
-            "in loaded doc - refusing to save, returning original " +
-            "bytes to prevent source loss.",
-        );
-        return this.data;
-      }
+
+    // findDiffEnd is measured backward from each differently-sized Fragment.
+    // When the common prefix/suffix overlap (notably a trailing block delete),
+    // shift both endpoints by the overlap before slicing the target.
+    let liveEnd = rawEnd.a;
+    let targetEnd = rawEnd.b;
+    const overlap = start - Math.min(liveEnd, targetEnd);
+    if (overlap > 0) {
+      liveEnd += overlap;
+      targetEnd += overlap;
     }
+    const originalSelection = this.pmView.state.selection;
+    const storedMarks = this.pmView.state.storedMarks;
+    const tr = this.pmView.state.tr.replace(
+      start,
+      liveEnd,
+      target.slice(start, targetEnd),
+    );
+    tr.setSelection(this.presentationSelection(
+      live,
+      tr.doc,
+      originalSelection,
+      tr.mapping,
+    ));
+    // Adding a replace step clears Transaction.storedMarks. Preserve both an
+    // active mark set and the meaningful empty set used to keep formatting
+    // toggled off at a cursor inside marked text.
+    if (storedMarks !== null) tr.setStoredMarks(storedMarks);
+    tr.setMeta("addToHistory", false);
+    tr.setMeta(RAW_BLOCK_SYNC_META, true);
+    this.suppressChange = true;
     try {
-      // Source-preserving save: for each top-level block that's
-      // still structurally identical to its loaded state (user
-      // didn't touch it), emit the original source bytes verbatim
-      // rather than re-serialize in Butter's canonical style. This
-      // gives us Live-Preview-like source fidelity - untouched
-      // blocks keep their exact whitespace, table alignment,
-      // conservative-escape-free prose, etc. Only edited blocks
-      // come out in the serializer's canonical form.
-      //
-      // Source-preserving save.
-      //
-      // Every top-level block in `doc` carries a `sourceRange` attr
-      // placed there at parse time by the bridge. A companion
-      // PM plugin (sourcePreservationPlugin) invalidates that attr
-      // to null whenever the node's content or meaningful attrs
-      // change - so at save time, a non-null range means "this node
-      // is still byte-for-byte what the user had in source."
-      //
-      // The serializer walks the doc's children: valid range → emit
-      // `originalBody.slice(range.start, range.end)` unchanged;
-      // null range → re-serialize that block only. Everything else
-      // stays byte-identical.
-      //
-      // No `childCount` check, no parallel range array, no per-save
-      // positional index matching. The source-preservation invariant
-      // lives on the nodes themselves and survives structural edits
-      // (insert, delete, reorder) because each node carries its own
-      // range regardless of where it sits in the doc.
-      // Save mode is gated by user setting + runtime context:
-      //   - `preserveOriginalSource` setting: user opted into byte
-      //     preservation. Off by default (canonical mode).
-      //   - `this.preserveSource`: runtime flag that's true only if
-      //     parse succeeded and we have an originalDoc to compare
-      //     against. False when parse failed (raw_block fallback) or
-      //     the file is newly created.
-      // Both must hold for preservation to engage. If either is
-      // false, fall through to canonical serialize - what every
-      // other WYSIWYG markdown editor does.
-      // Canonical-form preferences are passed to whichever path runs.
-      // Preserved blocks emit original bytes regardless; only synthesized
-      // blocks honor these.
-      const canonicalOptions = {
-        bullet: this.settings.canonicalBullet,
-        italic: this.settings.canonicalItalic,
-        bold: this.settings.canonicalBold,
-        codeFence: this.settings.canonicalCodeFence,
-        horizontalRule: this.settings.canonicalHorizontalRule,
-      };
-      // Choose the primary serialize path (canonical vs preservation)
-      // by user setting + runtime context. The OTHER path is held in
-      // `tryFallback` for the round-trip-guard recovery below - if
-      // the primary fails to round-trip, we attempt the alternate
-      // before refusing the save outright.
-      const useCanonical = !(
-        this.settings.preserveOriginalSource &&
-        this.preserveSource &&
-        this.originalDoc
-      );
-      let body: string;
-      const tryFallback = () => {
-        if (useCanonical && this.preserveSource && this.originalDoc) {
-          // Canonical was primary; preservation is the fallback.
-          return serializer.serializeWithSourcePreservation(
-            doc,
-            this.originalBody,
-            this.originalDoc,
-            canonicalOptions,
-          );
-        }
-        if (!useCanonical) {
-          // Preservation was primary; canonical is the fallback.
-          return serializer.serialize(doc, canonicalOptions);
-        }
-        return null;
-      };
-      if (useCanonical) {
-        body = serializer.serialize(doc, canonicalOptions);
-      } else {
-        body = serializer.serializeWithSourcePreservation(
-          doc,
-          this.originalBody,
-          this.originalDoc!,
-          canonicalOptions,
-        );
-      }
-      // Trailing-newline handling follows the same gating: when the
-      // user has opted into source preservation AND we have parse
-      // context, emit the original's exact trailing-newline count.
-      // Otherwise fall back to the canonical convention of exactly 1.
-      const targetTrailing =
-        this.settings.preserveOriginalSource &&
-        this.preserveSource &&
-        this.originalDoc
-          ? this.originalTrailingNewlines
-          : 1;
-      body = body.replace(/\n*$/, "") + "\n".repeat(targetTrailing);
-
-      // Optional source normalization (opt-in advanced setting).
-      // Applied AFTER trailing-newline preservation so the normalizer
-      // can cap long trailing blank runs if `condenseBlankLines` is
-      // on. The normalizer functions are idempotent and no-op when
-      // all toggles are false.
-      const preNormalizeBody = body;
-      if (
-        this.settings.normalizeHeadingGap ||
-        this.settings.condenseBlankLines ||
-        this.settings.closeUnclosedFences
-      ) {
-        body = normalizeSource(body, {
-          headingGap: this.settings.normalizeHeadingGap,
-          condenseBlanks: this.settings.condenseBlankLines,
-          closeUnclosedFences: this.settings.closeUnclosedFences,
-        });
-      }
-
-      // If a normalizer changed the body bytes, update the
-      // source-preservation baseline so subsequent saves diff against
-      // the normalized form rather than the pre-normalized one.
-      //
-      // Subtlety: we update originalBody but NOT originalDoc. Re-
-      // parsing to refresh sourceRanges would invalidate the PM
-      // node-identity matching preservation depends on (every live
-      // node would differ from a freshly-parsed baseline, collapsing
-      // preservation to canonical-serialize for all nodes). Instead
-      // we rely on the fact that `closeUnclosedFences` only appends
-      // at EOF - existing sourceRanges stay valid pointing into the
-      // new (longer) originalBody. For `normalizeHeadingGap` and
-      // `condenseBlankLines`, which can shift mid-doc byte offsets,
-      // sourceRanges drift slightly; acceptable because those
-      // normalizers only touch inter-block whitespace that source-
-      // preservation treats as a computed gap anyway (see the
-      // content+gap preservation refactor in history).
-      if (body !== preNormalizeBody) {
-        this.originalBody = body;
-        const trailingMatch = body.match(/\n*$/);
-        this.originalTrailingNewlines = trailingMatch
-          ? trailingMatch[0].length
-          : 0;
-      }
-
-      // Save-path round-trip sanity check. Re-parse the serialized
-      // body and compare a structural fingerprint against the current
-      // PM doc. If the fingerprints diverge, the serializer produced
-      // output that doesn't round-trip cleanly - a corruption bug
-      // somewhere (ours, a theme interaction, an odd paste, whatever).
-      // Refuse to save; return the original file bytes. The check
-      // runs on every save as defense-in-depth against unknown
-      // corruption paths - zero tolerance for silent data loss.
-      //
-      // Cost: one parse pass per save, ~10-50ms on typical docs.
-      // Cheap relative to the risk of writing corrupted bytes.
-      // Round-trip guard with fallback. Try the chosen serializer
-      // path first; if its output doesn't reparse to the same
-      // structure, attempt the OTHER path before refusing the save
-      // entirely. This lets the user keep saving even when one path
-      // has a latent bug on a specific file shape.
-      const checkRoundTrip = (
-        candidate: string,
-      ): { ok: true } | { ok: false; reason: string } => {
-        try {
-          const reparsed = parser.parseWithSourceMap(candidate);
-          if (!reparsed?.doc) return { ok: false, reason: "reparse returned null" };
-          const origFp = docAtomFingerprint(doc);
-          const reFp = docAtomFingerprint(reparsed.doc);
-          if (origFp === reFp) return { ok: true };
-          // Find the first divergent top-level block so the error is
-          // actionable. Without this we just see "fingerprints differ"
-          // and can't repro.
-          const diff = firstFingerprintDivergence(origFp, reFp);
-          return {
-            ok: false,
-            reason: `fingerprint mismatch at ${diff.path}: orig=${diff.orig} re=${diff.re}`,
-          };
-        } catch (err) {
-          const e = err as { stack?: string; message?: string };
-          const msg = String(e?.stack ?? e?.message ?? err);
-          return { ok: false, reason: `reparse threw: ${msg.slice(0, 200)}` };
-        }
-      };
-
-      // Capture the previous on-disk bytes so the diff modal can show
-      // before/after if normalization fires. `this.originalBody` may
-      // be updated mid-flight by the normalizers above; snapshot here.
-      const preSaveOriginal = this.originalBody;
-
-      const primary = checkRoundTrip(body);
-      let saveResult: SaveState = { kind: "clean" };
-
-      if (!primary.ok) {
-        const fbBody = tryFallback();
-        if (fbBody !== null) {
-          const fb = checkRoundTrip(fbBody);
-          if (fb.ok) {
-            // Fallback path round-trips cleanly - silent recovery.
-            recordError(
-              "save",
-              `Primary path (${useCanonical ? "canonical" : "preservation"}) did not round-trip; ` +
-                `saved via fallback (${useCanonical ? "preservation" : "canonical"}) instead. ` +
-                `Reason: ${primary.reason}. ` +
-                `Body excerpt: ${JSON.stringify(body.slice(0, 200))}`,
-            );
-            body = fbBody;
-            // saveResult stays { kind: "clean" } - round-trip is fine.
-          } else {
-            // Both paths failed round-trip. Save the CANONICAL output
-            // (the safer of the two - it's our serializer's output
-            // rather than potentially-stale source bytes carrying
-            // forward whatever shape the in-memory doc disagrees with),
-            // surface a warning to the user, and write the diagnostic
-            // dump for our debugging. The user's work is NOT lost: the
-            // bytes on disk are valid CommonMark/GFM/Obsidian markdown,
-            // just normalized to a structure the parser accepts cleanly.
-            // Obsidian's core File Recovery plugin handles version
-            // restore if the user wants to roll back.
-            const canonicalBody = useCanonical ? body : fbBody;
-            const guardReason =
-              `${useCanonical ? "canonical" : "preservation"}: ${primary.reason} | ` +
-              `${useCanonical ? "preservation" : "canonical"}: ${fb.reason}`;
-
-            // Auto-dump for diagnostics. TIMESTAMPED filename so
-            // multiple guard fires in a session don't clobber each
-            // other — the old `.butter-save-failure.md` single-file
-            // approach lost prior dumps every time the guard fired
-            // again, making it impossible to compare repro patterns.
-            // Sortable ISO-ish stamp, hyphen-only (no colons → safe
-            // on every filesystem including Windows + macOS legacy).
-            const stamp = new Date()
-              .toISOString()
-              .replace(/[:]/g, "-")
-              .replace(/\.\d+Z$/, "Z");
-            const dumpPath = `.butter-save-failure-${stamp}.md`;
-            const fileName = this.file?.path ?? "(unknown file)";
-            const docDump = JSON.stringify(doc.toJSON(), null, 2);
-            const dump =
-              `<!-- Butter save-normalization auto-dump\n` +
-              `   timestamp: ${new Date().toISOString()}\n` +
-              `   file:      ${fileName}\n` +
-              `   primary:   ${primary.reason}\n` +
-              `   fallback:  ${fb.reason}\n` +
-              `   doc.textContent.length: ${doc.textContent.length}\n` +
-              `   File WAS written (canonical body); this dump captures\n` +
-              `   the round-trip mismatch for diagnostics. Timestamped\n` +
-              `   filename so repeated failures pile up rather than\n` +
-              `   overwriting — please send these to support@buttereditor.com\n` +
-              `   along with what you were doing when it happened.\n` +
-              `-->\n\n` +
-              `<!-- ===== IN-MEMORY PM DOC (JSON) ===== -->\n` +
-              "```json\n" + docDump + "\n```\n\n" +
-              `<!-- ===== ORIGINAL ON-DISK BODY ===== -->\n` +
-              preSaveOriginal +
-              `\n\n<!-- ===== CANONICAL SERIALIZER OUTPUT (saved) ===== -->\n` +
-              canonicalBody +
-              `\n\n<!-- ===== PRESERVATION SERIALIZER OUTPUT (alternative) ===== -->\n` +
-              fbBody;
-            void this.app.vault.adapter
-              .write(dumpPath, dump)
-              .catch((err) =>
-                console.warn(
-                  "[butter:save] failed to write auto-dump:",
-                  err,
-                ),
-              );
-            // High-visibility user notice — the console error alone
-            // is invisible to anyone not actively in DevTools. A
-            // long-duration Notice + status-bar warning indicator
-            // makes it impossible to miss that something happened.
-            new Notice(
-              `${tx("Butter: save normalized - the file was saved but Butter's safety check found a structural difference.")} ` +
-                tv("Diagnostic dump: {path} (at vault root).", { path: dumpPath }),
-              15000,
-            );
-            recordError(
-              "save",
-              `Both serialize paths failed round-trip; saved canonical anyway. ` +
-                `${guardReason} | auto-dump written to ${dumpPath} at vault root`,
-            );
-
-            body = canonicalBody;
-            saveResult = {
-              kind: "normalized",
-              original: preSaveOriginal,
-              saved: canonicalBody,
-              reason: guardReason,
-            };
-          }
-        } else {
-          // Primary failed and no fallback available. Save the primary
-          // output anyway - the user's work survives, and the warning
-          // status indicator + diff modal lets them see what changed.
-          // (The "no fallback" case typically means they only have one
-          // serializer path enabled by setting; respecting that choice
-          // and saving its output is the right behavior.)
-          new Notice(
-            tx("Butter: save normalized - primary serializer round-trip failed and no fallback is available. File saved anyway. Open DevTools console for details."),
-            12000,
-          );
-          recordError(
-            "save",
-            `Round-trip ${primary.reason}. No fallback available; saved primary anyway.`,
-          );
-          saveResult = {
-            kind: "normalized",
-            original: preSaveOriginal,
-            saved: body,
-            reason:
-              `${useCanonical ? "canonical" : "preservation"}: ${primary.reason}`,
-          };
-        }
-      }
-
-      // Report the final save outcome to the plugin's status bar.
-      // Fires even on the clean path so the indicator clears any prior
-      // warning state when a subsequent save round-trips cleanly.
-      if (this.reportSaveResult) {
-        try { this.reportSaveResult(saveResult); }
-        catch (err) {
-          console.warn("[butter:save] reportSaveResult threw:", err);
-        }
-      }
-
-      let text = this.frontmatter + body;
-      // Preserve the input file's line-ending style. Matters for
-      // git-tracked vaults on Windows with autocrlf=false: converting
-      // CRLF→LF on every save produces a whole-file diff that drowns
-      // real changes. First normalize everything to LF (frontmatter
-      // may still carry the original CRLF from disk), then re-apply
-      // the target style uniformly.
-      text = text.replace(/\r\n/g, "\n");
-      if (this.lineEnding === "\r\n") text = text.replace(/\n/g, "\r\n");
-      // Re-apply BOM if the original had one.
-      if (this.originalHasBOM) text = "\ufeff" + text;
-      // Cache keyed by the PM doc identity (rawDoc) since the next
-      // call's identity check uses `this.pmView.state.doc`. The
-      // table-normalized `doc` may be a fresh instance - caching by
-      // it would always miss.
-      this.markdownCache = { doc: rawDoc, text };
-      return text;
-    } catch {
-      return this.data;
+      this.pmView.dispatch(tr);
+    } finally {
+      this.suppressChange = false;
     }
+
+    const reconciled = this.pmView.state.doc;
+    if (!reconciled.eq(target)) {
+      throw new Error("live editor did not accept exact save normalization");
+    }
+    return reconciled;
+  }
+
+  /**
+   * Exact validation is Butter's responsibility; persistence, external-change
+   * merge, own-write suppression, unload clearing, and File Recovery remain
+   * owned by Obsidian's TextFileView. The staged value guarantees that
+   * super.save() writes the exact string that passed preflight.
+   */
+  override save(clear = false): Promise<void> {
+    return this.enqueueNativeFileOperation(() => this.performNativeSave(clear));
+  }
+
+  private enqueueNativeFileOperation(operation: () => Promise<void>): Promise<void> {
+    const run = this.saveQueue.then(operation, operation);
+    this.saveQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async performNativeSave(clear: boolean): Promise<void> {
+    if (!this.pmView || !this.file || this.destroyed) {
+      await super.save(clear);
+      return;
+    }
+    const file = this.file;
+    const doc = this.pmView.state.doc;
+    const generation = this.editGeneration;
+    // requestSave() and the immediate/ceiling scheduler deliberately share
+    // this adapter. Whichever reaches the native writer second must be a
+    // cheap no-op once the same edit generation is already durable.
+    if (!clear && generation === this.persistedGeneration) return;
+    const exact = this.exactSaveCandidate(doc);
+    const presentationTarget = this.presentationTargetForSave(
+      doc,
+      exact.normalizedDoc,
+    );
+    const saveDoc = this.reconcileLiveDocForSave(presentationTarget);
+    const candidate = exact.text;
+    this.preparedSave = { doc: saveDoc, text: candidate };
+    try {
+      await super.save(clear);
+    } catch (error) {
+      // TextFileView consumes its private dirty flag before starting I/O. If
+      // the write then fails, re-arm that native flag immediately so an
+      // external reload cannot mistake the unsaved PM projection for clean.
+      // SaveScheduler separately retains the retry/error boundary.
+      if (!clear && this.file === file && !this.destroyed) this.requestSave();
+      throw error;
+    } finally {
+      this.preparedSave = null;
+    }
+    if (clear || this.file !== file || this.data !== candidate) return;
+    this.acceptedViewData = candidate;
+    this.lastBlockedDoc = null;
+    this.reportSaveResult?.({ kind: "clean" });
+    if (this.editGeneration === generation) this.persistedGeneration = generation;
+  }
+
+  getViewData(): string {
+    if (!this.pmView) return this.acceptedViewData ?? this.data;
+    if (this.preparedSave?.doc === this.pmView.state.doc) {
+      return this.preparedSave.text;
+    }
+    return this.exactViewData(this.pmView.state.doc);
   }
 
   /**
@@ -2260,7 +3363,7 @@ export class ButterEditorView extends TextFileView {
       // Click landed elsewhere in Obsidian (file tree, tab bar,
       // sidebar, another note, etc.) - flush whatever's pending
       // so the bytes on disk match what the user was just writing.
-      if (scheduler.hasPending()) scheduler.flush();
+      if (scheduler.hasPending()) void scheduler.flush();
     };
     activeDocument.addEventListener("mousedown", onDocMouseDown, true);
     this.schedulerListeners.push(() =>
@@ -2268,7 +3371,7 @@ export class ButterEditorView extends TextFileView {
     );
 
     const onWindowBlur = () => {
-      if (scheduler.hasPending()) scheduler.flush();
+      if (scheduler.hasPending()) void scheduler.flush();
     };
     window.addEventListener("blur", onWindowBlur);
     this.schedulerListeners.push(() =>
@@ -2277,7 +3380,7 @@ export class ButterEditorView extends TextFileView {
 
     const onVisibility = () => {
       if (activeDocument.visibilityState === "hidden" && scheduler.hasPending()) {
-        scheduler.flush();
+        void scheduler.flush();
       }
     };
     activeDocument.addEventListener("visibilitychange", onVisibility);
@@ -2286,7 +3389,7 @@ export class ButterEditorView extends TextFileView {
     );
 
     const onBeforeUnload = () => {
-      if (scheduler.hasPending()) scheduler.flush();
+      if (scheduler.hasPending()) void scheduler.flush();
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     this.schedulerListeners.push(() =>
@@ -2294,8 +3397,49 @@ export class ButterEditorView extends TextFileView {
     );
   }
 
+  /** Apply a plugin/shim-authored Markdown replacement as a local PM edit.
+   *
+   * This deliberately does not call setViewData(): that method represents a
+   * host/file load and advances the persisted source baseline. Treating a
+   * local replacement as persisted caused later saves to splice against bytes
+   * that had never reached disk. */
+  private replaceLocalMarkdown(markdown: string): void {
+    if (!this.pmView) return;
+    const parsed = parser.parseWithSourceMap(markdown);
+    if (!parsed?.doc || this.hasRawBlock(parsed.doc)) {
+      new Notice(
+        `${tx("Butter: save failed -")} invalid plugin Markdown`,
+        6000,
+      );
+      return;
+    }
+    const replacement = ensureBlockIds(parsed.doc);
+    const tr = this.pmView.state.tr.replaceWith(
+      0,
+      this.pmView.state.doc.content.size,
+      replacement.content,
+    );
+    this.pmView.dispatch(tr);
+  }
+
   setViewData(data: string, clear: boolean) {
+    const previousData = this.acceptedViewData;
+    if (!clear && previousData !== null && data === previousData) {
+      this.data = data;
+      return;
+    }
+
+    if (clear) {
+      this.saveScheduler?.cancel();
+      this.editGeneration = 0;
+      this.persistedGeneration = 0;
+      this.lastBlockedDoc = null;
+      this.pendingPropertyDraft = false;
+      this.pendingPropertyKeyFocus = null;
+      this.pendingPropertyValueFocus = null;
+    }
     this.data = data;
+    this.acceptedViewData = data;
     const body = this.stripFrontmatter(data);
     this.renderProperties();
     if (this.inlineTitleEl && this.file) {
@@ -2316,17 +3460,33 @@ export class ButterEditorView extends TextFileView {
     }
     if (!this.pmView) return;
 
-    // Fast path: same-content echo from our own save.
-    const currentMarkdown = this.serializeCurrent();
-    if (data === currentMarkdown) return;
-
     // External change (vault sync, git pull, another plugin edited
     // the file). Apply as a content replace transaction instead of
     // tearing down the whole EditorState - that keeps PM's undo
     // history and plugin state intact across the sync.
-    const syncResult = parser.parseWithSourceMap(body);
-    const newDoc = syncResult?.doc || schema.node("doc", null, [schema.node("paragraph")]);
-    this.captureSourceState(body, syncResult?.doc ?? null);
+    let syncResult: ReturnType<typeof parser.parseWithSourceMap> | null = null;
+    let syncFailure: unknown = null;
+    try {
+      syncResult = parser.parseWithSourceMap(body);
+    } catch (error) {
+      syncFailure = error;
+      recordError(
+        "external-reload",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    const parsedDoc = syncResult?.doc ?? parser.rawBlockFallbackDocument(
+      body,
+      syncFailure instanceof Error
+        ? `file reload parse failed: ${syncFailure.message}`
+        : "file reload could not be parsed",
+    );
+    const newDoc = ensureBlockIds(
+      clear
+        ? parsedDoc
+        : retainUnchangedBlockIds(this.pmView.state.doc, parsedDoc),
+    );
+    this.captureSourceState(body, newDoc);
 
     // Pre-stage the entrance animation BEFORE the PM dispatch so
     // the first paint already has the first 15 children at the
@@ -2344,21 +3504,37 @@ export class ButterEditorView extends TextFileView {
 
     this.suppressChange = true;
     try {
-      const tr = this.pmView.state.tr.replaceWith(
-        0,
-        this.pmView.state.doc.content.size,
-        newDoc.content,
-      );
-      tr.setMeta("addToHistory", false);
-      // Trusted-sync marker - raw-block safety plugin allows this
-      // transaction through even if it removes a raw_block, because
-      // setViewData's newDoc came from a fresh parse of the latest
-      // file bytes (either parse succeeded and the raw_block's
-      // replacement is the correct post-fix content, or parse failed
-      // again and newDoc contains a new raw_block that still
-      // protects the updated source).
-      tr.setMeta(RAW_BLOCK_SYNC_META, true);
-      this.pmView.dispatch(tr);
+      if (clear) {
+        // A different file must not inherit history, plugin state, source
+        // identity, or selection from the prior file even when the bytes are
+        // coincidentally identical.
+        this.pmView.updateState(EditorState.create({
+          doc: newDoc,
+          schema,
+          plugins: this.pmView.state.plugins,
+        }));
+      } else {
+        const previousDoc = this.pmView.state.doc;
+        const previousSelection = this.pmView.state.selection;
+        const storedMarks = this.pmView.state.storedMarks;
+        const tr = this.pmView.state.tr.replaceWith(
+          0,
+          previousDoc.content.size,
+          newDoc.content,
+        );
+        tr.setSelection(selectionThroughRetainedBlocks(
+          previousDoc,
+          tr.doc,
+          previousSelection,
+          tr.mapping,
+        ));
+        if (storedMarks !== null) tr.setStoredMarks(storedMarks);
+        tr.setMeta("addToHistory", false);
+        // Trusted-sync marker - raw-block safety plugin allows this
+        // transaction through because newDoc came from fresh file bytes.
+        tr.setMeta(RAW_BLOCK_SYNC_META, true);
+        this.pmView.dispatch(tr);
+      }
     } catch {
       // Replace failed (e.g. schema mismatch). Fall back to hard reset.
       this.pmView.updateState(
@@ -2413,6 +3589,17 @@ export class ButterEditorView extends TextFileView {
 
   private applyEphemeralState(state: unknown) {
     if (!this.pmView || !state) return;
+    const viewportAnchor = (state as Record<string, unknown>)[
+      BUTTER_VIEWPORT_STATE_KEY
+    ];
+    if (isButterViewportAnchor(viewportAnchor)) {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          this.restoreViewportAnchor(viewportAnchor);
+        });
+      });
+      return;
+    }
     const lineRaw = (state as { line?: unknown }).line;
     const line = typeof lineRaw === "number" ? lineRaw : undefined;
     if (line == null) return;
@@ -2464,6 +3651,9 @@ export class ButterEditorView extends TextFileView {
   clear() {
     this.data = "";
     this.frontmatter = "";
+    this.pendingPropertyDraft = false;
+    this.pendingPropertyKeyFocus = null;
+    this.pendingPropertyValueFocus = null;
     if (this.propertiesComponent) {
       this.propertiesComponent.unload();
       this.propertiesComponent = null;
@@ -2474,7 +3664,9 @@ export class ButterEditorView extends TextFileView {
     }
     if (this.pmView) {
       this.suppressChange = true;
-      const doc = schema.node("doc", null, [schema.node("paragraph")]);
+      const doc = ensureBlockIds(
+        schema.node("doc", null, [schema.node("paragraph")]),
+      );
       this.pmView.updateState(
         EditorState.create({
           doc,

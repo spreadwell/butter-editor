@@ -32,9 +32,8 @@
  */
 import type { Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import type { Node as PMNode, Schema } from "prosemirror-model";
-import { Fragment } from "prosemirror-model";
-import { App, Menu, setIcon } from "obsidian";
+import { Fragment, type Node as PMNode, type Schema } from "prosemirror-model";
+import { App, Menu, Notice, setIcon } from "obsidian";
 import {
   COMMON_LANGS,
   showLangPopover,
@@ -42,10 +41,12 @@ import {
   calloutIcon,
 } from "./nodeviews";
 import { MathEditModal } from "./math-edit-modal";
-import { MobileAtomEditModal } from "./mobile-atom-sheet";
-import { SPECS as ATOM_SPECS } from "./inline-atom-specs";
+import { dispatchImageContextMenu } from "./image-edit-button";
 import { clearSourceRange } from "../core/source-range";
 import { tx, txKnown, type MessageKey } from "../i18n";
+import { markTurnIntoMotion } from "./block-animator";
+import { attachMenuSurfaceMotion } from "../ui/surface-motion";
+export { MERGE_MENU_ITEMS, type MergeMenuItem } from "./block-merge";
 
 // ── Spec types ─────────────────────────────────────────────────
 
@@ -58,7 +59,12 @@ export interface BlockSubItem {
    *  block. Multi-block computes "checked" as `every(sub.isCurrent)`. */
   isCurrent?: boolean;
   applyTr?: (tr: Transaction, pos: number, node: PMNode) => void;
-  sideEffect?: (view: EditorView, pos: number, node: PMNode) => void;
+  sideEffect?: (
+    view: EditorView,
+    pos: number,
+    node: PMNode,
+    activation?: MouseEvent | KeyboardEvent,
+  ) => void;
 }
 
 export interface BlockMenuItem {
@@ -72,7 +78,12 @@ export interface BlockMenuItem {
    *  one block's TeX source). */
   singleOnly?: boolean;
   applyTr?: (tr: Transaction, pos: number, node: PMNode) => void;
-  sideEffect?: (view: EditorView, pos: number, node: PMNode) => void;
+  sideEffect?: (
+    view: EditorView,
+    pos: number,
+    node: PMNode,
+    activation?: MouseEvent | KeyboardEvent,
+  ) => void;
   /** Submenu groups, separated visually by a divider in the rendered
    *  menu. Mutually exclusive with `applyTr` / `sideEffect`. */
   submenu?: BlockSubItem[][];
@@ -246,6 +257,23 @@ export function buildConvertedNode(
   targetId: string,
 ): PMNode | PMNode[] | null {
   const tgt = TURN_INTO_ITEMS.find((t) => t.id === targetId);
+  // A quote/callout is a block container, not one text run. Converting the
+  // wrapper to Paragraph must therefore convert each child independently.
+  // `source.textContent` deliberately has no separator between block
+  // children, so flattening the wrapper would join `first` + `second` into
+  // one paragraph and silently erase their block boundary.
+  if (
+    targetId === "paragraph"
+    && (source.type.name === "blockquote" || source.type.name === "obsidian_callout")
+  ) {
+    const parts: PMNode[] = [];
+    source.forEach((child) => {
+      const converted = buildConvertedNode(schema, child, "paragraph");
+      if (Array.isArray(converted)) parts.push(...converted);
+      else if (converted) parts.push(converted);
+    });
+    if (parts.length > 0) return parts;
+  }
   // Some atom-block source types store their primary text in an attr
   // (math_block.value, block_comment.value) rather than as text
   // children. `source.textContent` returns "" for those, so without
@@ -258,9 +286,25 @@ export function buildConvertedNode(
     return "";
   })();
   const text = attrText || source.textContent;
-  const preservesInline =
-    source.type.name === "paragraph" || source.type.name === "heading";
-  const inline = preservesInline ? source.content : null;
+  // Preserve the actual inline tree whenever the source is a textblock or a
+  // simple one-textblock container. Flattening a list item to textContent
+  // discards links, code, marks and inline atoms; it also turns literal text
+  // such as `&nbsp;` into active HTML-entity syntax on the next parse.
+  const inline = (() => {
+    if (source.type.name === "paragraph" || source.type.name === "heading") {
+      return source.content;
+    }
+    if (
+      (source.type.name === "list_item" ||
+        source.type.name === "blockquote" ||
+        source.type.name === "obsidian_callout") &&
+      source.childCount === 1 &&
+      source.firstChild?.isTextblock
+    ) {
+      return source.firstChild.content;
+    }
+    return null;
+  })();
   // Multi-line text sources (code_block, math_block, block_comment)
   // need their embedded newlines turned into explicit `softbreak`
   // nodes inside the synthesized textblock. A single `text("a\nb")`
@@ -421,12 +465,17 @@ export function buildConvertedNode(
             ? "task"
             : "bullet";
       if (source.type.name === "list_item") {
-        const checkedRaw = (source.attrs as { checked?: unknown }).checked;
+        const sourceAttrs = source.attrs as unknown as {
+          checked?: unknown;
+          start?: number | null;
+        };
+        const checkedRaw = sourceAttrs.checked;
         return schema.nodes.list_item.create(
           clearSourceRange({
             ...source.attrs,
             kind,
             checked: kind === "task" ? (typeof checkedRaw === "boolean" ? checkedRaw : false) : null,
+            start: kind === "ordered" ? sourceAttrs.start : null,
           }),
           source.content,
         );
@@ -491,7 +540,24 @@ function applyTurnIntoTr(
   if (currentTurnIntoId(node) === targetId) return;
   const replacement = buildConvertedNode(schema, node, targetId);
   if (!replacement) return;
-  const arr = Array.isArray(replacement) ? replacement : [replacement];
+  const arr = Array.isArray(replacement) ? [...replacement] : [replacement];
+  const sourceBlockId = (node.attrs as { blockId?: unknown }).blockId;
+  if (typeof sourceBlockId === "string" && sourceBlockId.length > 0) {
+    // The identity is session-only and never serialized. Carry it onto the
+    // first replacement so the real pre/post DOM boxes have an exact key;
+    // any additional split nodes receive fresh IDs from the stamper.
+    const first = arr[0];
+    arr[0] = first.type.create(
+      { ...first.attrs, blockId: sourceBlockId },
+      first.content,
+      first.marks,
+    );
+    markTurnIntoMotion(tr, {
+      blockId: sourceBlockId,
+      targetId,
+      replacementCount: arr.length,
+    });
+  }
   tr.replaceWith(pos, pos + node.nodeSize, arr);
 }
 
@@ -669,6 +735,7 @@ export function buildSingleBlockMenuItems(
 
     case "obsidian_callout": {
       const currentType = (node.attrs.calloutType as string) || "note";
+      const currentFoldState = (node.attrs.foldState as string) || "";
       const subGroups: BlockSubItem[][] = CALLOUT_TYPE_GROUPS.map((group) =>
         group.map((t) => ({
           id: `callout-${t}`,
@@ -689,6 +756,49 @@ export function buildSingleBlockMenuItems(
         icon: calloutIcon(currentType),
         submenu: subGroups,
         submenuClass: "butter-callout-type-submenu",
+      });
+      items.push({
+        id: "callout-default-fold",
+        title: "Default fold state",
+        icon: currentFoldState === "-" ? "chevron-right" : "chevron-down",
+        submenu: [[
+          {
+            id: "callout-default-open",
+            title: "Open",
+            icon: "chevron-down",
+            isCurrent: currentFoldState === "+",
+            applyTr: (tr, p, n) => {
+              tr.setNodeMarkup(p, undefined, {
+                ...clearSourceRange(n.attrs),
+                foldState: "+",
+              });
+            },
+          },
+          {
+            id: "callout-default-closed",
+            title: "Closed",
+            icon: "chevron-right",
+            isCurrent: currentFoldState === "-",
+            applyTr: (tr, p, n) => {
+              tr.setNodeMarkup(p, undefined, {
+                ...clearSourceRange(n.attrs),
+                foldState: "-",
+              });
+            },
+          },
+          {
+            id: "callout-default-none",
+            title: "None",
+            icon: "minus",
+            isCurrent: currentFoldState === "",
+            applyTr: (tr, p, n) => {
+              tr.setNodeMarkup(p, undefined, {
+                ...clearSourceRange(n.attrs),
+                foldState: "",
+              });
+            },
+          },
+        ]],
       });
       break;
     }
@@ -721,36 +831,18 @@ export function buildSingleBlockMenuItems(
     }
 
     case "obsidian_embed": {
-      // Open the same field-based edit modal we use for inline atoms
-      // (src + width + height). The drag-handle context menu otherwise
-      // had no edit affordance for embeds — only inline right-click
-      // / mobile tap did. Lifts the affordance to parity with code
-      // blocks' "Edit source" and math blocks' "Edit source".
-      const spec = ATOM_SPECS.obsidian_embed;
-      if (spec && spec.fields) {
-        items.push({
-          id: "embed-edit-source",
-          title: "Edit source",
-          icon: "pencil",
-          singleOnly: true,
-          sideEffect: (v, p, n) => {
-            new MobileAtomEditModal({
-              app,
-              editorView: v,
-              pos: p,
-              node: n,
-              spec,
-              anchor: (v.nodeDOM(p) as HTMLElement) ?? v.dom,
-              chrome: {
-                icon: "image",
-                title: "Embed",
-                sub: (n.attrs.src as string) || "",
-              },
-              actions: [],
-            }).open();
-          },
-        });
-      }
+      // Open the same rich menu as a right-click on the rendered image.
+      // Source, size, and layout actions therefore share one edit surface.
+      items.push({
+        id: "embed-edit-source",
+        title: "Edit source",
+        icon: "pencil",
+        singleOnly: true,
+        sideEffect: (v, p, _node, activation) => {
+          const anchor = (v.nodeDOM(p) as HTMLElement) ?? v.dom;
+          dispatchImageContextMenu(anchor, activation);
+        },
+      });
       break;
     }
 
@@ -773,6 +865,74 @@ export function buildSingleBlockMenuItems(
     }
   }
 
+  return items;
+}
+
+/** Universal whole-block lifecycle actions shared by every block-action
+ * surface. Text-selection clipboard actions intentionally live elsewhere. */
+export function buildBlockLifecycleMenuItems(
+  serializeNode?: (node: PMNode) => string,
+): BlockMenuItem[] {
+  const writeBlock = (view: EditorView, node: PMNode): Promise<boolean> => {
+    if (!serializeNode) return Promise.resolve(false);
+    const markdown = serializeNode(node).replace(/\n+$/, "");
+    const clipboard = view.dom.ownerDocument.defaultView?.navigator.clipboard;
+    if (!clipboard) {
+      new Notice(tx("Clipboard write failed"));
+      return Promise.resolve(false);
+    }
+    return clipboard.writeText(markdown).then(
+      () => true,
+      () => {
+        new Notice(tx("Clipboard write failed"));
+        return false;
+      },
+    );
+  };
+
+  const items: BlockMenuItem[] = [];
+  if (serializeNode) items.push(
+    {
+      id: "block-copy",
+      title: "Copy",
+      icon: "copy",
+      sideEffect: (view, _pos, node) => {
+        void writeBlock(view, node).then((copied) => {
+          if (copied) new Notice(tx("Copied block"));
+        });
+      },
+    },
+    {
+      id: "block-cut",
+      title: "Cut",
+      icon: "scissors",
+      sideEffect: (view, pos, node) => {
+        void writeBlock(view, node).then((copied) => {
+          if (!copied || view.state.doc.nodeAt(pos) !== node) return;
+          view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize));
+          view.focus();
+        });
+      },
+    },
+  );
+  items.push(
+    {
+      id: "block-duplicate",
+      title: "Duplicate",
+      icon: "copy-plus",
+      applyTr: (tr, pos, node) => {
+        const clone = node.type.create(node.attrs, node.content, node.marks);
+        tr.insert(pos + node.nodeSize, clone);
+      },
+    },
+    {
+      id: "block-delete",
+      title: "Delete",
+      icon: "trash-2",
+      warning: true,
+      applyTr: (tr, pos, node) => tr.delete(pos, pos + node.nodeSize),
+    },
+  );
   return items;
 }
 
@@ -832,6 +992,7 @@ export function applyBlockContextMenuChrome(
   const dom = (menu as { dom?: HTMLElement }).dom;
   if (!dom) return;
   dom.classList.add("butter-block-context-menu");
+  attachMenuSurfaceMotion(menu, "menu");
   dom.insertBefore(buildBlockContextMenuHeaderEl(chrome), dom.firstChild);
 }
 
@@ -907,7 +1068,10 @@ export function blockMenuHeaderIcon(node: PMNode): string {
 export function renderBlockMenuItems(
   menu: Menu,
   items: BlockMenuItem[],
-  runItem: (item: BlockMenuItem | BlockSubItem) => void,
+  runItem: (
+    item: BlockMenuItem | BlockSubItem,
+    activation: MouseEvent | KeyboardEvent,
+  ) => void,
 ): void {
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -920,21 +1084,9 @@ export function renderBlockMenuItems(
       }
       if (item.submenu) {
         const sub = mi.setSubmenu();
-        sub.setUseNativeMenu(false);
-        if (item.submenuClass) sub.dom?.classList.add(item.submenuClass);
-        item.submenu.forEach((group, gi) => {
-          if (gi > 0) sub.addSeparator();
-          for (const subItem of group) {
-            sub.addItem((si) => {
-              si.setTitle(txKnown(subItem.title));
-              if (subItem.icon) si.setIcon(subItem.icon);
-              if (subItem.isCurrent) si.setChecked(true);
-              si.onClick(() => runItem(subItem));
-            });
-          }
-        });
+        renderBlockMenuSubItems(sub, item, runItem);
       } else {
-        mi.onClick(() => runItem(item));
+        mi.onClick((activation) => runItem(item, activation));
       }
     });
     // Visual split between Turn-into and per-type-specific items
@@ -945,107 +1097,46 @@ export function renderBlockMenuItems(
   }
 }
 
-// ── Merge items (multi-block only) ─────────────────────────────
-//
-// Merges collapse N selected blocks into ONE new block - fundamentally
-// different shape from broadcast items, so they live in their own
-// catalog rather than being squeezed into `BlockMenuItem`. Each item
-// has an eligibility predicate (`appliesTo`) over the resolved node
-// list and a `run` that mutates the doc directly. The multi-block
-// menu iterates `MERGE_MENU_ITEMS`, includes any whose predicate
-// passes, and renders them inline. After `run` completes the multi-
-// block selection is always cleared (positions are stale post-merge),
-// so the runner doesn't have to know about that state machine.
-
-export interface MergeMenuItem {
-  id: string;
-  title: MessageKey;
-  icon: string;
-  /** Selection always has ≥2 nodes by the time this is asked. */
-  appliesTo: (nodes: PMNode[]) => boolean;
-  /** Mutate the doc + focus. Does NOT touch multi-block selection
-   *  state - the menu shell handles that. */
-  run: (view: EditorView, nodes: { pos: number; node: PMNode }[]) => void;
-}
-
-// "Combine into paragraph" eligibility: source has a primary
-// inline-content carrier we can extract. Paragraphs and headings carry
-// inline content directly; flat-schema list_items carry it on their
-// first paragraph child. Other block types (callouts, code, math,
-// tables, embeds, dividers, raw) would lose structure on inline
-// flatten, so the item is hidden when any selected block isn't
-// inline-like.
-function isInlineCarrier(node: PMNode): boolean {
-  if (node.type.name === "paragraph" || node.type.name === "heading") {
-    return true;
-  }
-  if (node.type.name === "list_item") {
-    return node.firstChild?.type.name === "paragraph";
-  }
-  return false;
-}
-
-// Pulls the inline Fragment that represents the block's primary
-// content. Mirrors `isInlineCarrier` - caller must have already
-// confirmed eligibility.
-function inlineContentOf(node: PMNode): Fragment {
-  if (node.type.name === "list_item") {
-    return node.firstChild!.content;
-  }
-  return node.content;
-}
-
-// Merges N inline-bearing blocks into a single paragraph whose content
-// is each source's inline Fragment, joined by softbreak nodes between
-// blocks. Replaces the entire selected range in one transaction so
-// undo treats the combine as atomic. Non-contiguous (Cmd+click-built)
-// selections fall back to reverse-delete-then-insert at the FIRST
-// source's position so the merged paragraph lands where the user's
-// eye expects it.
-function combineIntoParagraph(
-  view: EditorView,
-  nodes: { pos: number; node: PMNode }[],
+/** Render lifecycle actions with destructive rows visually separated. */
+export function renderBlockLifecycleMenuItems(
+  menu: Menu,
+  items: BlockMenuItem[],
+  runItem: (
+    item: BlockMenuItem | BlockSubItem,
+    activation: MouseEvent | KeyboardEvent,
+  ) => void,
 ): void {
-  const schema = view.state.schema;
-  const softbreakType = schema.nodes.softbreak;
-  if (!softbreakType) return;
-  const parts: PMNode[] = [];
-  nodes.forEach(({ node }, i) => {
-    if (i > 0) parts.push(softbreakType.create());
-    inlineContentOf(node).forEach((c) => parts.push(c));
-  });
-  const merged = schema.nodes.paragraph.create(null, Fragment.fromArray(parts));
-
-  const first = nodes[0];
-  const last = nodes[nodes.length - 1];
-  const start = first.pos;
-  const end = last.pos + last.node.nodeSize;
-  const totalSize = nodes.reduce((s, { node }) => s + node.nodeSize, 0);
-  const isContiguous = totalSize === end - start;
-
-  const tr = view.state.tr;
-  if (isContiguous) {
-    tr.replaceWith(start, end, merged);
-  } else {
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      const { pos, node } = nodes[i];
-      tr.delete(pos, pos + node.nodeSize);
-    }
-    tr.insert(first.pos, merged);
-  }
-  view.dispatch(tr);
-  view.focus();
+  const ordinary = items.filter((item) => !item.warning);
+  const destructive = items.filter((item) => item.warning);
+  if (ordinary.length > 0) renderBlockMenuItems(menu, ordinary, runItem);
+  if (ordinary.length > 0 && destructive.length > 0) menu.addSeparator();
+  if (destructive.length > 0) renderBlockMenuItems(menu, destructive, runItem);
 }
 
-export const MERGE_MENU_ITEMS: MergeMenuItem[] = [
-  {
-    id: "combine-into-paragraph",
-    title: "Combine into paragraph",
-    icon: "merge",
-    appliesTo: (nodes) => nodes.every(isInlineCarrier),
-    run: combineIntoParagraph,
-  },
-];
+/** Render one canonical block submenu without adding its parent row. */
+export function renderBlockMenuSubItems(
+  menu: Menu,
+  item: BlockMenuItem,
+  runItem: (
+    item: BlockSubItem,
+    activation: MouseEvent | KeyboardEvent,
+  ) => void,
+): void {
+  menu.setUseNativeMenu(false);
+  attachMenuSurfaceMotion(menu, "submenu");
+  if (item.submenuClass) menu.dom?.classList.add(item.submenuClass);
+  (item.submenu ?? []).forEach((group, groupIndex) => {
+    if (groupIndex > 0) menu.addSeparator();
+    for (const subItem of group) {
+      menu.addItem((menuItem) => {
+        menuItem.setTitle(txKnown(subItem.title));
+        if (subItem.icon) menuItem.setIcon(subItem.icon);
+        if (subItem.isCurrent) menuItem.setChecked(true);
+        menuItem.onClick((activation) => runItem(subItem, activation));
+      });
+    }
+  });
+}
 
 // ── Multi-block intersection ───────────────────────────────────
 

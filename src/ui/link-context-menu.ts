@@ -28,11 +28,13 @@
 
 import { App, setIcon } from "obsidian";
 import { applyVaultFilesSuggest } from "./vault-files-suggest";
+import type { VaultFileSuggestionScope } from "./vault-file-scope";
 import {
   buildBlockContextMenuHeaderEl,
   type BlockMenuChrome,
 } from "../editor/block-menu-spec";
 import { txKnown } from "../i18n";
+import { attachSurfaceMotion, dismissSurfaceWithMotion } from "./surface-motion";
 
 export interface RichMenuField {
   /** Stable id used by callers to read the value. */
@@ -46,19 +48,26 @@ export interface RichMenuField {
   /** When set, attach the vault-files suggester (Obsidian native
    *  AbstractInputSuggest popup with fuzzy match + folder paths). */
   autocomplete?: "vault-files";
+  /** Narrow a vault-file field to the type it can actually consume. */
+  suggestScope?: VaultFileSuggestionScope;
   /** Predicate paired with `autocomplete: "vault-files"`. When it
    *  returns true for the current raw input value, the dropdown is
    *  suppressed - used by the toolbar's Add Link field, which serves
    *  dual-purpose (URL or note name) and shouldn't suggest notes when
    *  the user is typing a URL. */
   suggestSkipWhen?: (raw: string) => boolean;
+  /** Open vault suggestions even before the user types. */
+  suggestOnEmpty?: boolean;
   /** Optional handler invoked when a vault-files suggestion is
    *  picked. Defaults to writing the file's basename into THIS
    *  input. Override when the pick should also fill OTHER fields
    *  (e.g. wikilink: pick "MyNote.md" → write basename to target,
    *  leave alias untouched). The handler receives the input element
    *  ref so it can `setValue(...)` if the default isn't right. */
-  onSuggestSelect?: (file: { basename: string; path: string }) => void;
+  onSuggestSelect?: (
+    file: { basename: string; path: string },
+    input: HTMLInputElement,
+  ) => void;
 }
 
 export interface RichMenuAction {
@@ -74,7 +83,26 @@ export interface RichMenuAction {
    *  e.g. clicking "Open in new tab" can navigate to the user's
    *  edited target rather than the original). Defaults to true. */
   receivesValues?: boolean;
-  onClick: (values: Record<string, string>) => void;
+  /** Limit this row to selected rich-menu modes. */
+  modes?: string[];
+  /** Keep context-specific actions out of the menu until they apply. */
+  visibleWhen?: (values: Readonly<Record<string, string>>) => boolean;
+  /** Return false to reject the action and keep the editor open. */
+  onClick: (
+    values: Record<string, string>,
+  ) => void | boolean | Promise<void | boolean>;
+}
+
+export interface RichMenuModeSwitch {
+  value: string;
+  options: Array<{ value: string; label: string; icon: string }>;
+  onChange?: (
+    value: string,
+    inputs: Readonly<Record<string, HTMLInputElement>>,
+    source: "user" | "inferred",
+  ) => void;
+  /** Infer a more suitable mode while the user types, unless the caller has locked a deliberate choice. */
+  inferValue?: (values: Readonly<Record<string, string>>) => string | null;
 }
 
 export interface RichMenuOptions {
@@ -88,11 +116,14 @@ export interface RichMenuOptions {
    *  the anchor element's bounding box. */
   event?: MouseEvent;
   chrome: BlockMenuChrome;
+  /** Optional segmented mode switch rendered above the fields. */
+  modeSwitch?: RichMenuModeSwitch;
   fields?: RichMenuField[];
   actions: RichMenuAction[];
   /** Run when the user commits via Enter. Receives the current input
    *  values keyed by field id. */
-  onCommit?: (values: Record<string, string>) => void;
+  /** Return false to reject the values and leave the editor open. */
+  onCommit?: (values: Record<string, string>) => void | boolean;
   /** Run when the user dismisses without committing (Esc, click
    *  outside). */
   onCancel?: () => void;
@@ -102,6 +133,8 @@ export interface RichMenuOptions {
    *  menus on existing items - the user expected to navigate the
    *  menu's actions, not start typing into a field. */
   autoFocusFirstField?: boolean;
+  /** Additional class for a specialized rich-menu surface. */
+  className?: string;
 }
 
 export interface RichMenuHandle {
@@ -121,6 +154,8 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
     (activeDocument.body) ?? (activeDocument.documentElement);
   const dom = activeWindow.createDiv();
   dom.className = "menu butter-block-context-menu butter-rich-menu";
+  attachSurfaceMotion(dom, "popover");
+  if (opts.className) dom.addClass(opts.className);
   dom.setAttribute("role", "dialog");
   dom.addClass("butter-pos-fixed");
 
@@ -137,6 +172,79 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
 
   // Fields
   const inputEls: Record<string, HTMLInputElement> = {};
+  const actionEls: Array<{ el: HTMLElement; action: RichMenuAction }> = [];
+  const getValues = (): Record<string, string> => {
+    const values: Record<string, string> = {};
+    for (const id of Object.keys(inputEls)) values[id] = inputEls[id].value;
+    return values;
+  };
+  const refreshActionVisibility = () => {
+    const values = getValues();
+    for (const { el, action } of actionEls) {
+      const modeVisible = !action.modes
+        || action.modes.includes(opts.modeSwitch?.value ?? "");
+      const contextVisible = !action.visibleWhen || action.visibleWhen(values);
+      el.classList.toggle("butter-hidden", !modeVisible || !contextVisible);
+    }
+  };
+  let selectMode: ((
+    value: string,
+    announce?: boolean,
+    source?: "user" | "inferred",
+  ) => void) | undefined;
+  if (opts.modeSwitch) {
+    const switchEl = activeWindow.createDiv({
+      cls: "butter-rich-menu-mode-switch butter-toolbar-platform-switcher butter-link-mode-switch",
+    });
+    switchEl.setAttribute("role", "tablist");
+    switchEl.createDiv({
+      cls: "butter-toolbar-platform-switcher__indicator",
+      attr: { "aria-hidden": "true" },
+    });
+    const buttons = new Map<string, HTMLButtonElement>();
+    selectMode = (
+      value: string,
+      announce = true,
+      source: "user" | "inferred" = "user",
+    ) => {
+      opts.modeSwitch!.value = value;
+      switchEl.dataset.mode = value;
+      switchEl.dataset.segment = value === opts.modeSwitch!.options[0]?.value
+        ? "desktop"
+        : "mobile";
+      for (const [candidate, button] of buttons) {
+        const selected = candidate === value;
+        button.classList.toggle("is-active", selected);
+        button.setAttribute("aria-selected", selected ? "true" : "false");
+        button.tabIndex = selected ? 0 : -1;
+      }
+      if (announce) opts.modeSwitch?.onChange?.(value, inputEls, source);
+      refreshActionVisibility();
+    };
+    for (const option of opts.modeSwitch.options) {
+      const button = activeWindow.createEl("button", {
+        cls: "butter-rich-menu-mode-button butter-toolbar-platform-switcher__btn",
+        attr: { type: "button", role: "tab", "aria-label": txKnown(option.label) },
+      });
+      const icon = button.createSpan({
+        cls: "butter-rich-menu-mode-icon butter-toolbar-platform-switcher__icon",
+      });
+      setIcon(icon, option.icon);
+      button.createSpan({
+        cls: "butter-toolbar-platform-switcher__label",
+        text: txKnown(option.label),
+      });
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        selectMode?.(option.value, true, "user");
+        inputEls.target?.focus();
+      });
+      buttons.set(option.value, button);
+      switchEl.appendChild(button);
+    }
+    body.appendChild(switchEl);
+    selectMode(opts.modeSwitch.value, false);
+  }
   if (opts.fields && opts.fields.length > 0) {
     const fieldsRoot = activeWindow.createDiv();
     fieldsRoot.className = "butter-rich-menu-fields";
@@ -164,16 +272,26 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
       input.className = "butter-inline-atom-edit-input butter-rich-menu-input";
       input.spellcheck = false;
       input.value = field.initial ?? "";
+      input.addEventListener("input", () => {
+        const inferred = opts.modeSwitch?.inferValue?.(getValues());
+        if (inferred && inferred !== opts.modeSwitch?.value) {
+          selectMode?.(inferred, true, "inferred");
+        } else {
+          refreshActionVisibility();
+        }
+      });
     if (field.placeholder) input.placeholder = txKnown(field.placeholder);
       if (field.autocomplete === "vault-files") {
         applyVaultFilesSuggest(opts.app, input, {
+          scope: field.suggestScope,
           skipWhen: field.suggestSkipWhen,
+          showOnEmpty: field.suggestOnEmpty,
           onSelect: (file) => {
             if (field.onSuggestSelect) {
               field.onSuggestSelect({
                 basename: file.basename,
                 path: file.path,
-              });
+              }, input);
             } else {
               input.value = file.basename;
               // Fire 'input' so dependent fields (placeholders that
@@ -190,20 +308,25 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
     body.appendChild(fieldsRoot);
   }
 
-  const getValues = (): Record<string, string> => {
-    const v: Record<string, string> = {};
-    for (const id of Object.keys(inputEls)) v[id] = inputEls[id].value;
-    return v;
+  const flashInvalid = () => {
+    for (const input of Object.values(inputEls)) {
+      input.addClass("butter-inline-atom-edit-input-error");
+      window.setTimeout(
+        () => input.removeClass("butter-inline-atom-edit-input-error"),
+        400,
+      );
+    }
   };
 
   let closed = false;
-  const close = () => {
+  const close = (immediate = false) => {
     if (closed) return;
     closed = true;
     activeDocument.removeEventListener("mousedown", onDown, true);
     window.removeEventListener("resize", reposition);
-    window.removeEventListener("scroll", reposition, true);
-    dom.remove();
+    window.removeEventListener("scroll", onScroll, true);
+    if (immediate) dom.remove();
+    else dismissSurfaceWithMotion(dom, () => dom.remove());
   };
 
   // Action rows
@@ -228,6 +351,7 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
     actionEl.setAttribute("role", "menuitem");
     actionEl.setAttribute("tabindex", "0");
     actionEl.setAttribute("aria-label", txKnown(action.label));
+    actionEls.push({ el: actionEl, action });
     const iconEl = activeWindow.createDiv();
     iconEl.className = "menu-item-icon";
     setIcon(iconEl, action.icon);
@@ -244,13 +368,20 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
     });
     actionEl.addEventListener("click", (e) => {
       e.preventDefault();
-      const recv = action.receivesValues ?? true;
-      action.onClick(recv ? getValues() : {});
-      close();
+      void (async () => {
+        const recv = action.receivesValues ?? true;
+        const accepted = await action.onClick(recv ? getValues() : {});
+        if (accepted === false) {
+          flashInvalid();
+          return;
+        }
+        close();
+      })();
     });
     body.appendChild(actionEl);
     lastSepEmitted = false;
   }
+  refreshActionVisibility();
 
   parent.appendChild(dom);
 
@@ -269,7 +400,22 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
   };
   reposition();
   window.addEventListener("resize", reposition);
-  window.addEventListener("scroll", reposition, true);
+  const onScroll = (event: Event) => {
+    const target = event.target as Node | null;
+    const ownerWindow = activeDocument.defaultView;
+    if (
+      ownerWindow
+      && target?.instanceOf(ownerWindow.Node)
+      && (
+        dom.contains(target)
+        || (target.instanceOf(ownerWindow.Element)
+          && Boolean(target.closest(".butter-suggest-host-vault")))
+      )
+    ) return;
+    if (opts.onCancel) opts.onCancel();
+    close(true);
+  };
+  window.addEventListener("scroll", onScroll, true);
 
   // Focus the first input on the next tick so the popover's own
   // mounting doesn't fight the focus. Skipped for right-click
@@ -282,6 +428,9 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
         const inp = inputEls[firstField.id];
         inp.focus();
         inp.select();
+        if (firstField.autocomplete === "vault-files" && firstField.suggestOnEmpty) {
+          inp.dispatchEvent(new Event("input", { bubbles: true }));
+        }
       }
     }, 0);
   }
@@ -303,7 +452,11 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
       if (e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
-        if (opts.onCommit) opts.onCommit(getValues());
+        const accepted = opts.onCommit?.(getValues());
+        if (accepted === false) {
+          flashInvalid();
+          return;
+        }
         close();
       } else if (e.key === "Escape") {
         e.preventDefault();

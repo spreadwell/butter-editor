@@ -31,9 +31,11 @@
 import { Plugin } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import type { MarkType, Node as PMNode } from "prosemirror-model";
-import { App, Modal, Platform } from "obsidian";
+import { App, Platform } from "obsidian";
 import { SPECS, type AtomSpec, type AtomField } from "./inline-atom-specs";
 import { openRichContextMenu } from "../ui/link-context-menu";
+import { imageLayoutActions } from "./image-placement";
+import { suggestionScopeForEmbedSource } from "../ui/vault-file-scope";
 import {
   openMobileActionDrawer,
   openMobileAtomDrawer,
@@ -42,6 +44,11 @@ import {
 
 import { sanitizeHref } from "../util/safe-url";
 import { tx, txKnown } from "../i18n";
+import {
+  externalContextAtPoint,
+  openUnifiedLinkEditor,
+  wikilinkContext,
+} from "../ui/link-editor";
 
 /** Class selector matching every editable atom's root DOM. Used by
  *  the DOM-event handler to quickly reject clicks outside editable
@@ -110,7 +117,7 @@ function atomHeaderSub(node: PMNode, spec: AtomSpec): string {
       return `#${node.attrs.tag as string}`;
     case "obsidian_embed":
     case "obsidian_embed_inline":
-      return (node.attrs.target as string) || "";
+      return (node.attrs.src as string) || "";
     case "footnote_ref":
       return `^${node.attrs.label as string}`;
     case "inline_math":
@@ -120,131 +127,6 @@ function atomHeaderSub(node: PMNode, spec: AtomSpec): string {
     default:
       return truncateForHeader(spec.toSource(node));
   }
-}
-
-/** Right-click on a wikilink → unified rich popover. Header (link
- *  icon + "Wikilink" + target preview) + inline Note / Name inputs
- *  (mirrors the spec.fields the floating edit panel used to surface)
- *  + the nav action rows that used to sit in the Obsidian Menu. No
- *  separate "Edit wikilink" submenu - editing is the menu now. */
-function openWikilinkContextMenu(
-  app: App,
-  editorView: EditorView,
-  pos: number,
-  node: PMNode,
-  event: MouseEvent | TouchEvent,
-  anchor: HTMLElement,
-  primaryAction?: { label: string; icon: string; onClick: (values: Record<string, string>) => void },
-): void {
-  const spec = SPECS.wikilink;
-  if (!spec || !spec.fields || !spec.toFields || !spec.fromFields) return;
-  const initial = spec.toFields(node);
-  const target = (node.attrs.target as string) || "";
-  const alias = (node.attrs.alias as string) || "";
-  const subText = alias ? `${target} · "${alias}"` : target;
-  // Touch events pass a TouchList, not direct clientX/Y. The menu's
-  // positioning helper only reads clientX/Y; pass a normalized
-  // MouseEvent-shaped object derived from the first touch (or
-  // omit and let the menu fall back to the anchor bounding box).
-  const positioningEvent = normalizeEventForMenu(event);
-
-  // Each commit re-resolves the node by position so a stale reference
-  // (after another tr) doesn't blow up. Returns true if the doc was
-  // mutated, so we can avoid spurious dispatches.
-  const commit = (values: Record<string, string>): boolean => {
-    if (
-      values.target === initial.target &&
-      values.alias === initial.alias
-    ) {
-      return false;
-    }
-    const live = editorView.state.doc.nodeAt(pos);
-    if (!live || live.type.name !== "wikilink") return false;
-    const next = spec.fromFields!(values, live);
-    if (!next) return false;
-    const tr = editorView.state.tr.replaceWith(pos, pos + live.nodeSize, next);
-    editorView.dispatch(tr);
-    return true;
-  };
-
-  // Nav actions reuse the LIVE input target - that way "Open in new
-  // tab" with a freshly-edited target name lands at the user's
-  // intended target, not the original.
-  const openIn = (values: Record<string, string>, where: "tab" | "window" | "split") => {
-    commit(values);
-    editorView.focus();
-    const t = (values.target || target).trim();
-    if (!t) return;
-    void app.workspace.openLinkText(t, "", where);
-  };
-
-  openRichContextMenu({
-    app,
-    anchor,
-    event: positioningEvent,
-    autoFocusFirstField: false,
-    chrome: {
-      icon: "link",
-      title: tx("Wikilink"),
-      sub: subText,
-    },
-    fields: spec.fields.map((f: AtomField) => ({
-      id: f.name,
-      label: tx(f.label),
-      icon: f.icon,
-      initial: initial[f.name] || "",
-      placeholder:
-        typeof f.placeholder === "function"
-          ? f.placeholder(initial)
-          : f.placeholder ? txKnown(f.placeholder) : "",
-      autocomplete: f.autocomplete,
-    })),
-    actions: [
-      ...(primaryAction ? [primaryAction] : []),
-      {
-        label: tx("Open in new tab"),
-        icon: "file-plus",
-        onClick: (v) => openIn(v, "tab"),
-      },
-      {
-        label: tx("Open in new window"),
-        icon: "monitor",
-        onClick: (v) => openIn(v, "window"),
-      },
-      {
-        label: tx("Open to the right"),
-        icon: "separator-vertical",
-        onClick: (v) => openIn(v, "split"),
-      },
-      {
-        label: tx("Clear link"),
-        icon: "eraser",
-        warning: true,
-        separatorBefore: true,
-        receivesValues: false,
-        onClick: () => {
-          const live = editorView.state.doc.nodeAt(pos);
-          if (!live || live.type.name !== "wikilink") return;
-          const text =
-            (live.attrs.alias as string) ||
-            (live.attrs.target as string) ||
-            "";
-          if (!text) return;
-          const tr = editorView.state.tr.replaceWith(
-            pos,
-            pos + live.nodeSize,
-            editorView.state.schema.text(text),
-          );
-          editorView.dispatch(tr);
-          editorView.focus();
-        },
-      },
-    ],
-    onCommit: (values) => {
-      commit(values);
-      editorView.focus();
-    },
-  });
 }
 
 /** Generic right-click rich-context menu for any inline atom whose
@@ -269,6 +151,21 @@ function openGenericAtomContextMenu(
   if (!spec.fields || !spec.toFields || !spec.fromFields) return;
   const initial = spec.toFields(node);
   const positioningEvent = normalizeEventForMenu(event);
+  const isEmbed = spec.typeName === "obsidian_embed" ||
+    spec.typeName === "obsidian_embed_inline";
+  const embedScope = isEmbed
+    ? suggestionScopeForEmbedSource(String(node.attrs.src ?? ""))
+    : null;
+  const renderedRect = embedScope === "image"
+    ? anchor.querySelector("img")?.getBoundingClientRect()
+    : undefined;
+  const layoutActions = embedScope === "image"
+      ? imageLayoutActions(
+          editorView,
+          pos,
+          renderedRect ? { width: renderedRect.width, height: renderedRect.height } : undefined,
+        )
+      : [];
 
   const commit = (values: Record<string, string>): boolean => {
     // Cheap unchanged-skip so we don't dispatch a no-op tr.
@@ -292,7 +189,9 @@ function openGenericAtomContextMenu(
     event: positioningEvent,
     autoFocusFirstField: false,
     chrome: {
-      icon: ATOM_ICONS[spec.typeName] || "type",
+      icon: embedScope === "video"
+        ? "video"
+        : embedScope === "image" ? "image" : ATOM_ICONS[spec.typeName] || "type",
       title: tx(spec.label),
       sub: atomHeaderSub(node, spec),
     },
@@ -306,8 +205,30 @@ function openGenericAtomContextMenu(
           ? f.placeholder(initial)
           : f.placeholder ? txKnown(f.placeholder) : "",
       autocomplete: f.autocomplete,
+      suggestScope: isEmbed && f.name === "src" ? embedScope ?? "all" : undefined,
+      onSuggestSelect: isEmbed && f.name === "src"
+        ? (file, input) => {
+            input.value = embedScope === "all"
+              ? file.path.replace(/\.md$/iu, "")
+              : file.path;
+            input.dispatchEvent(new Event("input"));
+          }
+        : undefined,
     })),
-    actions: primaryAction ? [primaryAction] : [],
+    actions: [
+      ...(primaryAction ? [primaryAction] : []),
+      ...layoutActions.map((action) => ({
+        id: `image-layout-${action.id}`,
+        label: action.label,
+        icon: action.icon,
+        separatorBefore: true,
+        receivesValues: false,
+        onClick: () => {
+          action.run();
+          editorView.focus();
+        },
+      })),
+    ],
     onCommit: (values) => {
       commit(values);
       editorView.focus();
@@ -322,8 +243,8 @@ function openGenericAtomContextMenu(
 const ATOM_ICONS: Record<string, string> = {
   wikilink: "link",
   obsidian_tag: "hash",
-  obsidian_embed: "image",
-  obsidian_embed_inline: "image",
+  obsidian_embed: "file",
+  obsidian_embed_inline: "file",
   inline_math: "sigma",
   footnote_ref: "asterisk",
   inline_footnote: "asterisk",
@@ -449,102 +370,6 @@ function commitExternalLinkValues(
   return true;
 }
 
-class MobileExternalLinkEditModal extends Modal {
-  private readonly view: EditorView;
-  private readonly linkType: MarkType;
-  private readonly range: LinkMarkRange;
-  private inputs: Record<string, HTMLInputElement> = {};
-
-  constructor(
-    app: App,
-    view: EditorView,
-    linkType: MarkType,
-    range: LinkMarkRange,
-  ) {
-    super(app);
-    this.view = view;
-    this.linkType = linkType;
-    this.range = range;
-  }
-
-  onOpen(): void {
-    this.titleEl.setText(tx("Edit external link"));
-    const form = this.contentEl.createDiv({ cls: "butter-mobile-edit-form" });
-    this.renderField(form, "url", "URL", this.range.href, "https://...");
-    this.renderField(form, "text", "Display text", this.range.text, this.range.href);
-
-    const btnRow = this.contentEl.createDiv({ cls: "modal-button-container" });
-    const cancelBtn = btnRow.createEl("button", { text: tx("Cancel") });
-    cancelBtn.addEventListener("click", () => this.close());
-    const saveBtn = btnRow.createEl("button", { text: tx("Save"), cls: "mod-cta" });
-    saveBtn.addEventListener("click", () => this.commit());
-
-    window.setTimeout(() => this.inputs.url?.focus(), 0);
-  }
-
-  private renderField(
-    parent: HTMLElement,
-    name: string,
-    label: string,
-    value: string,
-    placeholder: string,
-  ): void {
-    const fieldEl = parent.createDiv({ cls: "butter-mobile-edit-field" });
-    fieldEl.createDiv({ cls: "butter-mobile-edit-field-label", text: txKnown(label) });
-    const input = fieldEl.createEl("input", {
-      cls: "butter-mobile-edit-input",
-      attr: { type: "text", placeholder: txKnown(placeholder) },
-    });
-    input.value = value;
-    input.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") {
-        ev.preventDefault();
-        this.commit();
-      }
-    });
-    this.inputs[name] = input;
-  }
-
-  private commit(): void {
-    const url = (this.inputs.url?.value ?? "").trim();
-    if (!url) {
-      this.flashError();
-      return;
-    }
-    const text = this.inputs.text?.value ?? "";
-    if (url === this.range.href && text === this.range.text) {
-      this.view.focus();
-      this.close();
-      return;
-    }
-    const ok = commitExternalLinkValues(this.view, this.linkType, this.range, {
-      url,
-      text,
-    });
-    if (!ok) {
-      this.flashError();
-      return;
-    }
-    this.view.focus();
-    this.close();
-  }
-
-  private flashError(): void {
-    for (const input of Object.values(this.inputs)) {
-      input.addClass("butter-mobile-edit-input-error");
-      window.setTimeout(
-        () => input.removeClass("butter-mobile-edit-input-error"),
-        400,
-      );
-    }
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
-  }
-}
-
-
 function showExternalLinkMenu(
   app: App,
   view: EditorView,
@@ -609,7 +434,15 @@ function showExternalLinkMenu(
         },
       ],
       editLabel: tx("Edit..."),
-      onEdit: () => new MobileExternalLinkEditModal(app, view, linkType, range).open(),
+      onEditInDrawer: (menu) => openUnifiedLinkEditor({
+        app,
+        view,
+        anchor,
+        mobileMenu: menu,
+        context: { kind: "external", from: range.from },
+        sourcePath: app.workspace.getActiveFile()?.path ?? "",
+        autoFocus: true,
+      }),
     });
     return;
   }
@@ -755,24 +588,53 @@ export function inlineAtomEditPlugin(
           event.preventDefault();
           event.stopPropagation();
           event.stopImmediatePropagation();
-          showExternalLinkMenu(app, editorView, event, linkAnchor, event);
+          const context = externalContextAtPoint(
+            editorView,
+            event.clientX,
+            event.clientY,
+          );
+          if (context) {
+            openUnifiedLinkEditor({
+              app,
+              view: editorView,
+              anchor: linkAnchor,
+              event,
+              context,
+              sourcePath: app.workspace.getActiveFile()?.path ?? "",
+              autoFocus: false,
+            });
+          }
           return;
         }
 
         const atomDOM = target.closest(ATOM_DOM_SELECTOR);
         if (!atomDOM) return;
 
-        const posInfo = editorView.posAtCoords({
-          left: event.clientX,
-          top: event.clientY,
-        });
-        if (!posInfo) return;
+        // Resolve from the atom DOM first. Synthetic context-menu events
+        // launched by another UI (for example a block-menu action) position
+        // the new panel at that UI click, so their client coordinates are
+        // intentionally not over the image. Real right-clicks still retain
+        // the coordinate fallback below.
+        let pos = -1;
+        try {
+          pos = editorView.posAtDOM(atomDOM, 0);
+        } catch { /* detached or foreign DOM */ }
+        let node = pos >= 0 ? editorView.state.doc.nodeAt(pos) : null;
+        if (!node || !(node.type.name in SPECS)) {
+          const posInfo = editorView.posAtCoords({
+            left: event.clientX,
+            top: event.clientY,
+          });
+          if (posInfo) {
+            pos = posInfo.pos;
+            node = editorView.state.doc.nodeAt(pos);
+          }
+        }
+        if (pos < 0) return;
         // Atoms have nodeSize 1, so doc.nodeAt(pos) returns the atom
-        // when pos is at the atom's start. posAtCoords sometimes
-        // returns JUST BEFORE or JUST AFTER the atom - check both
-        // neighbors.
-        let pos = posInfo.pos;
-        let node = editorView.state.doc.nodeAt(pos);
+        // when pos is at the atom's start. Either DOM or coordinate
+        // resolution can return JUST BEFORE or JUST AFTER the atom - check
+        // both neighbors.
         if (!node || !(node.type.name in SPECS)) {
           const before = pos > 0 ? editorView.state.doc.nodeAt(pos - 1) : null;
           const after = editorView.state.doc.nodeAt(pos + 1);
@@ -802,14 +664,15 @@ export function inlineAtomEditPlugin(
         // nav actions (Open in tab / window / split, Clear link)
         // that the generic atom menu doesn't have a place for.
         if (capturedNode.type.name === "wikilink") {
-          openWikilinkContextMenu(
+          openUnifiedLinkEditor({
             app,
-            editorView,
-            capturedPos,
-            capturedNode,
+            view: editorView,
+            anchor: capturedAtomDOM as HTMLElement,
             event,
-            capturedAtomDOM as HTMLElement,
-          );
+            context: wikilinkContext(capturedPos),
+            sourcePath: app.workspace.getActiveFile()?.path ?? "",
+            autoFocus: false,
+          });
           return;
         }
 
@@ -1047,13 +910,20 @@ export function inlineAtomEditPlugin(
         if (linkAnchor) {
           stopMobileInlineEvent(event);
           blurEditorIfFocused();
-          showExternalLinkMenu(
-            app,
+          const context = externalContextAtPoint(
             editorView,
-            point,
-            linkAnchor,
-            event instanceof MouseEvent ? event : undefined,
+            point.clientX,
+            point.clientY,
           );
+          if (context) {
+            showExternalLinkMenu(
+              app,
+              editorView,
+              point,
+              linkAnchor,
+              event instanceof MouseEvent ? event : undefined,
+            );
+          }
           return true;
         }
 
@@ -1083,6 +953,30 @@ export function inlineAtomEditPlugin(
         const spec = SPECS[node.type.name];
         stopMobileInlineEvent(event);
         blurEditorIfFocused();
+
+        if (node.type.name === "wikilink") {
+          const capturedPos = pos;
+          openMobileActionDrawer({
+            anchor: atomDOM as HTMLElement,
+            chrome: {
+              icon: "link",
+              title: tx("Wikilink"),
+              sub: atomHeaderSub(node, spec),
+            },
+            actions: buildMobileActions(node),
+            editLabel: tx("Edit..."),
+            onEditInDrawer: (menu) => openUnifiedLinkEditor({
+              app,
+              view: editorView,
+              anchor: atomDOM as HTMLElement,
+              mobileMenu: menu,
+              context: wikilinkContext(capturedPos),
+              sourcePath: app.workspace.getActiveFile()?.path ?? "",
+              autoFocus: true,
+            }),
+          });
+          return true;
+        }
 
         openMobileAtomDrawer({
           app,

@@ -1,3 +1,5 @@
+/// <reference lib="es2020.intl" />
+
 import { de } from "./i18n/locales/de";
 import { es } from "./i18n/locales/es";
 import { fr } from "./i18n/locales/fr";

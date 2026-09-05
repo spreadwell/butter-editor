@@ -71,9 +71,11 @@ For trial and license operations, the plugin contacts `api.buttereditor.com`. Th
 
 Butter Editor does not send product-usage analytics, note telemetry, or third-party tracking data. See the [privacy policy](https://buttereditor.com/privacy) for full data-handling details.
 
+The Help & feedback page can send a bug report, feature request, or other message only when you press **Submit feedback**. A reply email is optional. Basic device diagnostics are off by default and shown before you choose to include them. Feedback never includes vault names, paths, filenames, or note contents.
+
 Network destinations you may need to allow through a firewall:
 
-- `api.buttereditor.com` - trial and license operations
+- `api.buttereditor.com` - trial, license, and user-submitted feedback operations
 - `licenses.buttereditor.com` - browser-based license and device management
 
 ## Support

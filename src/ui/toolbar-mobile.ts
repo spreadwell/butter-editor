@@ -13,7 +13,7 @@
  * them. `createToolbar` (in `toolbar.ts`) calls `renderMobile` and
  * `installMobileLongPress` from here when `Platform.isMobile`.
  */
-import { App, Modal, Notice, normalizePath, setIcon } from "obsidian";
+import { App, Modal, setIcon } from "obsidian";
 import type { EditorView } from "prosemirror-view";
 import type { Schema } from "prosemirror-model";
 import type { Layout, LayoutItem } from "./toolbar-layout";
@@ -22,16 +22,15 @@ import {
   type BtnDef,
   type RenderCtx,
   clearFormatting,
-  applyLink,
-  classifyLinkInput,
   execBlockCmd,
   execHistoryCmd,
   execInsertCmd,
   execListCmd,
+  execListDepthCmd,
   execMarkCmd,
   insertTable,
+  insertPickedAttachment,
   isMarkActive,
-  looksLikeExternalUrl,
   setHeading,
   openMobileColorSheet,
 } from "./toolbar";
@@ -41,8 +40,14 @@ import {
   closeMobileInsertDrawer,
 } from "./insert-drawer";
 import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
-import { applyVaultFilesSuggest } from "./vault-files-suggest";
 import { tx, txKnown, type MessageKey } from "../i18n";
+import { openUnifiedLinkEditor } from "./link-editor";
+import {
+  commandActionIcon,
+  commandActionLabel,
+  executeObsidianCommand,
+  isObsidianCommandAvailable,
+} from "./command-actions";
 
 /** Same check as the desktop toolbar's `isHtmlFormattingEnabled`,
  *  reachable from the mobile renderer without duplicating exports
@@ -220,87 +225,14 @@ function openMobileInsertTableModal(app: App, schema: Schema, view: EditorView) 
   modal.open();
 }
 
-function openMobileAddLinkModal(app: App, schema: Schema, view: EditorView) {
-  const modal = new (class extends Modal {
-    private inputs: Record<string, HTMLInputElement> = {};
-
-    onOpen() {
-      const sel = view.state.selection;
-      const selectedText = sel.empty ? "" : view.state.doc.textBetween(sel.from, sel.to);
-      this.titleEl.setText(tx("Add link"));
-      const form = this.contentEl.createDiv({ cls: "butter-mobile-edit-form" });
-      this.renderField(form, "target", "Link", "", "Note name or URL", true);
-      this.renderField(form, "text", "Display text", selectedText, "Optional", false);
-
-      const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
-      const cancel = actions.createEl("button", { text: tx("Cancel") });
-      cancel.addEventListener("click", () => this.close());
-      const insert = actions.createEl("button", { cls: "mod-cta", text: tx("Insert") });
-      insert.addEventListener("click", () => this.commit());
-
-      window.setTimeout(() => this.inputs.target?.focus(), 0);
-    }
-
-    private renderField(
-      parent: HTMLElement,
-      name: string,
-      label: string,
-      value: string,
-      placeholder: string,
-      suggestNotes: boolean,
-    ): void {
-      const fieldEl = parent.createDiv({ cls: "butter-mobile-edit-field" });
-      fieldEl.createDiv({ cls: "butter-mobile-edit-field-label", text: txKnown(label) });
-      const input = fieldEl.createEl("input", {
-        cls: "butter-mobile-edit-input",
-        attr: { type: "text", placeholder: txKnown(placeholder) },
-      });
-      input.value = value;
-      input.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter") {
-          ev.preventDefault();
-          this.commit();
-        }
-      });
-      if (suggestNotes) {
-        applyVaultFilesSuggest(app, input, {
-          skipWhen: looksLikeExternalUrl,
-          onSelect: (file) => {
-            input.value = file.basename;
-            input.dispatchEvent(new Event("input"));
-            input.focus();
-          },
-        });
-      }
-      this.inputs[name] = input;
-    }
-
-    private commit(): void {
-      const detected = classifyLinkInput(this.inputs.target?.value ?? "");
-      if (!detected) {
-        this.flashError();
-        return;
-      }
-      applyLink(schema, view, detected, this.inputs.text?.value || undefined);
-      view.focus();
-      this.close();
-    }
-
-    private flashError(): void {
-      for (const input of Object.values(this.inputs)) {
-        input.addClass("butter-mobile-edit-input-error");
-        window.setTimeout(
-          () => input.removeClass("butter-mobile-edit-input-error"),
-          400,
-        );
-      }
-    }
-
-    onClose(): void {
-      this.contentEl.empty();
-    }
-  })(app);
-  modal.open();
+function openMobileAddLinkModal(app: App, view: EditorView, sourcePath: string) {
+  openUnifiedLinkEditor({
+    app,
+    view,
+    anchor: view.dom,
+    sourcePath,
+    autoFocus: true,
+  });
 }
 
 /** Mobile insert-image dialog. Replaces `prompt(...)` with an OS
@@ -312,6 +244,7 @@ function openMobileInsertImageDialog(
   app: App,
   schema: Schema,
   view: EditorView,
+  sourcePath: string,
 ) {
   const modal = new (class extends Modal {
     onOpen() {
@@ -331,7 +264,7 @@ function openMobileInsertImageDialog(
           const file = input.files?.[0];
           if (!file) return;
           this.close();
-          void insertImageFromFile(app, schema, view, file);
+          void insertPickedAttachment(app, schema, view, file, sourcePath, "image");
         });
         activeDocument.body.appendChild(input);
         input.click();
@@ -361,48 +294,29 @@ function openMobileInsertImageDialog(
   modal.open();
 }
 
-/** Save a File picked via the OS file picker into the vault root,
- *  generate a unique name, and insert a wikilink embed at the
- *  cursor. Vault root is the simplest safe target - keeps the
- *  insert-image flow non-destructive (no folder creation, no
- *  rename collisions) and matches Obsidian's default attachment
- *  location for users who haven't customized it. */
-async function insertImageFromFile(
-  app: App,
-  schema: Schema,
-  view: EditorView,
-  file: File,
-): Promise<void> {
-  try {
-    const ext = (file.name.split(".").pop() || "png").toLowerCase();
-    const stamp = new Date()
-      .toISOString()
-      .replace(/[-:T]/g, "")
-      .replace(/\..+/, "");
-    const name = normalizePath(`pasted-${stamp}.${ext}`);
-    const buffer = await file.arrayBuffer();
-    await app.vault.createBinary(name, buffer);
-    const embedType = schema.nodes.obsidian_embed;
-    if (embedType) {
-      view.dispatch(
-        view.state.tr.replaceSelectionWith(embedType.create({ src: name })),
-      );
-    } else {
-      // Schema doesn't expose obsidian_embed (shouldn't happen in
-      // Butter - defensive fallback to image node).
-      view.dispatch(
-        view.state.tr.replaceSelectionWith(
-          schema.nodes.image.create({ src: name, alt: "" }),
-        ),
-      );
-    }
-    view.focus();
-  } catch (err) {
-    new Notice(`${tx("Failed to save image:")} ${(err as Error).message ?? err}`);
-  }
-}
-
 // ── Item / button rendering ──
+
+/** Create a native keyboard-operable action without changing the toolbar's
+ * visual class contract. Native buttons provide Enter/Space activation and a
+ * button role without duplicating browser interaction semantics in JS.
+ *
+ * Main accessory-bar taps must retain the editor's focus: focusing a native
+ * button can make the mobile host report keyboardWillHide and relock the PM
+ * surface. Preventing the pointer default stops that focus transfer without
+ * affecting Tab focus or keyboard-generated button activation. Sheet and
+ * popover rows use ordinary native focus behavior. */
+function createMobileActionButton(
+  preserveEditorPointerFocus: boolean,
+  ...classes: string[]
+): HTMLButtonElement {
+  const button = activeWindow.createEl("button");
+  button.type = "button";
+  button.classList.add(...classes);
+  if (preserveEditorPointerFocus) {
+    button.addEventListener("pointerdown", (event) => event.preventDefault());
+  }
+  return button;
+}
 
 function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   if (item.type === "separator") {
@@ -419,8 +333,8 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
     // viewport. The "long-press for variants" framing comes for
     // free since tap and long-press both fire `click` after the
     // touch ends.
-    const el = activeWindow.createDiv();
-    el.classList.add(
+    const el = createMobileActionButton(
+      true,
       "mobile-toolbar-option",
       "clickable-icon",
       "butter-mobile-submenu",
@@ -440,8 +354,8 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
     // auto-injected button at the end of `renderMobile`; an
     // explicit one here just reserves a spot in the user's layout
     // so they can position the More button mid-bar if they want.
-    const el = activeWindow.createDiv();
-    el.classList.add(
+    const el = createMobileActionButton(
+      true,
       "mobile-toolbar-option",
       "clickable-icon",
       "butter-mobile-overflow",
@@ -451,6 +365,29 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
     el.addEventListener("click", (e) => {
       e.preventDefault();
       openMobileToolbarSheet(ctx);
+    });
+    list.appendChild(el);
+    return;
+  }
+  if (item.type === "command") {
+    const el = createMobileActionButton(
+      true,
+      "mobile-toolbar-option",
+      "clickable-icon",
+      "butter-toolbar-command",
+    );
+    el.setAttribute("aria-label", commandActionLabel(ctx.app, item));
+    el.dataset.commandItemId = item.id;
+    el.dataset.commandId = item.commandId;
+    setIcon(el, commandActionIcon(ctx.app, item));
+    const existing = ctx.commandMap.get(item.id);
+    if (existing) existing.elements.add(el);
+    else ctx.commandMap.set(item.id, { item, elements: new Set([el]) });
+    el.addEventListener("click", (event) => {
+      event.preventDefault();
+      const view = ctx.getView();
+      if (!view?.editable || !isObsidianCommandAvailable(ctx.app, item.commandId)) return;
+      executeObsidianCommand(ctx.app, item.commandId);
     });
     list.appendChild(el);
     return;
@@ -465,12 +402,15 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   // applyToolbarButtonVisibility rebuilds the mobile bar on toggle.
   const htmlOk = isMobileHtmlFormattingEnabled(ctx);
   if (def.id === "text-color" && !htmlOk) return;
-  const el = activeWindow.createDiv();
+  const el = createMobileActionButton(
+    true,
+    "mobile-toolbar-option",
+    "clickable-icon",
+  );
   // `.clickable-icon` carries Obsidian's hover / active / focused
   // icon-color cascade - pulling the bar into the host app's theme
   // automatically. With it, "detached" style mirrors Obsidian's own
   // mobile toolbar 1:1 without our CSS having to hard-code colors.
-  el.classList.add("mobile-toolbar-option", "clickable-icon");
   el.setAttribute("aria-label", tx(def.label));
   el.dataset.btnId = def.id;
   setIcon(el, def.icon);
@@ -480,11 +420,11 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   el.addEventListener("click", (e) => {
     e.preventDefault();
     const view = ctx.getView();
-    if (!view) return;
+    if (!view || !view.editable) return;
     // Mobile-specific insert flows replace the desktop hover-grid /
     // prompt-dialog UI with thumb-friendly modals.
     if (def.id === "link" || def.id === "insert-link-md") {
-      openMobileAddLinkModal(ctx.app, ctx.schema, view);
+      openMobileAddLinkModal(ctx.app, view, ctx.getSourcePath());
       return;
     }
     if (def.id === "table") {
@@ -492,7 +432,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
       return;
     }
     if (def.id === "image" || def.nodeName === "image") {
-      openMobileInsertImageDialog(ctx.app, ctx.schema, view);
+      openMobileInsertImageDialog(ctx.app, ctx.schema, view, ctx.getSourcePath());
       return;
     }
     if (def.id === "text-color") {
@@ -543,7 +483,10 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
     if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
     else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
     else if (def.kind === "list") execListCmd(def, ctx.schema, view);
-    else if (def.kind === "insert") execInsertCmd(def, ctx.schema, view, ctx.app);
+    else if (def.kind === "list-depth") execListDepthCmd(def, view);
+    else if (def.kind === "insert") {
+      execInsertCmd(def, ctx.schema, view, ctx.app, ctx.getSourcePath);
+    }
     else if (def.kind === "heading") setHeading(ctx.schema, view, def.headingLevel ?? 0);
     else if (def.kind === "history") execHistoryCmd(def, view);
   });
@@ -606,10 +549,32 @@ function openMobileVariantsPopover(
       // would create a popover-on-popover stack on mobile.
       continue;
     }
+    if (child.type === "command") {
+      const row = createMobileActionButton(false, "butter-mobile-variant-row");
+      const icon = activeWindow.createSpan();
+      icon.classList.add("butter-mobile-variant-icon");
+      setIcon(icon, commandActionIcon(ctx.app, child));
+      const label = activeWindow.createSpan();
+      label.classList.add("butter-mobile-variant-label");
+      label.textContent = commandActionLabel(ctx.app, child);
+      row.appendChild(icon);
+      row.appendChild(label);
+      const enabled = isObsidianCommandAvailable(ctx.app, child.commandId);
+      row.disabled = !enabled;
+      row.classList.toggle("is-disabled", !enabled);
+      row.addEventListener("click", (event) => {
+        event.preventDefault();
+        ctx.closePopover();
+        const view = ctx.getView();
+        if (!view?.editable || !isObsidianCommandAvailable(ctx.app, child.commandId)) return;
+        executeObsidianCommand(ctx.app, child.commandId);
+      });
+      popup.appendChild(row);
+      continue;
+    }
     const def = BUTTON_REGISTRY.get(child.id);
     if (!def) continue;
-    const row = activeWindow.createDiv();
-    row.classList.add("butter-mobile-variant-row");
+    const row = createMobileActionButton(false, "butter-mobile-variant-row");
     const icon = activeWindow.createSpan();
     icon.classList.add("butter-mobile-variant-icon");
     setIcon(icon, def.icon);
@@ -622,13 +587,16 @@ function openMobileVariantsPopover(
       e.preventDefault();
       ctx.closePopover();
       const view = ctx.getView();
-      if (!view) return;
+      if (!view || !view.editable) return;
       if (def.id === "link" || def.id === "insert-link-md") {
-        openMobileAddLinkModal(ctx.app, ctx.schema, view);
+        openMobileAddLinkModal(ctx.app, view, ctx.getSourcePath());
       } else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
       else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
       else if (def.kind === "list") execListCmd(def, ctx.schema, view);
-      else if (def.kind === "insert") execInsertCmd(def, ctx.schema, view, ctx.app);
+      else if (def.kind === "list-depth") execListDepthCmd(def, view);
+      else if (def.kind === "insert") {
+        execInsertCmd(def, ctx.schema, view, ctx.app, ctx.getSourcePath);
+      }
       else if (def.kind === "heading") setHeading(ctx.schema, view, def.headingLevel ?? 0);
       else if (def.kind === "history") execHistoryCmd(def, view);
     });
@@ -704,20 +672,22 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
 
   const dispatchDef = (def: BtnDef) => {
     const view = ctx.getView();
-    if (!view) return;
+    if (!view || !view.editable) return;
     if (def.id === "link" || def.id === "insert-link-md") {
-      openMobileAddLinkModal(ctx.app, ctx.schema, view);
+      openMobileAddLinkModal(ctx.app, view, ctx.getSourcePath());
     } else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
     else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
     else if (def.kind === "list") execListCmd(def, ctx.schema, view);
-    else if (def.kind === "insert") execInsertCmd(def, ctx.schema, view, ctx.app);
+    else if (def.kind === "list-depth") execListDepthCmd(def, view);
+    else if (def.kind === "insert") {
+      execInsertCmd(def, ctx.schema, view, ctx.app, ctx.getSourcePath);
+    }
     else if (def.kind === "heading") setHeading(ctx.schema, view, def.headingLevel ?? 0);
     else if (def.kind === "history") execHistoryCmd(def, view);
   };
 
   const addRow = (def: BtnDef) => {
-    const row = activeWindow.createDiv();
-    row.classList.add("butter-mobile-sheet-row");
+    const row = createMobileActionButton(false, "butter-mobile-sheet-row");
     const icon = activeWindow.createSpan();
     icon.classList.add("butter-mobile-sheet-icon");
     setIcon(icon, def.icon);
@@ -746,6 +716,26 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
         continue;
       }
       if (item.type === "overflow") continue;
+      if (item.type === "command") {
+        const row = createMobileActionButton(false, "butter-mobile-sheet-row");
+        const icon = activeWindow.createSpan();
+        icon.classList.add("butter-mobile-sheet-icon");
+        setIcon(icon, commandActionIcon(ctx.app, item));
+        const label = activeWindow.createSpan();
+        label.classList.add("butter-mobile-sheet-label");
+        label.textContent = commandActionLabel(ctx.app, item);
+        row.appendChild(icon);
+        row.appendChild(label);
+        const enabled = isObsidianCommandAvailable(ctx.app, item.commandId);
+        row.disabled = !enabled;
+        row.classList.toggle("is-disabled", !enabled);
+        row.addEventListener("click", () => {
+          close();
+          if (enabled) executeObsidianCommand(ctx.app, item.commandId);
+        });
+        list.appendChild(row);
+        continue;
+      }
       const def = BUTTON_REGISTRY.get(item.id);
       if (!def) continue;
       if (def.markName && !ctx.schema.marks[def.markName]) continue;
@@ -783,6 +773,7 @@ export function renderMobile(
   cleanupMobileToolbarOverflowIndicators(dom);
   dom.innerHTML = "";
   ctx.buttonMap.clear();
+  ctx.commandMap.clear();
   // Use ONLY `.butter-mobile-toolbar`; intentionally drop the
   // generic `.mobile-toolbar` class. Obsidian's own native mobile
   // toolbar carries that class, and we rely on a CSS suppression
@@ -800,6 +791,7 @@ export function renderMobile(
   // `.butter-mobile-toolbar` / `.butter-mobile-table-toolbar`
   // classes carry only visibility + positioning.
   dom.classList.add("butter-mobile-toolbar", "butter-mobile-bar");
+  dom.setAttribute("role", "toolbar");
   const style = getMobileStyle();
   // Mobile toolbar style ("detached" vs "attached") drives the DOM
   // shape AND chrome rules. CSS scopes via this attribute.
@@ -870,8 +862,8 @@ function renderNativeMain(
     });
     rightFloat.appendChild(swapBack);
 
-    const more = activeWindow.createDiv();
-    more.classList.add(
+    const more = createMobileActionButton(
+      true,
       "mobile-toolbar-option",
       "clickable-icon",
       "butter-mobile-overflow",
@@ -934,8 +926,8 @@ function renderButterMain(
     (i) => i.type === "button" && i.id === "insert",
   );
   if (!hasExplicitOverflow && !hasExplicitInsert) {
-    const insertBtn = activeWindow.createDiv();
-    insertBtn.classList.add(
+    const insertBtn = createMobileActionButton(
+      true,
       "mobile-toolbar-option",
       "clickable-icon",
       "butter-mobile-insert-btn",
@@ -945,7 +937,7 @@ function renderButterMain(
     insertBtn.addEventListener("click", (e) => {
       e.preventDefault();
       const view = ctx.getView();
-      if (!view) return;
+      if (!view || !view.editable) return;
       openMobileInsertDrawer(view, ctx.schema, ctx.app);
     });
     list.appendChild(insertBtn);
@@ -996,9 +988,15 @@ function renderButterMain(
   // element and the keyboard pops right back up.
   hideKbBtn.addEventListener("pointerdown", (e) => {
     e.preventDefault();
-    suppressNativeMobileToolbar();
-    const active = activeDocument.activeElement;
-    if (active instanceof HTMLElement) active.blur();
+    if (ctx.dismissMobileKeyboard) {
+      ctx.dismissMobileKeyboard();
+    } else {
+      // Standalone toolbar harness fallback. Production Butter views
+      // provide the owning-view dismissal callback above.
+      suppressNativeMobileToolbar();
+      const active = activeDocument.activeElement;
+      if (active instanceof HTMLElement) active.blur();
+    }
   });
   chrome.appendChild(hideKbBtn);
 

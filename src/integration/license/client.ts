@@ -25,6 +25,7 @@ import {
   type ActivationIntent,
   type SessionResponse,
 } from "./session-contract";
+import type { CredentialStorageCapability } from "./credential-storage";
 import {
   classifyLicenseError,
   type LicenseClientErrorKind,
@@ -165,6 +166,10 @@ function expectOk<T>(path: string, res: RawResponse): T {
 }
 
 export class LicenseClient {
+  constructor(
+    private readonly credentialStorageCapability: () => CredentialStorageCapability | undefined = () => undefined,
+  ) {}
+
   /**
    * Check if the given device ID is eligible for a free trial.
    */
@@ -213,8 +218,8 @@ export class LicenseClient {
 
   /**
    * Validate a license key against the licensing service and mint a signed
-   * session token. Plugin caches the token in `data.json` and
-   * re-validates on a daily cadence (with indefinite offline grace).
+   * session token. Plugin caches the token locally and re-validates on a
+   * daily cadence (with indefinite offline grace).
    *
    * Throws `LicenseClientError("license_invalid")` for revoked /
    * never-existed keys.
@@ -231,6 +236,7 @@ export class LicenseClient {
         deviceId,
         platform: detectPlatform(),
         activationIntent,
+        credentialStorage: this.credentialStorageCapability(),
       },
     });
     const body = expectOk<unknown>("/session", res);

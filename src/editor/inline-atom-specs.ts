@@ -9,6 +9,14 @@
 
 import type { Node as PMNode, Schema } from "prosemirror-model";
 import { isInlineMathSource } from "../core/inline-math-delimiters";
+import {
+  isRepresentableEmbedSource,
+  isRepresentableFootnoteLabel,
+  isRepresentableInlineFootnote,
+  isRepresentableInlineMath,
+  isRepresentableWikilinkAlias,
+  isRepresentableWikilinkTarget,
+} from "../core/atom-representability";
 import type { MessageKey } from "../i18n";
 
 type EditorSchema = Schema<string, string>;
@@ -86,7 +94,7 @@ function splitEmbedSrc(raw: string): Record<string, string> {
  *  blank (commit should reject). */
 function joinEmbedSrc(values: Record<string, string>): string | null {
   const file = (values.src ?? "").trim();
-  if (!file) return null;
+  if (!isRepresentableEmbedSource(file)) return null;
   const w = (values.width ?? "").trim();
   const h = (values.height ?? "").trim();
   if (!w) return file;
@@ -98,12 +106,10 @@ function inlineFootnoteFromFields(
   values: Record<string, string>,
   node: PMNode,
 ): PMNode | null {
-  // Allow empty footnote bodies - `^[]` is technically legal
-  // markdown though weird in practice. Trim trailing whitespace
-  // but preserve internal spacing.
-  return node.type.create({
-    content: values.content.replace(/\s+$/, ""),
-  });
+  const content = values.content.replace(/\s+$/, "");
+  return isRepresentableInlineFootnote(content)
+    ? node.type.create({ content })
+    : null;
 }
 
 export const SPECS: Record<string, AtomSpec> = {
@@ -120,9 +126,15 @@ export const SPECS: Record<string, AtomSpec> = {
       // Bracketed form `[[Note]]` or `[[Note|alias]]`.
       const bracketed = /^\[\[([^\]|]+)(\|([^\]]+))?\]\]$/.exec(trimmed);
       if (bracketed) {
+        const target = bracketed[1].trim();
+        const alias = (bracketed[3] ?? "").trim();
+        if (
+          !isRepresentableWikilinkTarget(target) ||
+          !isRepresentableWikilinkAlias(alias)
+        ) return null;
         return schema.nodes.wikilink.create({
-          target: bracketed[1].trim(),
-          alias: (bracketed[3] ?? "").trim(),
+          target,
+          alias,
         });
       }
       // Plain form - allow `Note` or `Note|alias` without requiring
@@ -135,10 +147,15 @@ export const SPECS: Record<string, AtomSpec> = {
       if (pipe >= 0) {
         const target = trimmed.slice(0, pipe).trim();
         const alias = trimmed.slice(pipe + 1).trim();
-        if (!target) return null;
+        if (
+          !isRepresentableWikilinkTarget(target) ||
+          !isRepresentableWikilinkAlias(alias)
+        ) return null;
         return schema.nodes.wikilink.create({ target, alias });
       }
-      return schema.nodes.wikilink.create({ target: trimmed, alias: "" });
+      return isRepresentableWikilinkTarget(trimmed)
+        ? schema.nodes.wikilink.create({ target: trimmed, alias: "" })
+        : null;
     },
     // Structured-form rendering - the panel shows two inputs ("Note"
     // + "Display text") instead of a single source pattern. Note
@@ -170,8 +187,9 @@ export const SPECS: Record<string, AtomSpec> = {
     },
     fromFields(values, node) {
       const target = values.target.trim();
-      if (!target) return null;
+      if (!isRepresentableWikilinkTarget(target)) return null;
       let alias = values.alias.trim();
+      if (!isRepresentableWikilinkAlias(alias)) return null;
       // If the user left alias empty OR explicitly typed the same
       // string as target, don't store an alias - the wikilink will
       // render its target as the visible text by default.
@@ -218,7 +236,7 @@ export const SPECS: Record<string, AtomSpec> = {
     },
     fromSource(src, schema) {
       const m = /^!\[\[([^\]]+)\]\]$/.exec(src.trim());
-      if (!m) return null;
+      if (!m || !isRepresentableEmbedSource(m[1])) return null;
       return schema.nodes.obsidian_embed.create({ src: m[1] });
     },
     // Embed size lives in the src string (`file.png|300` or
@@ -254,7 +272,7 @@ export const SPECS: Record<string, AtomSpec> = {
     },
     fromSource(src, schema) {
       const m = /^!\[\[([^\]]+)\]\]$/.exec(src.trim());
-      if (!m) return null;
+      if (!m || !isRepresentableEmbedSource(m[1])) return null;
       return schema.nodes.obsidian_embed_inline.create({ src: m[1] });
     },
     fields: [
@@ -302,7 +320,7 @@ export const SPECS: Record<string, AtomSpec> = {
     },
     fromFields(values, node) {
       const value = values.value.trim();
-      if (!value) return null;
+      if (!isRepresentableInlineMath(value)) return null;
       return node.type.create({ value });
     },
   },
@@ -314,7 +332,7 @@ export const SPECS: Record<string, AtomSpec> = {
     },
     fromSource(src, schema) {
       const m = /^\[\^([^\]]+)\]$/.exec(src.trim());
-      if (!m) return null;
+      if (!m || !isRepresentableFootnoteLabel(m[1])) return null;
       return schema.nodes.footnote_ref.create({ label: m[1] });
     },
     fields: [
@@ -330,7 +348,7 @@ export const SPECS: Record<string, AtomSpec> = {
     },
     fromFields(values, node) {
       const label = values.label.trim();
-      if (!label) return null;
+      if (!isRepresentableFootnoteLabel(label)) return null;
       return node.type.create({ label });
     },
   },
@@ -342,7 +360,7 @@ export const SPECS: Record<string, AtomSpec> = {
     },
     fromSource(src, schema) {
       const m = /^\^\[(.*)\]$/.exec(src);
-      if (!m) return null;
+      if (!m || !isRepresentableInlineFootnote(m[1])) return null;
       return schema.nodes.inline_footnote.create({ content: m[1] });
     },
     fields: [

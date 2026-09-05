@@ -17,7 +17,12 @@ import {
 import { bindFloatingSurfaceReposition } from "../util/floating-surface";
 import { tx, tv } from "../i18n";
 
-type SuggestItem = { text: string; secondary?: string; create?: boolean };
+type SuggestItem = {
+  text: string;
+  target?: string;
+  secondary?: string;
+  create?: boolean;
+};
 type Mode = AutocompleteMode | null;
 
 export function autocompletePlugin(app: App, schema: Schema) {
@@ -59,6 +64,30 @@ export function autocompletePlugin(app: App, schema: Schema) {
       suggestions.unshift({ text: query, create: true });
     }
     return suggestions;
+  }
+
+  function getEmbedSuggestions(query: string): SuggestItem[] {
+    const files = app.vault.getFiles();
+    const lower = query.toLowerCase();
+    return files
+      .filter((file) => {
+        if (!query) return true;
+        return file.name.toLowerCase().includes(lower) ||
+          file.path.toLowerCase().includes(lower);
+      })
+      .slice(0, 20)
+      .map((file) => ({
+        text: file.name,
+        // A vault-root path is exact even when duplicate filenames exist.
+        // Markdown notes conventionally omit `.md`; attachments retain their
+        // extension so `![[image.png]]` reparses as an embed, not a note link.
+        target: file.extension === "md"
+          ? file.path.replace(/\.md$/i, "")
+          : file.path,
+        secondary: file.parent && file.parent.path !== "/"
+          ? file.parent.path
+          : undefined,
+      }));
   }
 
   function getTagSuggestions(query: string): SuggestItem[] {
@@ -135,7 +164,8 @@ export function autocompletePlugin(app: App, schema: Schema) {
   }
 
   function itemIcon(): string {
-    return mode === "tag" ? "hash" : "file-text";
+    if (mode === "tag") return "hash";
+    return mode === "embed" ? "paperclip" : "file-text";
   }
 
   function itemLabel(item: SuggestItem): string {
@@ -245,8 +275,31 @@ export function autocompletePlugin(app: App, schema: Schema) {
     const to = view.state.selection.from;
 
     if (mode === "wikilink") {
-      const node = schema.nodes.wikilink.create({ target: item.text, alias: "" });
+      const node = schema.nodes.wikilink.create({
+        target: item.target ?? item.text,
+        alias: "",
+      });
       view.dispatch(view.state.tr.replaceWith(from, to, node));
+    } else if (mode === "embed") {
+      const target = item.target ?? item.text;
+      const { $from } = view.state.selection;
+      const occupiesWholeParagraph =
+        $from.depth === 1 &&
+        $from.parent.type.name === "paragraph" &&
+        from === $from.start() &&
+        to === $from.end();
+      if (occupiesWholeParagraph && schema.nodes.obsidian_embed) {
+        view.dispatch(
+          view.state.tr.replaceWith(
+            $from.before(),
+            $from.after(),
+            schema.nodes.obsidian_embed.create({ src: target }),
+          ),
+        );
+      } else {
+        const node = schema.nodes.obsidian_embed_inline.create({ src: target });
+        view.dispatch(view.state.tr.replaceWith(from, to, node));
+      }
     } else if (mode === "tag") {
       const node = schema.nodes.obsidian_tag.create({ tag: item.text });
       const space = schema.text(" ");
@@ -293,11 +346,36 @@ export function autocompletePlugin(app: App, schema: Schema) {
 
     items = mode === "wikilink"
       ? getWikilinkSuggestions(query)
-      : getTagSuggestions(query);
+      : mode === "embed"
+        ? getEmbedSuggestions(query)
+        : getTagSuggestions(query);
 
     selectedIndex = Math.min(selectedIndex, Math.max(0, items.length - 1));
     positionPopover(view);
     renderSuggestions(view);
+  }
+
+  /** Detect an opener committed without a renderer keydown (mobile/IME). */
+  function openerAtSelection(view: EditorView): {
+    mode: AutocompleteMode;
+    start: number;
+  } | null {
+    if (!view.state.selection.empty) return null;
+    const { from, $from } = view.state.selection;
+    const blockStart = $from.start();
+    if (from - blockStart >= 3) {
+      const embedStart = from - 3;
+      if (view.state.doc.textBetween(embedStart, from) === "![[") {
+        return { mode: "embed", start: embedStart };
+      }
+    }
+    if (from - blockStart >= 2) {
+      const linkStart = from - 2;
+      if (view.state.doc.textBetween(linkStart, from) === "[[") {
+        return { mode: "wikilink", start: linkStart };
+      }
+    }
+    return null;
   }
 
   // ── Plugin ──
@@ -342,14 +420,21 @@ export function autocompletePlugin(app: App, schema: Schema) {
 
         // ── Trigger detection ──
 
-        // Wikilink: detect second [ being typed
+        // Wikilink/embed: detect the second `[` being typed. `![[` is a
+        // distinct mode because it must suggest attachments as well as notes
+        // and must insert an embed node rather than a plain wikilink.
         if (event.key === "[" && !isOpen) {
           const { from } = view.state.selection;
           if (from > 0) {
             const charBefore = view.state.doc.textBetween(from - 1, from);
             if (charBefore === "[") {
-              startPos = from - 1;
-              window.setTimeout(() => open(view, "wikilink"), 0);
+              const bangBefore = from > 1 &&
+                view.state.doc.textBetween(from - 2, from - 1) === "!";
+              startPos = bangBefore ? from - 2 : from - 1;
+              window.setTimeout(
+                () => open(view, bangBefore ? "embed" : "wikilink"),
+                0,
+              );
             }
           }
         }
@@ -369,7 +454,18 @@ export function autocompletePlugin(app: App, schema: Schema) {
     },
     view() {
       return {
-        update: (view) => {
+        update: (view, previousState) => {
+          // Soft keyboards, IME commits, and accessibility input may insert
+          // printable text without keydown. Open from canonical PM state so
+          // every input method receives the same completion behavior.
+          if (!isOpen && previousState.doc !== view.state.doc) {
+            const opener = openerAtSelection(view);
+            if (opener) {
+              startPos = opener.start;
+              open(view, opener.mode);
+              return;
+            }
+          }
           if (isOpen) update(view);
         },
         destroy: () => {

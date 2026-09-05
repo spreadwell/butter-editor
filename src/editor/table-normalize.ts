@@ -21,6 +21,7 @@
  */
 import { Fragment, type Node as PMNode, type Schema } from "prosemirror-model";
 import { Plugin as PMPlugin } from "prosemirror-state";
+import { changedRangesInFinalDoc } from "./changed-ranges";
 
 /**
  * Returns a normalized copy of `table` where row 0's cells are
@@ -124,6 +125,8 @@ export function tableCellTypeFixer(): PMPlugin {
   return new PMPlugin({
     appendTransaction(transactions, _oldState, newState) {
       if (!transactions.some((tr) => tr.docChanged)) return null;
+      const changedRanges = changedRangesInFinalDoc(transactions, newState.doc);
+      if (changedRanges.length === 0) return null;
       const headerType = newState.schema.nodes.table_header;
       const cellType = newState.schema.nodes.table_cell;
       if (!headerType || !cellType) return null;
@@ -131,8 +134,11 @@ export function tableCellTypeFixer(): PMPlugin {
       type Fix = { pos: number; expected: typeof headerType };
       const fixes: Fix[] = [];
 
-      newState.doc.descendants((node, pos) => {
+      const visitedTables = new Set<number>();
+      const inspectNode = (node: PMNode, pos: number) => {
         if (node.type.spec.tableRole !== "table") return undefined;
+        if (visitedTables.has(pos)) return false;
+        visitedTables.add(pos);
         // Walk the table's rows + cells, computing each cell's
         // absolute position. `pos` is the position of the table-
         // open token; `pos + 1` is just inside the table; each row
@@ -161,7 +167,10 @@ export function tableCellTypeFixer(): PMPlugin {
         // fixer, but won't produce false positives. Returning false
         // skips the descent.
         return false;
-      });
+      };
+      for (const range of changedRanges) {
+        newState.doc.nodesBetween(range.from, range.to, inspectNode);
+      }
 
       if (!fixes.length) return null;
       const tr = newState.tr;

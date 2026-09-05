@@ -65,9 +65,13 @@ const REAL_TIMER: TimerLike = {
 export class SaveScheduler {
   private idleHandle: number | null = null;
   private ceilingHandle: number | null = null;
+  private dirty = false;
+  private queued = false;
+  private inFlight: Promise<void> | null = null;
+  private lastError: Error | null = null;
 
   constructor(
-    private doSave: () => void,
+    private doSave: () => void | Promise<void>,
     private config: SaveSchedulerConfig = DEFAULT_SAVE_CONFIG,
     private timer: TimerLike = REAL_TIMER,
   ) {}
@@ -81,6 +85,7 @@ export class SaveScheduler {
    * if the user hasn't paused.
    */
   onEdit(): void {
+    this.dirty = true;
     if (this.idleHandle !== null) this.timer.clearTimeout(this.idleHandle);
     this.idleHandle = this.timer.setTimeout(() => {
       this.idleHandle = null;
@@ -103,10 +108,13 @@ export class SaveScheduler {
    * beforeunload) - and for tear-down paths that want to ensure
    * all unsaved work lands before state is thrown away.
    */
-  flush(): void {
-    const hadPending = this.hasPending();
+  async flush(): Promise<void> {
+    const hadPending = this.dirty || this.queued ||
+      this.idleHandle !== null || this.ceilingHandle !== null;
     this.clearTimers();
     if (hadPending) this.performSave();
+    await this.drain();
+    if (this.lastError !== null) throw this.lastError;
   }
 
   /**
@@ -117,10 +125,14 @@ export class SaveScheduler {
    */
   cancel(): void {
     this.clearTimers();
+    this.dirty = false;
+    this.queued = false;
+    this.lastError = null;
   }
 
   hasPending(): boolean {
-    return this.idleHandle !== null || this.ceilingHandle !== null;
+    return this.dirty || this.queued || this.inFlight !== null ||
+      this.idleHandle !== null || this.ceilingHandle !== null;
   }
 
   private performSave(): void {
@@ -129,14 +141,67 @@ export class SaveScheduler {
     // post-save hook rewrites the doc), the new edit gets its
     // own clean timer pair.
     this.clearTimers();
-    try {
-      this.doSave();
-    } catch (err) {
-      // Save failures are reported by the caller's own logging;
-      // the scheduler itself just logs + continues so subsequent
-      // edits keep scheduling.
+    if (!this.dirty && !this.queued) return;
+    if (this.inFlight) {
+      this.queued = true;
+      return;
+    }
+    this.dirty = false;
+    this.queued = false;
+    this.lastError = null;
 
-      console.error("[butter] save-scheduler doSave threw:", err);
+    let result: void | Promise<void>;
+    try {
+      // Invoke synchronously so existing timer semantics stay deterministic;
+      // only completion is promise-aware.
+      result = this.doSave();
+    } catch (err) {
+      // A failed write is still dirty. Do not retry synchronously: a
+      // persistent disk/preflight error would otherwise create a hot loop.
+      // flush() surfaces the exact error; the next edit or explicit flush
+      // provides the retry boundary.
+      this.lastError = err instanceof Error ? err : new Error(typeof err === "string" ? err : "Save failed");
+      this.dirty = true;
+      return;
+    }
+    if (
+      result == null ||
+      typeof (result as { then?: unknown }).then !== "function"
+    ) {
+      if (this.dirty || this.queued) this.performSave();
+      return;
+    }
+    let failed = false;
+    const completion = Promise.resolve(result)
+      .then(() => {
+        this.lastError = null;
+      })
+      .catch((err) => {
+        // Keep the rejection handled for timer-driven saves while retaining
+        // it for an awaiting flush() and leaving the write pending.
+        failed = true;
+        this.lastError = err instanceof Error ? err : new Error(typeof err === "string" ? err : "Save failed");
+        this.dirty = true;
+      })
+      .finally(() => {
+        if (this.inFlight !== completion) return;
+        this.inFlight = null;
+        if (!failed && (this.dirty || this.queued)) {
+          // One immediate follow-up consumes every edit that accumulated
+          // during the write. No two writes can overlap.
+          this.clearTimers();
+          this.dirty = true;
+          this.queued = false;
+          this.performSave();
+        }
+      });
+    this.inFlight = completion;
+  }
+
+  private async drain(): Promise<void> {
+    while (this.inFlight) {
+      const current = this.inFlight;
+      await current;
     }
   }
 

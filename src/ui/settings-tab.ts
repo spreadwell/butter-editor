@@ -6,12 +6,14 @@
  * `plugin.saveSettings()`, and nudges `plugin.applyOutlineMode()` when
  * the outline toggle flips. It doesn't touch the editor view directly.
  *
- * Four tabs (General / Outline / Block Drag / Normalization) render
- * independently; active tab persists in-memory only (resets on
- * re-open, per Obsidian's settings pane convention).
+ * Butter's settings are organized as native Obsidian pages. Hosts without
+ * the SettingPage API receive the same grouped page index and in-place page
+ * navigation instead of a separate, horizontally scrolling tab design.
  */
+import * as ObsidianApi from "obsidian";
 import {
   App,
+  FuzzySuggestModal,
   Modal,
   Notice,
   Platform,
@@ -20,31 +22,109 @@ import {
   getIconIds,
   setIcon,
 } from "obsidian";
+import type { SettingDefinitionItem, SettingDefinitionPage } from "obsidian";
 import type ButterEditorPlugin from "../main";
 import { LicenseClientError } from "../integration/license/client";
 import type { DeviceWireRecord } from "../integration/license/client";
 import type { ToolbarLayoutItem } from "../main";
-import { tx, tv } from "../i18n";
+import { tx, txKnown, tv } from "../i18n";
 
 
-import { renderLicense, computeLicensePhase, renderRowsFor, renderUnlicensedRows, renderPollingRows, renderTrialRows, renderLifetimeRows, renderDeactivatedRows, renderInvalidatedRows, reasonCopyFor, renderExpiredRows, renderUnknownRows, trialHeadlineFor, trialStatLineFor, formatActivationDate, formatRelativeTime, renderKeyRow, renderPasteKeyRow, renderRecoveryRow, renderDevicesSection, renderDeviceListSkeleton, renderDeviceRow, renderCurrentDeviceFallback, renderDeviceUtilities, renderSupportSection, computeRemaining, scheduleTrialPoll, friendlyError } from "./settings/license-tab";
-import { renderGeneral, renderGeneralIntroSections, renderBehavior, renderAdvanced, renderStartTrialCardIfApplicable } from "./settings/general-tab";
+import { renderLicense, computeLicensePhase, licensePhaseIcon, renderRowsFor, renderUnlicensedRows, renderPollingRows, renderTrialRows, renderLifetimeRows, renderDeactivatedRows, renderInvalidatedRows, reasonCopyFor, renderExpiredRows, renderUnknownRows, trialHeadlineFor, trialStatLineFor, formatActivationDate, formatRelativeTime, renderKeyRow, renderPasteKeyRow, renderRecoveryRow, renderDevicesSection, renderDeviceListSkeleton, renderDeviceRow, renderCurrentDeviceFallback, renderDeviceUtilities, computeRemaining, scheduleTrialPoll, friendlyError } from "./settings/license-tab";
+import { renderSupportSection } from "./settings/support-tab";
+import { renderGeneral, renderGeneralIntroSections, renderEditor, renderDragAndDrop, renderAdvanced } from "./settings/general-tab";
 import { MAX_DEVICES_PER_CUSTOMER, TRIAL_LENGTH_DAYS } from "../integration/license/policy";
-import { renderToolbar, renderLayoutSection, renderPresetColorsSection, createSettingGroup, renderPrimaryToolbarSection, renderTableToolbarSection, renderLayoutEditor, openMoveToSubmenuMenu, openSubmenuEditModal, wireDrag } from "./settings/toolbar-tab";
+import { renderToolbar, renderLayoutSection, renderPresetColorsSection, createSettingGroup, renderPrimaryToolbarSection, renderTableToolbarSection, renderLayoutEditor, openMoveToSubmenuMenu, openSubmenuEditModal, openCommandPicker, openCommandActionEditModal, wireDrag } from "./settings/toolbar-tab";
 import { renderOutlineSection } from "./settings/outline-tab";
 import { renderDragSection } from "./settings/drag-tab";
 import { renderSourceSection, showWarning } from "./settings/source-tab";
 import { renderDebugSection } from "./settings/debug-tab";
+import { renderContextMenu } from "./settings/context-menu-tab";
+import { CONTEXT_MENU_CUSTOMIZER_FEATURE_ID } from "./feature-discovery";
+import {
+  commandActionIcon,
+  commandActionLabel,
+  listObsidianCommands,
+  type CommandLayoutItem,
+  type ObsidianCommandDescriptor,
+} from "./command-actions";
+
+type ButterSettingsSection =
+  | "general"
+  | "editor"
+  | "drag-drop"
+  | "toolbar"
+  | "context-menu"
+  | "advanced"
+  | "license"
+  | "support";
+
+interface ButterSettingPageCompat {
+  title: string;
+  containerEl: HTMLElement;
+  display(): void;
+  hide(): void;
+}
+
+const BUTTER_SETTINGS_PAGES: ReadonlyArray<{
+  id: ButterSettingsSection;
+  label: "General" | "Editor" | "Drag and drop" | "Toolbar" | "Advanced" | "License" | "Context menu" | "Help & feedback";
+  icon: string;
+}> = [
+  { id: "general", label: "General", icon: "settings-2" },
+  { id: "editor", label: "Editor", icon: "pen-line" },
+  { id: "drag-drop", label: "Drag and drop", icon: "move" },
+  { id: "toolbar", label: "Toolbar", icon: "panel-bottom" },
+  { id: "context-menu", label: "Context menu", icon: "menu" },
+  { id: "advanced", label: "Advanced", icon: "code" },
+  { id: "license", label: "License", icon: "key-round" },
+  { id: "support", label: "Help & feedback", icon: "messages-square" },
+];
+
+interface NavigationLicenseStatus {
+  phase: Exclude<ReturnType<ButterSettingTab["computeLicensePhase"]>, "valid">;
+  name: string;
+  description: string;
+  icon: string;
+  tone: "accent" | "warning" | "danger" | "muted";
+  startTrial?: boolean;
+}
+
+function createButterSettingsPage(
+  tab: ButterSettingTab,
+  section: ButterSettingsSection,
+  title: string,
+): ButterSettingPageCompat {
+  const SettingPageBase = (
+    ObsidianApi as unknown as { SettingPage?: new () => ButterSettingPageCompat }
+  ).SettingPage;
+  if (typeof SettingPageBase !== "function") {
+    throw new Error("Obsidian SettingPage is unavailable");
+  }
+
+  class ButterSectionPage extends SettingPageBase {
+    display(): void {
+      tab.renderDeclarativePage(this, section);
+    }
+
+    hide(): void {
+      tab.releaseDeclarativePage(this);
+      super.hide();
+    }
+  }
+
+  const page = new ButterSectionPage();
+  page.title = title;
+  return page;
+}
 
 export class ButterSettingTab extends PluginSettingTab {
   /** Active tab key - persists across re-opens of the settings pane.
    *  Order is the user-facing order in the tab bar. */
-  activeTab:
-    | "general"
-    | "behavior"
-    | "toolbar"
-    | "advanced"
-    | "license" = "general";
+  activeTab: ButterSettingsSection = "general";
+  private activeDeclarativePage: ButterSettingPageCompat | null = null;
+  private pendingNavigationPage: ButterSettingsSection | null = null;
+  private fallbackPage: ButterSettingsSection | null = null;
 
   /** Inline trial-poll timer, owned by the License tab's hero block.
    *  Cleared on `hide()` so we don't poll while Settings is closed
@@ -58,185 +138,564 @@ export class ButterSettingTab extends PluginSettingTab {
    *  can't race with a fresher render's state. */
   public pollGeneration = 0;
 
-  /** ResizeObserver watching the tab bar. Created on each display();
-   *  disconnected on hide() and at the top of the next display() so
-   *  re-renders don't pile up observers. */
-  public tabBarResizeObserver: ResizeObserver | null = null;
+  private settingPageIconObserver: MutationObserver | null = null;
   public pendingFocusSection: string | null = null;
 
   constructor(app: App, public plugin: ButterEditorPlugin) {
     super(app, plugin);
   }
 
-  hide() {
+  private cleanupSettingsUi(): void {
     if (this.trialPollTimer != null) {
       window.clearTimeout(this.trialPollTimer);
       this.trialPollTimer = null;
     }
-    if (this.tabBarResizeObserver) {
-      this.tabBarResizeObserver.disconnect();
-      this.tabBarResizeObserver = null;
+  }
+
+  /** Release lifetime-owned settings resources when the plugin unloads.
+   * The page-icon observer intentionally survives ordinary hide/show cycles:
+   * Obsidian can reopen cached declarative definitions without calling
+   * getSettingDefinitions(), then rebuild the rows in the detached container. */
+  public dispose(): void {
+    this.cleanupSettingsUi();
+    this.settingPageIconObserver?.disconnect();
+    this.settingPageIconObserver = null;
+  }
+
+  /** Obsidian's declarative page rows do not currently expose an icon field.
+   * Decorate only Butter's native navigation rows after Obsidian creates
+   * them, leaving navigation, focus, and page ownership entirely native. */
+  private syncSettingPageIcons(): void {
+    const decorate = () => {
+      const rows = Array.from(
+        this.containerEl.querySelectorAll<HTMLElement>(".setting-item.mod-navigable"),
+      );
+      for (const row of rows) {
+        const nameEl = row.querySelector<HTMLElement>(
+          ":scope > .setting-item-info > .setting-item-name",
+        );
+        if (!nameEl) continue;
+        const storedPageId = row.dataset.butterSettingsPage as
+          | ButterSettingsSection
+          | undefined;
+        const undecoratedName = nameEl.cloneNode(true) as HTMLElement;
+        undecoratedName.querySelectorAll(
+          ".butter-settings-page-icon, .butter-settings-page-new-badge",
+        ).forEach((element) => element.remove());
+        const definition = storedPageId
+          ? BUTTER_SETTINGS_PAGES.find(({ id }) => id === storedPageId)
+          : BUTTER_SETTINGS_PAGES.find(({ label }) =>
+              undecoratedName.textContent?.trim() ===
+                (label === "Context menu" ? txKnown(label) : tx(label))
+            );
+        if (!definition) continue;
+        row.dataset.butterSettingsPage = definition.id;
+        row.addClass("butter-settings-page-link");
+        if (!nameEl.querySelector(":scope > .butter-settings-page-icon")) {
+          const iconEl = nameEl.createSpan({ cls: "butter-settings-page-icon" });
+          iconEl.setAttribute("aria-hidden", "true");
+          setIcon(iconEl, definition.icon);
+          nameEl.prepend(iconEl);
+        }
+        const existingBadge = nameEl.querySelector<HTMLElement>(
+          ":scope > .butter-settings-page-new-badge",
+        );
+        const showBadge = definition.id === "context-menu" &&
+          !this.plugin.hasVisitedFeatureDiscovery(
+            CONTEXT_MENU_CUSTOMIZER_FEATURE_ID,
+          );
+        if (showBadge && !existingBadge) {
+          nameEl.createSpan({
+            cls: "butter-settings-page-new-badge",
+            text: txKnown("New"),
+            attr: { "aria-label": txKnown("New feature") },
+          });
+        } else if (!showBadge) {
+          existingBadge?.remove();
+        }
+        if (definition.id === "context-menu" &&
+            row.dataset.butterDiscoveryVisitWired !== "true") {
+          row.dataset.butterDiscoveryVisitWired = "true";
+          row.addEventListener("click", () => {
+            this.completeContextMenuDiscovery();
+          });
+        }
+      }
+      this.openPendingNavigationPage();
+    };
+
+    this.settingPageIconObserver?.disconnect();
+    decorate();
+    this.settingPageIconObserver = new MutationObserver(decorate);
+    this.settingPageIconObserver.observe(this.containerEl, {
+      childList: true,
+      subtree: true,
+    });
+  }
+
+  public requestPage(section: ButterSettingsSection): void {
+    const alreadyActive = this.activeDeclarativePage !== null &&
+      this.activeTab === section;
+    this.activeTab = section;
+    this.pendingNavigationPage = alreadyActive ? null : section;
+    if (!alreadyActive) {
+      window.setTimeout(() => this.openPendingNavigationPage(), 0);
     }
   }
 
-  display() {
-    const { containerEl } = this;
+  private openPendingNavigationPage(): void {
+    const section = this.pendingNavigationPage;
+    if (!section) return;
+    const row = this.containerEl.querySelector<HTMLElement>(
+      `.setting-item.mod-navigable[data-butter-settings-page="${section}"]`,
+    );
+    if (!row) return;
+    this.pendingNavigationPage = null;
+    row.click();
+  }
+
+  private completeContextMenuDiscovery(): void {
+    this.containerEl.querySelectorAll(
+      ".butter-settings-page-new-badge",
+    ).forEach((badge) => badge.remove());
+    void this.plugin.completeFeatureDiscoveryVisit(
+      CONTEXT_MENU_CUSTOMIZER_FEATURE_ID,
+      Platform.isMobile ? "mobile-context-menu" : "desktop-context-menu",
+    );
+  }
+
+  hide(): void {
+    this.cleanupSettingsUi();
+    this.fallbackPage = null;
+  }
+
+  /** Obsidian 1.13+ entry point. Each Butter area is a native settings page;
+   * dynamic page contents use the API's supported SettingPage escape hatch. */
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    // Install the observer before Obsidian creates the declarative rows. A
+    // delayed timer can lose a race with first-open indexing/hide cleanup and
+    // also allows an iconless frame to paint. MutationObserver decoration runs
+    // in the same rendering turn once the native rows are inserted.
+    this.syncSettingPageIcons();
+    const pages = BUTTER_SETTINGS_PAGES.map(({ id, label }) => ({
+      type: "page" as const,
+      name: label === "Context menu" ? txKnown(label) : tx(label),
+      page: (() => createButterSettingsPage(
+          this,
+          id,
+          label === "Context menu" ? txKnown(label) : tx(label),
+        )) as NonNullable<SettingDefinitionPage["page"]>,
+    }));
+    return [
+      {
+        type: "group" as const,
+        cls: "butter-settings-license-status-container",
+        visible: () => this.navigationLicenseStatus() !== null,
+        items: [{
+          name: tx("License"),
+          searchable: false,
+          render: (setting: Setting) => this.renderNavigationLicenseStatus(setting),
+        }],
+      },
+      {
+        type: "group" as const,
+        cls: "butter-settings-whats-new-container",
+        visible: () => this.plugin.shouldShowWhatsNewSettingsCard(),
+        items: [{
+          name: txKnown("What's new"),
+          searchable: false,
+          render: (setting: Setting) => this.renderWhatsNewCard(setting),
+        }],
+      },
+      {
+        type: "group" as const,
+        cls: "butter-settings-primary-pages",
+        items: pages.filter((_, index) => BUTTER_SETTINGS_PAGES[index]?.id !== "support"),
+      },
+      {
+        type: "group" as const,
+        cls: "butter-settings-help-pages",
+        items: pages.filter((_, index) => BUTTER_SETTINGS_PAGES[index]?.id === "support"),
+      },
+    ];
+  }
+
+  private renderWhatsNewCard(setting: Setting): void {
+    if (!this.plugin.shouldShowWhatsNewSettingsCard()) {
+      setting.settingEl.remove();
+      return;
+    }
+    const version = this.plugin.settings.whatsNewReleaseVersion;
+    setting.settingEl.addClass("butter-settings-whats-new-card");
+    setting.nameEl.empty();
+    const icon = setting.nameEl.createSpan({ cls: "butter-settings-whats-new-card__icon" });
+    icon.setAttribute("aria-hidden", "true");
+    setIcon(icon, "party-popper");
+    setting.nameEl.createSpan({ text: txKnown("What's new") });
+    setting.setDesc(tv("See the highlights in Butter Editor {version}.", { version }));
+    setting.addButton((button) => button
+      .setButtonText(txKnown("View what's new"))
+      .onClick(() => this.plugin.openWhatsNewFromSettings(version)));
+    setting.addExtraButton((button) => button
+      .setIcon("x")
+      .setTooltip(txKnown("Dismiss this release"))
+      .onClick(() => void this.plugin.dismissWhatsNewSettingsCard()));
+  }
+
+  private navigationLicenseStatus(): NavigationLicenseStatus | null {
+    const phase = this.computeLicensePhase();
+    if (phase === "valid") return null;
+
+    if (phase === "unlicensed") {
+      const days = this.plugin.settings.trialLengthDays || TRIAL_LENGTH_DAYS;
+      return {
+        phase,
+        name: tx("Free trial available"),
+        description: tv("{days} days, full access. No card, no email.", { days }),
+        icon: licensePhaseIcon(phase),
+        tone: "accent",
+        startTrial: true,
+      };
+    }
+    if (phase === "polling") {
+      return {
+        phase,
+        name: tx("Activating trial..."),
+        description: tx("Checking license..."),
+        icon: licensePhaseIcon(phase),
+        tone: "muted",
+      };
+    }
+    if (phase === "trial") {
+      const remaining = this.computeRemaining();
+      return {
+        phase,
+        name: tx("Trial active"),
+        description: this.trialStatLineFor(remaining),
+        icon: licensePhaseIcon(phase),
+        tone: "accent",
+      };
+    }
+    if (phase === "expired") {
+      return {
+        phase,
+        name: tx("Trial expired"),
+        description: tx("License required - read-only mode"),
+        icon: licensePhaseIcon(phase),
+        tone: "danger",
+      };
+    }
+    if (phase === "deactivated") {
+      return {
+        phase,
+        name: tx("Device deactivated"),
+        description: tx("This device was deactivated from another machine."),
+        icon: licensePhaseIcon(phase),
+        tone: "warning",
+      };
+    }
+    if (phase === "offline") {
+      return {
+        phase,
+        name: tx("License could not be verified"),
+        description: tx("Read-only until the licensing server can be reached."),
+        icon: licensePhaseIcon(phase),
+        tone: "warning",
+      };
+    }
+    if (phase === "invalidated") {
+      return {
+        phase,
+        name: tx("License could not be verified"),
+        description: this.reasonCopyFor(this.plugin.settings.lastReason),
+        icon: licensePhaseIcon(phase),
+        tone: "danger",
+      };
+    }
+    return {
+      phase,
+      name: tx("License could not be verified"),
+      description: tx("Try again, or contact support if this persists."),
+      icon: licensePhaseIcon(phase),
+      tone: "warning",
+    };
+  }
+
+  private renderNavigationLicenseStatus(setting: Setting): void {
+    const status = this.navigationLicenseStatus();
+    if (!status) {
+      setting.settingEl.remove();
+      return;
+    }
+
+    setting.settingEl.addClasses([
+      "butter-settings-license-status",
+      `is-${status.tone}`,
+    ]);
+    setting.settingEl.setAttrs({
+      role: "button",
+      tabindex: "0",
+      "aria-label": `${status.name}. ${status.description}`,
+    });
+    setting.nameEl.empty();
+    const icon = setting.nameEl.createSpan({ cls: "butter-settings-license-status__icon" });
+    icon.setAttribute("aria-hidden", "true");
+    setIcon(icon, status.icon);
+    setting.nameEl.createSpan({ text: status.name });
+    setting.setDesc(status.description);
+
+    setting.addButton((button) => {
+      button.setButtonText(
+        status.startTrial ? tx("Start trial") : tx("Go to license settings"),
+      );
+      if (status.startTrial) button.setCta();
+      button.buttonEl.addEventListener("click", (event) => event.stopPropagation());
+      button.onClick(() => {
+        this.openNavigationPage("license");
+        if (status.startTrial) {
+          window.setTimeout(() => void this.beginTrialActivation(), 0);
+        }
+      });
+    });
+
+    const open = () => this.openNavigationPage("license");
+    setting.settingEl.addEventListener("click", (event) => {
+      if ((event.target as Element | null)?.closest("button")) return;
+      open();
+    });
+    setting.settingEl.addEventListener("keydown", (event: KeyboardEvent) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      open();
+    });
+  }
+
+  private openNavigationPage(section: ButterSettingsSection): void {
+    const definition = BUTTER_SETTINGS_PAGES.find(({ id }) => id === section);
+    if (definition) {
+      const label = definition.label === "Context menu"
+        ? txKnown(definition.label)
+        : tx(definition.label);
+      const row = Array.from(
+        this.containerEl.querySelectorAll<HTMLElement>(".setting-item.mod-navigable"),
+      ).find((candidate) => {
+        const name = candidate.querySelector<HTMLElement>(
+          ":scope > .setting-item-info > .setting-item-name",
+        );
+        return name?.textContent?.trim() === label;
+      });
+      if (row) {
+        row.click();
+        return;
+      }
+    }
+    this.activeTab = section;
+    this.fallbackPage = section;
+    this.refreshSettingsUi();
+  }
+
+  /** Re-render through the API that owns the current Obsidian version. */
+  public refreshSettingsUi(): void {
+    if (this.activeDeclarativePage) {
+      this.activeDeclarativePage.display();
+      return;
+    }
+    const update = (this as unknown as { update?: () => void }).update;
+    if (typeof update === "function") {
+      update.call(this);
+      return;
+    }
+    this.cleanupSettingsUi();
+    this.renderSettingsInto(this.containerEl);
+  }
+
+  /** Imperative page-navigation fallback for Obsidian versions before 1.13. */
+  display(): void {
+    this.renderSettingsInto(this.containerEl);
+  }
+
+  public renderDeclarativePage(
+    page: ButterSettingPageCompat,
+    section: ButterSettingsSection,
+  ): void {
+    this.cleanupSettingsUi();
+    this.activeDeclarativePage = page;
+    this.activeTab = section;
+    page.containerEl.empty();
+    page.containerEl.addClass("butter-settings-page");
+    this.renderSettingsSection(page.containerEl, section);
+    this.focusPendingSection(page.containerEl);
+  }
+
+  public releaseDeclarativePage(page: ButterSettingPageCompat): void {
+    if (this.activeDeclarativePage === page) this.activeDeclarativePage = null;
+    this.cleanupSettingsUi();
+    window.requestAnimationFrame(() => this.syncSettingPageIcons());
+  }
+
+  private renderSettingsSection(
+    body: HTMLElement,
+    section: ButterSettingsSection,
+  ): void {
+    switch (section) {
+      case "general": this.renderGeneral(body); break;
+      case "editor": this.renderEditor(body); break;
+      case "drag-drop": this.renderDragAndDrop(body); break;
+      case "toolbar": this.renderToolbar(body); break;
+      case "context-menu": this.renderContextMenu(body); break;
+      case "advanced": this.renderAdvanced(body); break;
+      case "license": this.renderLicense(body); break;
+      case "support": this.renderSupportSection(body); break;
+    }
+  }
+
+  private focusPendingSection(body: HTMLElement): void {
+    const pendingFocusSection = this.pendingFocusSection;
+    if (!pendingFocusSection) return;
+    this.pendingFocusSection = null;
+    window.requestAnimationFrame(() => {
+      body.querySelector<HTMLElement>(
+        `[data-butter-settings-section="${pendingFocusSection}"]`,
+      )?.scrollIntoView({ block: "start" });
+    });
+  }
+
+  private renderSettingsInto(containerEl: HTMLElement): void {
     containerEl.empty();
     containerEl.addClass("butter-settings-root");
+    containerEl.removeClasses([
+      "butter-settings-fallback-index",
+      "butter-settings-fallback-page",
+    ]);
+    const pending = this.pendingNavigationPage;
+    if (pending) {
+      this.pendingNavigationPage = null;
+      this.fallbackPage = pending;
+      this.activeTab = pending;
+    }
+    if (this.fallbackPage) {
+      this.renderFallbackPage(containerEl, this.fallbackPage);
+    } else {
+      this.renderFallbackPageIndex(containerEl);
+    }
+  }
 
-    // Tab bar with optional left/right overflow indicators. The wrap
-    // is positioned-relative so the indicators can absolutely overlay
-    // the bar's edges; the bar itself is the scrollable element. On
-    // narrow windows the tabs scroll horizontally and the indicators
-    // appear when content extends past the visible bounds. Clicking
-    // an indicator scrolls one tab worth in that direction.
-    const tabWrap = containerEl.createDiv({ cls: "butter-settings-tabs-wrap" });
-    const leftInd = tabWrap.createDiv({
-      cls: "butter-settings-tabs-indicator is-left",
-      attr: { role: "button", tabindex: "0", "aria-label": tx("Scroll tabs left") },
+  private fallbackPageLabel(section: ButterSettingsSection): string {
+    const definition = BUTTER_SETTINGS_PAGES.find(({ id }) => id === section);
+    if (!definition) return "";
+    return definition.label === "Context menu"
+      ? txKnown(definition.label)
+      : tx(definition.label);
+  }
+
+  private createFallbackNavigationGroup(
+    parent: HTMLElement,
+    className: string,
+  ): HTMLElement {
+    const group = parent.createDiv({
+      cls: `setting-group ${className} butter-settings-fallback-group`,
     });
-    setIcon(leftInd, "chevron-left");
-    const tabBar = tabWrap.createDiv({ cls: "butter-settings-tabs" });
-    const rightInd = tabWrap.createDiv({
-      cls: "butter-settings-tabs-indicator is-right",
-      attr: { role: "button", tabindex: "0", "aria-label": tx("Scroll tabs right") },
-    });
-    setIcon(rightInd, "chevron-right");
+    return group.createDiv({ cls: "setting-items" });
+  }
 
-    const updateIndicators = () => {
-      // 1px tolerance for fractional scroll positions (some browsers
-      // report scrollLeft+clientWidth slightly under scrollWidth even
-      // when fully scrolled to the right).
-      const canLeft = tabBar.scrollLeft > 1;
-      const canRight =
-        tabBar.scrollLeft + tabBar.clientWidth < tabBar.scrollWidth - 1;
-      leftInd.toggleClass("is-visible", canLeft);
-      rightInd.toggleClass("is-visible", canRight);
-    };
-
-    const scrollByOneTab = (dir: -1 | 1) => {
-      const tabs = Array.from(
-        tabBar.querySelectorAll<HTMLElement>(".butter-settings-tab"),
+  private renderFallbackPageIndex(containerEl: HTMLElement): void {
+    containerEl.addClass("butter-settings-fallback-index");
+    if (this.navigationLicenseStatus()) {
+      const items = this.createFallbackNavigationGroup(
+        containerEl,
+        "butter-settings-license-status-container",
       );
-      if (dir === 1) {
-        // First tab whose right edge is past the current visible end.
-        const visibleRight = tabBar.scrollLeft + tabBar.clientWidth;
-        const next = tabs.find(
-          (t) => t.offsetLeft + t.offsetWidth > visibleRight + 1,
-        );
-        if (next) {
-          tabBar.scrollTo({
-            left: next.offsetLeft - 4,
-            behavior: "smooth",
-          });
-        }
-      } else {
-        // Last tab whose left edge is before the current visible start.
-        const visibleLeft = tabBar.scrollLeft;
-        let prev: HTMLElement | undefined;
-        for (let i = tabs.length - 1; i >= 0; i--) {
-          if (tabs[i].offsetLeft < visibleLeft - 1) {
-            prev = tabs[i];
-            break;
-          }
-        }
-        if (prev) {
-          tabBar.scrollTo({
-            left: Math.max(0, prev.offsetLeft - 4),
-            behavior: "smooth",
-          });
-        }
-      }
-    };
+      this.renderNavigationLicenseStatus(new Setting(items));
+    }
+    if (this.plugin.shouldShowWhatsNewSettingsCard()) {
+      const items = this.createFallbackNavigationGroup(
+        containerEl,
+        "butter-settings-whats-new-container",
+      );
+      this.renderWhatsNewCard(new Setting(items));
+    }
 
-    const wireIndicator = (el: HTMLElement, dir: -1 | 1) => {
-      el.addEventListener("click", () => scrollByOneTab(dir));
-      el.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          scrollByOneTab(dir);
-        }
+    const primary = this.createFallbackNavigationGroup(
+      containerEl,
+      "butter-settings-primary-pages",
+    );
+    const help = this.createFallbackNavigationGroup(
+      containerEl,
+      "butter-settings-help-pages",
+    );
+    for (const definition of BUTTER_SETTINGS_PAGES) {
+      this.renderFallbackPageLink(
+        definition.id === "support" ? help : primary,
+        definition,
+      );
+    }
+  }
+
+  private renderFallbackPageLink(
+    parent: HTMLElement,
+    definition: (typeof BUTTER_SETTINGS_PAGES)[number],
+  ): void {
+    const label = this.fallbackPageLabel(definition.id);
+    const setting = new Setting(parent).setName(label);
+    const row = setting.settingEl;
+    row.addClasses(["mod-navigable", "butter-settings-page-link"]);
+    row.dataset.butterSettingsPage = definition.id;
+    row.setAttrs({ role: "button", tabindex: "0", "aria-label": label });
+    setting.nameEl.empty();
+    const icon = setting.nameEl.createSpan({ cls: "butter-settings-page-icon" });
+    icon.setAttribute("aria-hidden", "true");
+    setIcon(icon, definition.icon);
+    setting.nameEl.createSpan({ text: label });
+    if (definition.id === "context-menu" &&
+        !this.plugin.hasVisitedFeatureDiscovery(CONTEXT_MENU_CUSTOMIZER_FEATURE_ID)) {
+      setting.nameEl.createSpan({
+        cls: "butter-settings-page-new-badge",
+        text: txKnown("New"),
+        attr: { "aria-label": txKnown("New feature") },
       });
+    }
+    const chevron = setting.controlEl.createSpan({
+      cls: "butter-settings-page-chevron",
+    });
+    chevron.setAttribute("aria-hidden", "true");
+    setIcon(chevron, "chevron-right");
+    const open = () => {
+      this.activeTab = definition.id;
+      this.fallbackPage = definition.id;
+      if (definition.id === "context-menu") this.completeContextMenuDiscovery();
+      this.renderSettingsInto(this.containerEl);
+      this.containerEl.scrollTop = 0;
     };
-    wireIndicator(leftInd, -1);
-    wireIndicator(rightInd, 1);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (event: KeyboardEvent) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      open();
+    });
+  }
 
-    tabBar.addEventListener("scroll", updateIndicators, { passive: true });
-    // ResizeObserver catches container width changes (Obsidian pane
-    // resize, sidebar toggle, etc.) without a window-scoped listener
-    // that would leak across display() re-renders. Disconnect any
-    // observer from a previous display() first so we never stack.
-    if (this.tabBarResizeObserver) this.tabBarResizeObserver.disconnect();
-    this.tabBarResizeObserver = new ResizeObserver(updateIndicators);
-    this.tabBarResizeObserver.observe(tabBar);
-
-    const body = containerEl.createDiv({ cls: "butter-settings-tab-body" });
-
-    const render = () => {
-      body.empty();
-      tabBar.querySelectorAll(".butter-settings-tab").forEach((el) => {
-        el.toggleClass("is-active", el.getAttribute("data-tab") === this.activeTab);
-      });
-      switch (this.activeTab) {
-        case "general":
-          this.renderGeneral(body);
-          break;
-        case "behavior":
-          this.renderBehavior(body);
-          break;
-        case "toolbar":
-          this.renderToolbar(body);
-          break;
-        case "advanced":
-          this.renderAdvanced(body);
-          break;
-        case "license":
-          this.renderLicense(body);
-          break;
-      }
-      const pendingFocusSection = this.pendingFocusSection;
-      if (pendingFocusSection) {
-        this.pendingFocusSection = null;
-        window.requestAnimationFrame(() => {
-          const sectionEl = body.querySelector<HTMLElement>(
-            `[data-butter-settings-section="${pendingFocusSection}"]`,
-          );
-          sectionEl?.scrollIntoView({ block: "start" });
-        });
-      }
-    };
-
-    const addTab = (id: typeof this.activeTab, label: string) => {
-      // Render as a div, not a <button>, so Obsidian's and themes'
-      // button-element styling (box-shadow, focus rings, hover fills,
-      // padding overrides) never touches us. ARIA role + tabindex
-      // restore keyboard activation; Enter/Space dispatch a click.
-      const tab = tabBar.createDiv({
-        cls: "butter-settings-tab",
-        attr: { "data-tab": id, role: "tab", tabindex: "0" },
-      });
-      tab.createSpan({ cls: "butter-settings-tab-label", text: label });
-      const activate = () => {
-        this.activeTab = id;
-        render();
-      };
-      tab.addEventListener("click", activate);
-      tab.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          activate();
-        }
-      });
-    };
-
-    addTab("general", tx("General"));
-    addTab("behavior", tx("Behavior"));
-    addTab("toolbar", tx("Toolbar"));
-    addTab("advanced", tx("Advanced"));
-    addTab("license", tx("License"));
-    render();
-    // Initial indicator visibility once layout has settled.
-    window.requestAnimationFrame(updateIndicators);
+  private renderFallbackPage(
+    containerEl: HTMLElement,
+    section: ButterSettingsSection,
+  ): void {
+    containerEl.addClass("butter-settings-fallback-page");
+    const label = this.fallbackPageLabel(section);
+    const header = containerEl.createDiv({ cls: "butter-settings-fallback-header" });
+    const back = header.createEl("button", {
+      cls: "butter-settings-fallback-back clickable-icon",
+      attr: { type: "button", "aria-label": tx("Back") },
+    });
+    setIcon(back, "chevron-left");
+    const title = new Setting(header).setName(label).setHeading();
+    title.settingEl.addClass("butter-settings-fallback-title");
+    back.addEventListener("click", () => {
+      this.fallbackPage = null;
+      this.renderSettingsInto(this.containerEl);
+      this.containerEl.scrollTop = 0;
+    });
+    const body = containerEl.createDiv({ cls: "butter-settings-page" });
+    this.renderSettingsSection(body, section);
+    this.focusPendingSection(body);
   }
 
 
@@ -310,14 +769,14 @@ export class ButterSettingTab extends PluginSettingTab {
           // but listDevices doesn't go through that path - do it
           // here, then re-render.
           await this.plugin.refreshLicenseStatus();
-          (this as unknown as { display: () => void }).display();
+          this.refreshSettingsUi();
           return;
         }
         if (err.kind === "unauthorized") {
           // Token expired client-side. Trigger refresh - that'll
           // either re-issue or mark unlicensed.
           await this.plugin.refreshLicenseStatus();
-          (this as unknown as { display: () => void }).display();
+          this.refreshSettingsUi();
           return;
         }
       }
@@ -409,7 +868,7 @@ export class ButterSettingTab extends PluginSettingTab {
     this.plugin.settings.deviceId = (crypto).randomUUID();
     await this.plugin.saveSettings();
     await this.plugin.refreshLicenseStatus();
-    (this as unknown as { display: () => void }).display();
+    this.refreshSettingsUi();
     new Notice(tx("This device deactivated."), 4000);
   }
 
@@ -435,7 +894,7 @@ export class ButterSettingTab extends PluginSettingTab {
       return;
     }
     // Re-render Devices section to reflect the change.
-    (this as unknown as { display: () => void }).display();
+    this.refreshSettingsUi();
   }
 
 
@@ -460,7 +919,7 @@ export class ButterSettingTab extends PluginSettingTab {
     }
 
     this.plugin.isActivatingTrialFlow = true;
-    (this as unknown as { display: () => void }).display();
+    this.refreshSettingsUi();
 
     try {
       const resp = await this.plugin.licenseClient.startInstantTrial(
@@ -498,7 +957,7 @@ export class ButterSettingTab extends PluginSettingTab {
     } finally {
       this.plugin.isActivatingTrialFlow = false;
     }
-    (this as unknown as { display: () => void }).display();
+    this.refreshSettingsUi();
   }
 
   public openCheckoutAndPoll(): void {
@@ -522,7 +981,7 @@ export class ButterSettingTab extends PluginSettingTab {
         tx("Trial activation timed out. Open settings > license to try again."),
         10_000,
       );
-      (this as unknown as { display: () => void }).display();
+      this.refreshSettingsUi();
       return;
     }
     try {
@@ -558,7 +1017,7 @@ export class ButterSettingTab extends PluginSettingTab {
           });
         }).catch(e => console.error("Confetti failed to load:", e));
 
-        (this as unknown as { display: () => void }).display();
+        this.refreshSettingsUi();
         return;
       }
     } catch (err) {
@@ -567,14 +1026,14 @@ export class ButterSettingTab extends PluginSettingTab {
         // Token rotted - reset and let the user retry.
         this.plugin.settings.pendingTrialActivation = null;
         await this.plugin.saveSettings();
-        (this as unknown as { display: () => void }).display();
+        this.refreshSettingsUi();
         return;
       }
       // Transient - fall through, schedule next tick.
     }
     // Pending. Re-render so the "Still working on it…" copy can
     // appear once we cross the 25s threshold, then re-schedule.
-    (this as unknown as { display: () => void }).display();
+    this.refreshSettingsUi();
   }
 
   /**
@@ -607,7 +1066,7 @@ export class ButterSettingTab extends PluginSettingTab {
       this.plugin.applyLicenseSession(session, validatedKey);
       await this.plugin.saveSettings();
       await this.plugin.refreshLicenseStatus();
-      (this as unknown as { display: () => void }).display();
+      this.refreshSettingsUi();
       new Notice(tx("License activated."), 4000);
 
       import("canvas-confetti").then((module) => {
@@ -795,20 +1254,24 @@ export class ButterSettingTab extends PluginSettingTab {
     return renderGeneral.call(this, root);
   }
 
-  public renderBehavior(root: HTMLElement) {
-    return renderBehavior.call(this, root);
+  public renderEditor(root: HTMLElement) {
+    return renderEditor.call(this, root);
+  }
+
+  public renderDragAndDrop(root: HTMLElement) {
+    return renderDragAndDrop.call(this, root);
   }
 
   public renderAdvanced(root: HTMLElement) {
     return renderAdvanced.call(this, root);
   }
 
-  public renderStartTrialCardIfApplicable(root: HTMLElement) {
-    return renderStartTrialCardIfApplicable.call(this, root);
-  }
-
   public renderToolbar(root: HTMLElement) {
     return renderToolbar.call(this, root);
+  }
+
+  public renderContextMenu(root: HTMLElement): void {
+    return renderContextMenu.call(this, root);
   }
 
   public renderLayoutSection(root: HTMLElement, getSegment: () => "desktop" | "mobile", reRenders: Array<() => void>): void {
@@ -845,8 +1308,8 @@ export class ButterSettingTab extends PluginSettingTab {
       desc: string;
       cta?: boolean;
       build: () => ToolbarLayoutItem[];
-    }>, tag?: { label: string; icon?: string }) {
-    return renderLayoutEditor.call(this, root, title, desc, defs, getLayout, saveLayout, presets, tag);
+    }>, tag?: { label: string; icon?: string }, options?: { allowCommands?: boolean }) {
+    return renderLayoutEditor.call(this, root, title, desc, defs, getLayout, saveLayout, presets, tag, options);
   }
 
   public openMoveToSubmenuMenu(anchor: HTMLElement, submenus: Array<Extract<ToolbarLayoutItem, { type: "submenu" }>>, onPick: (submenuId: string) => void | Promise<void>) {
@@ -859,8 +1322,26 @@ export class ButterSettingTab extends PluginSettingTab {
     return openSubmenuEditModal.call(this, item, onSave, isNew);
   }
 
-  public wireDrag(handle: HTMLElement, row: HTMLElement, rootLayout: ToolbarLayoutItem[], draggedItemId: string, onCommit: () => void | Promise<void>) {
-    return wireDrag.call(this, handle, row, rootLayout, draggedItemId, onCommit);
+  public openCommandPicker(
+    onChoose: (command: { id: string; name: string; icon?: string }) => void,
+  ): void {
+    return openCommandPicker.call(this, onChoose);
+  }
+
+  public openCommandActionEditModal(
+    item: Extract<ToolbarLayoutItem, { type: "command" }>,
+    onSave: (updated: Extract<ToolbarLayoutItem, { type: "command" }>) => void | Promise<void>,
+  ): void {
+    return openCommandActionEditModal.call(this, item, onSave);
+  }
+
+  public wireDrag(handle: HTMLElement, row: HTMLElement, rootLayout: ToolbarLayoutItem[], draggedItemId: string, onCommit: () => void | Promise<void>, options?: {
+    canDropInto?: (
+      submenu: Extract<ToolbarLayoutItem, { type: "submenu" }>,
+      dragged: ToolbarLayoutItem,
+    ) => boolean;
+  }) {
+    return wireDrag.call(this, handle, row, rootLayout, draggedItemId, onCommit, options);
   }
 
   public renderOutlineSection(root: HTMLElement) {
@@ -1067,6 +1548,128 @@ export class SubmenuEditModal extends Modal {
   }
 
   onClose() {
+    this.contentEl.empty();
+  }
+}
+
+export class CommandPickerModal extends FuzzySuggestModal<ObsidianCommandDescriptor> {
+  private readonly commands: ObsidianCommandDescriptor[];
+
+  constructor(
+    app: App,
+    private readonly onChoose: (command: ObsidianCommandDescriptor) => void,
+  ) {
+    super(app);
+    this.commands = listObsidianCommands(app);
+    this.setPlaceholder("Search command palette commands...");
+  }
+
+  getItems(): ObsidianCommandDescriptor[] {
+    return this.commands;
+  }
+
+  getItemText(command: ObsidianCommandDescriptor): string {
+    return command.name;
+  }
+
+  onChooseItem(command: ObsidianCommandDescriptor): void {
+    this.onChoose(command);
+  }
+}
+
+/** Edits the persistent presentation of one command action. The command ID is
+ * intentionally read-only: replacing a command creates a new action, while
+ * labels and Lucide icons remain freely customizable per placement. */
+export class CommandActionEditModal extends Modal {
+  private current: CommandLayoutItem;
+
+  constructor(
+    app: App,
+    initial: CommandLayoutItem,
+    private readonly onSave: (updated: CommandLayoutItem) => void | Promise<void>,
+  ) {
+    super(app);
+    this.current = { ...initial };
+  }
+
+  onOpen(): void {
+    const { contentEl, titleEl } = this;
+    if (Platform.isMobile) this.modalEl.addClass("mod-lg");
+    titleEl.setText(txKnown("Edit command action"));
+
+    const previewWrap = contentEl.createDiv({ cls: "butter-submenu-edit-preview" });
+    const previewIcon = previewWrap.createDiv({ cls: "butter-submenu-edit-preview-icon" });
+    setIcon(previewIcon, commandActionIcon(this.app, this.current));
+    const previewLabel = previewWrap.createDiv({
+      cls: "butter-submenu-edit-preview-label",
+      text: commandActionLabel(this.app, this.current),
+    });
+
+    new Setting(contentEl)
+      .setName(txKnown("Command"))
+      .setDesc(this.current.commandId);
+
+    new Setting(contentEl)
+      .setName(tx("Label"))
+      .setDesc(txKnown("Shown in menus and as the toolbar tooltip."))
+      .addText((text) => {
+        text.setValue(this.current.label).onChange((value) => {
+          this.current.label = value;
+          previewLabel.setText(commandActionLabel(this.app, this.current));
+        });
+      });
+
+    const iconWrap = contentEl.createDiv({ cls: "butter-icon-picker" });
+    iconWrap.createDiv({ cls: "butter-icon-picker-label", text: tx("Icon") });
+    const search = iconWrap.createEl("input", {
+      cls: "butter-icon-picker-search",
+      attr: { type: "text", placeholder: "Search lucide icons..." },
+    });
+    const grid = iconWrap.createDiv({ cls: "butter-icon-picker-grid" });
+    const iconIds = Array.from(new Set(getIconIds().map((id) => id.replace(/^lucide-/, ""))))
+      .filter(Boolean)
+      .sort();
+
+    const renderIcons = (query: string) => {
+      grid.empty();
+      const normalizedQuery = query.trim().toLowerCase();
+      const matches = iconIds
+        .filter((id) => !normalizedQuery || id.toLowerCase().includes(normalizedQuery))
+        .slice(0, 240);
+      for (const id of matches) {
+        const tile = grid.createEl("button", {
+          cls: "butter-icon-picker-tile",
+          attr: { type: "button", "aria-label": id },
+        });
+        if (id === this.current.icon) tile.classList.add("is-selected");
+        setIcon(tile, id);
+        tile.addEventListener("click", (event) => {
+          event.preventDefault();
+          this.current.icon = id;
+          previewIcon.empty();
+          setIcon(previewIcon, id);
+          grid.querySelectorAll(".is-selected").forEach((element) => element.removeClass("is-selected"));
+          tile.classList.add("is-selected");
+        });
+      }
+      if (matches.length === 0) {
+        grid.createDiv({ cls: "butter-icon-picker-empty", text: tx("No icons match.") });
+      }
+    };
+    renderIcons("");
+    search.addEventListener("input", () => renderIcons(search.value));
+
+    const buttons = contentEl.createDiv({ cls: "modal-button-container" });
+    buttons.createEl("button", { text: tx("Cancel") }).addEventListener("click", () => this.close());
+    const save = buttons.createEl("button", { text: tx("Save"), cls: "mod-cta" });
+    save.addEventListener("click", () => {
+      if (!this.current.label) this.current.label = commandActionLabel(this.app, this.current);
+      if (!this.current.icon) this.current.icon = commandActionIcon(this.app, this.current);
+      void Promise.resolve(this.onSave(this.current)).then(() => this.close());
+    });
+  }
+
+  onClose(): void {
     this.contentEl.empty();
   }
 }

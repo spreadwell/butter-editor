@@ -58,30 +58,30 @@
      there's no flash of full-opacity content in the rAF gap between
      PM dispatch and animation start. */
   .butter-editor-view.butter-anim-prepped > .inline-title,
-  .butter-editor-view.butter-anim-prepped .ProseMirror > *:nth-child(-n+15) {
+  .butter-editor-view.butter-anim-prepped .ProseMirror > :nth-child(-n+15 of :not(.butter-list-a11y-owner)) {
     opacity: 0;
     transform: translateY(8px);
   }
   .butter-editor-view.butter-just-loaded > .inline-title,
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(-n+15) {
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(-n+15 of :not(.butter-list-a11y-owner)) {
     animation: butter-block-in 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
   }
   .butter-editor-view.butter-just-loaded > .inline-title              { animation-delay:   0ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(1)  { animation-delay:  30ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(2)  { animation-delay:  60ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(3)  { animation-delay:  90ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(4)  { animation-delay: 120ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(5)  { animation-delay: 150ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(6)  { animation-delay: 180ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(7)  { animation-delay: 210ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(8)  { animation-delay: 240ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(9)  { animation-delay: 270ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(10) { animation-delay: 300ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(11) { animation-delay: 330ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(12) { animation-delay: 360ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(13) { animation-delay: 390ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(14) { animation-delay: 420ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > *:nth-child(15) { animation-delay: 450ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(1 of :not(.butter-list-a11y-owner))  { animation-delay:  30ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(2 of :not(.butter-list-a11y-owner))  { animation-delay:  60ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(3 of :not(.butter-list-a11y-owner))  { animation-delay:  90ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(4 of :not(.butter-list-a11y-owner))  { animation-delay: 120ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(5 of :not(.butter-list-a11y-owner))  { animation-delay: 150ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(6 of :not(.butter-list-a11y-owner))  { animation-delay: 180ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(7 of :not(.butter-list-a11y-owner))  { animation-delay: 210ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(8 of :not(.butter-list-a11y-owner))  { animation-delay: 240ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(9 of :not(.butter-list-a11y-owner))  { animation-delay: 270ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(10 of :not(.butter-list-a11y-owner)) { animation-delay: 300ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(11 of :not(.butter-list-a11y-owner)) { animation-delay: 330ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(12 of :not(.butter-list-a11y-owner)) { animation-delay: 360ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(13 of :not(.butter-list-a11y-owner)) { animation-delay: 390ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(14 of :not(.butter-list-a11y-owner)) { animation-delay: 420ms; }
+  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(15 of :not(.butter-list-a11y-owner)) { animation-delay: 450ms; }
 }
 
 /* ── Layout ── */
@@ -119,6 +119,29 @@
   --list-indent: 4ch;
 }
 
+/* Keep the document centerline invariant when a desktop scrollbar appears.
+   A matching phantom gutter on the opposite edge prevents the browser's
+   scrollbar from nudging centered note content sideways at the overflow
+   threshold. Mobile scrollbars overlay content and need no reservation. */
+body:not(.is-mobile) :is(.butter-editor-view, .butter-whats-new-scroller) {
+  scrollbar-gutter: stable both-edges;
+}
+
+/* Older Android WebViews expose a classic layout scrollbar even though
+   Obsidian's mobile chrome normally behaves as an overlay scroller. Crossing
+   the overflow threshold then removes several pixels from ProseMirror's width
+   mid-gesture (most easily when a heading's larger spacing enters a callout),
+   invalidating Drag Scene and visibly flashing the page rail. Keep touch
+   scrolling intact while making that implementation scrollbar non-layout. */
+body.is-android .butter-editor-view {
+  scrollbar-width: none;
+}
+body.is-android .butter-editor-view::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* ── Block flow ───────────────────────────────────────────────
    .ProseMirror is a flex column so child margins don't collapse
    between top-level children. Each block's gap-above is exactly
@@ -127,16 +150,52 @@
    model that made layout shift under structural changes (drag,
    paste, programmatic moves).
 
-   The `margin-top` values are owned by `block-spacing.ts` —
-   inline-style decorations using `var(--p-spacing)`,
-   `var(--heading-spacing)`, etc. so theme + Style Settings retunes
-   continue to flow through. */
+   The static rules below are the runtime counterpart of
+   `block-spacing.ts#gapAbove`. Spacing must not live in editor state:
+   mapping one top-level decoration per block makes every keystroke
+   O(document size). CSS variables keep theme + Style Settings retunes
+   flowing through without a transaction or DOM-attribute rewrite. */
 .butter-editor-view .ProseMirror {
   display: flex;
   flex-direction: column;
 }
-.butter-editor-view .ProseMirror > * {
+.butter-editor-view .ProseMirror > :not(.butter-list-a11y-owner) {
   margin-bottom: 0 !important;
+}
+
+/* Default visible block: paragraph rhythm. Block comments create no box and
+   are excluded from both drag math and the visible-block ordinal. */
+.butter-editor-view .ProseMirror > :where(:not(.butter-block-comment):not(.butter-block-comment-view):not(.butter-list-a11y-owner)) {
+  margin-top: var(--p-spacing, 1em) !important;
+}
+
+/* Headings and the start of a footnote section use heading rhythm. Adjacent
+   footnotes return to paragraph rhythm. */
+.butter-editor-view .ProseMirror > :is(h1, h2, h3, h4, h5, h6),
+.butter-editor-view .ProseMirror > .butter-footnote-def-view {
+  margin-top: var(--heading-spacing, 2.5rem) !important;
+}
+.butter-editor-view .ProseMirror > .butter-footnote-def-view + .butter-footnote-def-view {
+  margin-top: var(--p-spacing, 1em) !important;
+}
+
+/* Flat list items use padding so indentation-guide paint spans the gap and
+   their generated marker can follow the same offset. */
+.butter-editor-view .ProseMirror > .butter-list-item {
+  margin-top: 0 !important;
+  padding-top: 8px;
+  --li-pad-top: 8px;
+}
+
+/* `of <selector>` counts visible editor blocks rather than hidden source
+   comments. Chromium 111+ supports this Selectors 4 form. These declarations
+   deliberately follow the type rules so the first visible block always wins. */
+.butter-editor-view .ProseMirror > :nth-child(1 of :not(.butter-block-comment):not(.butter-block-comment-view):not(.butter-list-a11y-owner)) {
+  margin-top: 0 !important;
+}
+.butter-editor-view .ProseMirror > .butter-list-item:nth-child(1 of :not(.butter-block-comment):not(.butter-block-comment-view):not(.butter-list-a11y-owner)) {
+  padding-top: 0;
+  --li-pad-top: 0px;
 }
 
 /* ── Viewport-clipped rendering ───────────────────────────────
@@ -156,9 +215,28 @@
    land on "not-yet-painted" content and get ignored. Mobile docs
    aren't typically large enough for the perf savings to matter,
    so the trade-off favors reliable tap-to-edit. */
-body:not(.is-mobile) .butter-editor-view .ProseMirror > * {
+body:not(.is-mobile) .butter-editor-view .ProseMirror > :not(.butter-list-a11y-owner) {
   content-visibility: auto;
   contain-intrinsic-size: auto 24px;
+}
+
+/* Native text-selection caps can extend fractionally outside their text
+   block. Keep text-block overflow open without changing content-visibility
+   or containment while a selection is active; dynamically changing either
+   can trap Chromium in a layout/selection feedback loop. */
+.butter-editor-view .ProseMirror :is(
+  p, h1, h2, h3, h4, h5, h6, pre, td, th, .butter-list-item
+) {
+  overflow: visible !important;
+  clip-path: none !important;
+}
+
+/* Resize chrome extends beyond an image's block box into the note margin.
+   `content-visibility:auto` adds paint containment and clips that corner when
+   the rendered image reaches the full line width, so keep image blocks live. */
+body:not(.is-mobile) .butter-editor-view .ProseMirror > :is(.butter-image, .butter-obsidian-image) {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
 }
 
 /* Inline title: respect Obsidian's "Show inline title" setting.
@@ -235,10 +313,15 @@ body:not(.is-mobile) .butter-view-root .view-header::after {
   pointer-events: none;
 }
 
-/* Toolbar pinned to top: top fade extends to cover the toolbar
-   area (chrome continuation). */
-body:not(.is-mobile) .butter-view-root[data-toolbar-pos="top"] .view-header::after {
-  height: 80px;
+/* A toolbar pinned below the header needs the fade extended through that
+   additional chrome row. The integrated toolbar already lives inside the
+   header, so extending it there would wash over the inline filename. */
+body:not(.is-mobile)
+  .butter-view-root[data-toolbar-pos="top"]:not([data-toolbar-style="integrated"])
+  .view-header::after {
+  /* 43px toolbar + the normal 24px content fade. This used to be 80px,
+     which left only a 3px gap before the inline title in the current layout. */
+  height: 67px;
 }
 /* Table toolbar is open AND main toolbar is at top: extend the top
    fade further so the gradient ends BELOW the table toolbar, not
@@ -248,8 +331,10 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-pos="top"] .view-header::aft
    `.butter-has-table-toolbar` class is toggled in JS when the table
    toolbar's `.is-hidden` flips (see table-toolbar.ts), avoiding a
    parent selector here. */
-body:not(.is-mobile) .butter-view-root[data-toolbar-pos="top"].butter-has-table-toolbar .view-header::after {
-  height: 116px;
+body:not(.is-mobile)
+  .butter-view-root[data-toolbar-pos="top"]:not([data-toolbar-style="integrated"]).butter-has-table-toolbar
+  .view-header::after {
+  height: 106px;
 }
 
 /* Symmetric bottom fade - content scrolling DOWN past the visible
@@ -299,13 +384,13 @@ body:not(.is-mobile) .butter-view-root::after {
 /* Toolbar pinned to bottom: bottom fade extends to cover the
    toolbar area (chrome continuation). */
 body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"]::after {
-  height: 80px;
+  height: 67px;
 }
 /* Mirror of the top-toolbar rule: when both the main toolbar
    (bottom-docked) and the table toolbar are visible, extend the
    bottom fade so the gradient ends ABOVE the table toolbar. */
 body:not(.is-mobile) .butter-view-root[data-toolbar-pos="bottom"].butter-has-table-toolbar::after {
-  height: 116px;
+  height: 106px;
 }
 
 /* Mobile: mirror Obsidian's native-markdown rule that hides the
@@ -442,6 +527,11 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 /* ── ProseMirror base (required by prosemirror-view) ── */
 .butter-editor-view .ProseMirror {
   position: relative;
+  /* The outer `.butter-editor-view` is the sole scroll container. Obsidian's
+     optional Reading-mode compatibility class otherwise contributes
+     `overflow:auto` here and clips native-style heading controls that occupy
+     the file-margin gutter. */
+  overflow: visible;
   word-wrap: break-word;
   white-space: break-spaces;
   -webkit-font-variant-ligatures: none;
@@ -517,7 +607,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    block's computed styles so the ring follows per-block-type
    corner rounding (callouts, code, plain blocks all match).
    Always rendered (display: block) but invisible by default - the
-   `.is-visible` class triggers a fade+scale-in transition. Keeping
+   `.is-visible` class fades and strengthens the hover-sized border. Keeping
    it in the DOM means the transition can fire on first appearance
    instead of snapping (display:none → block can't transition opacity
    in the same frame). pointer-events: none so it never intercepts
@@ -526,57 +616,38 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   position: fixed;
   pointer-events: none;
   z-index: 50;
-  border: 3px solid hsla(var(--color-accent-hsl), 0.3);
+  border: 1px solid var(--text-faint);
+  border-radius: var(--menu-radius, 8px);
   box-sizing: border-box;
   opacity: 0;
-  /* Start slightly LARGER and settle inward - feels like the ring
-     is converging on the block (vs. a "popping outward" growth from
-     0.96 → 1). Subtle 4% so it reads as a soft settle, not a zoom. */
-  transform: scale(1.04);
-  transform-origin: center;
-  /* The hidden state delays its zero-duration transform reset until
-     the opacity fade finishes. That keeps dismissal fade-only while
-     returning to 1.04 invisibly so the next entrance can converge. */
+  /* Begin as the same quiet line shown by the handle-hover preview.
+     Selection strengthens that footprint in place. */
   transition:
-    opacity 170ms cubic-bezier(0.2, 0.85, 0.3, 1),
-    transform 0ms linear 170ms;
-  /* Hint to the compositor that opacity + transform are about to
-     animate, so the browser pre-promotes the element to its own
-     layer instead of repainting on the first transition frame. */
-  will-change: opacity, transform;
+    opacity 150ms cubic-bezier(0.2, 0.85, 0.3, 1),
+    border-color 150ms cubic-bezier(0.2, 0.85, 0.3, 1),
+    border-width 150ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  will-change: opacity;
 }
 .butter-selection-overlay.is-visible {
   opacity: 1;
-  transform: scale(1);
-  /* Enter with the existing soft converge. The base rule supplies a
-     different transform transition for the fade-only exit. */
-  transition:
-    opacity 170ms cubic-bezier(0.2, 0.85, 0.3, 1),
-    transform 170ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  border-width: 3px;
+  border-color: hsla(var(--color-accent-hsl), 0.3);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .butter-selection-overlay,
   .butter-selection-overlay.is-visible {
-    /* Keep the fade as the state cue, but remove all spatial motion. */
-    transform: none;
-    transition: opacity 170ms cubic-bezier(0.2, 0.85, 0.3, 1);
+    /* Keep only the fade cue; border strengthening snaps immediately. */
+    transition: opacity 150ms cubic-bezier(0.2, 0.85, 0.3, 1);
     will-change: opacity;
   }
 }
 
-/* Plain blocks get an invisible default radius so the outline
-   (which follows the element's own border-radius) has rounded
-   corners on paragraphs, headings, lists, blockquotes, hr.
-   Invisible because these blocks have no background or border at
-   rest. Self-framed blocks (callout, code shell, image, etc) have
-   more specific rules with their own --*-radius values; those win.
-   `.butter-list-item` is the flat-schema list block (replacing
-   ul/ol/li). */
-.butter-editor-view .ProseMirror > :is(p, h1, h2, h3, h4, h5, h6, blockquote, hr),
-.butter-editor-view .ProseMirror > .butter-list-item {
-  border-radius: var(--butter-block-radius);
-}
+/* Hover and selection rings carry their own radius on fixed overlays.
+   Do not add an otherwise-invisible radius to ordinary content blocks:
+   `content-visibility:auto` supplies paint containment, and Chromium clips
+   native text selection to that radius when selection starts at the first
+   character of a block. Self-framed blocks retain their own visible radius. */
 
 
 /* Heading "forehead" margin indicator removed - the dashed box
@@ -735,7 +806,20 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    specific rules at 0,2,0+ still win. */
 /* ── Flat list-item rendering ──
  *
- * Each `.butter-list-item` is a top-level block. Layout (Notion-style
+ * The ARIA owner for each contiguous flat-list run is visually inert but
+ * remains in Chromium's accessibility tree. `aria-owns` then restores native
+ * list/listitem semantics without changing the drag-friendly PM schema.
+ */
+.butter-editor-view .butter-list-a11y-owner {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+
+/* Each `.butter-list-item` is a top-level block. Layout (Notion-style
  * indentation - the marker stays INSIDE the editor's content area at
  * every depth, never in the page-margin zone where some themes clip):
  *
@@ -745,7 +829,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
  *
  * `--depth` is set per `data-depth` attr (0..N). `padding-left =
  * (depth + 1) * --list-indent` reserves indent + marker column. The
- * marker `::before` sits at `left: depth * --list-indent` so it's
+ * marker widget sits at `left: depth * --list-indent` so it's
  * always RIGHT BEFORE content, regardless of depth.
  */
 .butter-editor-view .butter-list-item {
@@ -774,19 +858,16 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   margin-bottom: var(--p-spacing, 1em);
 }
 
-/* Marker column - bullets / ordered numbers drawn via ::before,
-   sized exactly --list-indent wide, positioned just to the LEFT of
-   the content edge (= depth * --list-indent inside the padding
-   zone). `data-kind="task"` skips ::before; the checkbox widget
-   from checkbox-plugin sits inline at the start of the paragraph. */
-.butter-editor-view .butter-list-item[data-kind="bullet"]::before,
-.butter-editor-view .butter-list-item[data-kind="ordered"]::before {
-  position: absolute;
-  left: calc(var(--list-indent, 1em) * var(--depth));
-  /* Shift down by the item's padding-top (set by block-spacing.ts as
-     --li-pad-top) so the marker aligns with the first line of content
-     rather than floating at the box top above the padding gap. */
-  top: var(--li-pad-top, 0);
+/* Marker column - bullets / ordered numbers are real, non-editable
+   ProseMirror widgets in the leading paragraph's inline formatting context.
+   A negative margin places the widget in the reserved marker column while
+   its zero net inline advance leaves the text at the normal content edge.
+   Marker and text therefore share one line box and one compositor path during
+   block-drag reflow. `data-kind="task"` skips this marker; the checkbox widget
+   from checkbox-plugin remains inline at the start of the paragraph. */
+.butter-editor-view .butter-list-item > p > .butter-list-marker {
+  display: inline-block;
+  margin-left: calc(-1 * var(--list-indent, 1em));
   width: var(--list-indent, 1em);
   line-height: inherit;
   font-family: inherit;
@@ -795,18 +876,6 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   user-select: none;
   box-sizing: border-box;
   text-align: center;
-}
-.butter-editor-view .butter-list-item[data-kind="bullet"]::before {
-  content: "•";
-}
-/* Ordered marker - `data-number` attr written by the
-   listNumberingPlugin. Falls back to "1" if the plugin hasn't run
-   yet (e.g., during the very first paint). */
-.butter-editor-view .butter-list-item[data-kind="ordered"]::before {
-  content: attr(data-number) ".";
-}
-.butter-editor-view .butter-list-item[data-kind="ordered"]:not([data-number])::before {
-  content: "1.";
 }
 
 /* Paragraphs inside list items collapse to the item's own rhythm. */
@@ -848,14 +917,35 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 
 /* ── Blockquotes ── */
 :where(.butter-editor-view blockquote) {
+  display: flex;
+  flex-direction: column;
   border-left: var(--blockquote-border-thickness, 3px) solid var(--blockquote-border-color, var(--interactive-accent));
   padding: 0 0 0 var(--blockquote-padding, 1em);
   margin: var(--p-spacing, 1em) 0;
   color: var(--blockquote-color, var(--text-normal));
   font-style: var(--blockquote-font-style, normal);
 }
-:where(.butter-editor-view blockquote > :first-child) { margin-top: 0; }
-:where(.butter-editor-view blockquote > :last-child) { margin-bottom: 0; }
+/* Quotes use the same top-owned direct-child flow as the editor root. This
+   removes margin collapse from drag geometry while preserving native rhythm. */
+.butter-editor-view blockquote > :not(.butter-list-a11y-owner) {
+  margin-bottom: 0 !important;
+}
+.butter-editor-view blockquote > :nth-child(1 of :not(.butter-list-a11y-owner)) {
+  margin-top: 0 !important;
+}
+.butter-editor-view blockquote > :is(h1, h2, h3, h4, h5, h6):not(
+  :nth-child(1 of :not(.butter-list-a11y-owner))
+) {
+  margin-top: var(--heading-spacing, 2.5rem) !important;
+}
+.butter-editor-view blockquote > .butter-list-item {
+  margin-top: 0 !important;
+}
+.butter-editor-view blockquote > .butter-list-item:not(.butter-list-item + .butter-list-item):not(
+  :nth-child(1 of :not(.butter-list-a11y-owner))
+) {
+  margin-top: var(--p-spacing, 1em) !important;
+}
 
 /* The accent left-bar is the blockquote's defining visual - it
    should read as a clean rectangular strip. The default
@@ -922,7 +1012,10 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 :where(.butter-editor-view hr) {
   border: none;
   border-top: var(--hr-thickness, 1px) solid var(--hr-color, var(--background-modifier-border));
-  margin: var(--heading-spacing, 1.5em) 0;
+  /* Obsidian core uses 2rem block margins. Root flow converts the collapsed
+     native margin pair into one deterministic gap on the following block,
+     while themes can still override this zero-specificity fallback. */
+  margin: 2rem 0;
 }
 
 /* ── Links ── */
@@ -991,6 +1084,15 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   margin-bottom: var(--p-spacing, 0.75em);
 }
 
+/* The inline embed NodeView must participate in its paragraph's line box.
+   Obsidian's delegated renderer normally emits block preview chrome; the
+   NodeView removes its synthetic <p> and these rules neutralize block margins. */
+.butter-editor-view .butter-obsidian-embed-inline,
+.butter-editor-view .butter-obsidian-embed-inline > .obsidian-render-mount {
+  display: inline;
+  margin: 0;
+}
+
 /* ── Raw-block (error-recovery passthrough) ──
    Shown when Butter's parser couldn't make sense of some source
    bytes. Displays a warning banner + the raw text; bytes still
@@ -998,11 +1100,11 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 .butter-raw-block-view {
   margin: var(--p-spacing, 0.75em) 0;
   border: 1px solid var(--background-modifier-error,
-                       hsla(var(--color-red-rgb), 0.4));
+                       rgba(var(--color-red-rgb), 0.4));
   /* Raw-block is a Butter-specific error UI; use the generic
      medium-chrome radius so it sits alongside other framed blocks. */
   border-radius: var(--radius-m, 8px);
-  background: hsla(var(--color-red-rgb), 0.04);
+  background: rgba(var(--color-red-rgb), 0.04);
   overflow: hidden;
 }
 .butter-raw-block-banner {
@@ -1013,7 +1115,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   font-family: var(--font-interface);
   font-size: 11.5px;
   color: var(--text-error, var(--color-red));
-  background: hsla(var(--color-red-rgb), 0.08);
+  background: rgba(var(--color-red-rgb), 0.08);
   border-bottom: 1px solid var(--background-modifier-border);
   user-select: none;
 }
@@ -1067,12 +1169,130 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
     var(--size-4-2, 8px) var(--size-4-3, 12px));
   user-select: none;
 }
+:where(.butter-editor-view .butter-callout-fold) {
+  cursor: pointer;
+  position: relative;
+}
+@media (pointer: coarse) {
+  :where(.butter-editor-view .butter-callout-fold)::before {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    width: 44px;
+    height: 44px;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+  }
+}
+.butter-editor-view .butter-callout-fold[hidden] {
+  display: none;
+}
+:where(.butter-editor-view .butter-callout-fold:focus-visible) {
+  outline: var(--focus-ring-width, 2px) solid var(--interactive-accent);
+  outline-offset: var(--focus-ring-offset, 2px);
+}
+.butter-editor-view .butter-callout-view.is-collapsed .butter-callout-content {
+  display: none;
+}
 :where(.butter-editor-view .callout-content) {
+  display: flex;
+  flex-direction: column;
   padding: var(--callout-content-padding,
     0 var(--size-4-3, 12px) var(--size-4-2, 10px));
+  padding-bottom: calc(var(--size-4-2, 10px) + var(--p-spacing, 1em));
+  /* Obsidian's horizontal overflow rule computes the other axis to `auto`.
+     A sub-pixel bottom-margin remainder can then create a vertical scrollbar
+     and change the content width during a block drop. Callouts grow with their
+     contents, so vertical scrolling is never the correct ownership model. */
+  overflow-y: clip;
 }
-:where(.butter-editor-view .callout-content > :first-child) { margin-top: 0; }
-:where(.butter-editor-view .callout-content > :last-child) { margin-bottom: 0; }
+
+/* ── Heading folding ──
+   Native Live Preview reserves a narrow fold-control lane immediately left
+   of the heading text. Butter positions the same control out of flow, so
+   neither the note width nor heading rhythm changes. Drag handles remain on
+   one stable outer rail for every block at the same nesting depth. */
+.butter-editor-view .ProseMirror > .butter-heading-foldable {
+  position: relative;
+}
+body:not(.is-mobile) .butter-editor-view .ProseMirror > .butter-heading-foldable {
+  /* `content-visibility:auto` implies paint containment, which clips the
+     native-style disclosure lane outside the heading's own border box. */
+  content-visibility: visible;
+}
+.butter-editor-view .ProseMirror > .butter-heading-folded-content {
+  display: none !important;
+}
+:where(.butter-editor-view .butter-heading-fold-indicator) {
+  position: absolute;
+  inset-inline-start: -15px;
+  top: 0;
+  width: 15px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  cursor: var(--cursor);
+  opacity: 0;
+  user-select: none;
+}
+:where(
+  .butter-editor-view .butter-heading-foldable:hover > .butter-heading-fold-indicator,
+  .butter-editor-view .butter-heading-foldable.is-collapsed > .butter-heading-fold-indicator,
+  .butter-editor-view .butter-heading-fold-indicator:focus-visible
+) {
+  opacity: 1;
+}
+:where(.butter-editor-view .butter-heading-fold-indicator .collapse-indicator) {
+  position: static;
+  width: 15px;
+  height: 100%;
+  padding: 0 5px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  opacity: 1;
+}
+:where(.butter-editor-view .butter-heading-fold-indicator svg) {
+  width: 10px;
+  height: 10px;
+}
+:where(.butter-editor-view .butter-heading-fold-indicator:focus-visible) {
+  outline: var(--focus-ring-width, 2px) solid var(--interactive-accent);
+  outline-offset: var(--focus-ring-offset, 2px);
+}
+/* Callout children use a deterministic top-owned flow. The parent's bottom
+   padding owns the terminal paragraph gap, so moving a child cannot change
+   neighboring geometry through margin collapse or :last-child rules. */
+.butter-editor-view .callout-content > :not(.butter-list-a11y-owner) {
+  margin-bottom: 0 !important;
+}
+.butter-editor-view .callout-content > :is(h1, h2, h3, h4, h5, h6):nth-child(
+  1 of :not(.butter-list-a11y-owner)
+) {
+  margin-top: var(--p-spacing, 1em) !important;
+}
+.butter-editor-view .callout-content > :is(h1, h2, h3, h4, h5, h6):not(
+  :nth-child(1 of :not(.butter-list-a11y-owner))
+) {
+  margin-top: var(--heading-spacing, 2.5rem) !important;
+}
+
+/* Butter keeps list items flat so each item remains independently draggable.
+   Reconstruct the native UL box rhythm without introducing a wrapper: every
+   item keeps Obsidian's --list-spacing, while the first and last item in each
+   accessibility-owned run carry the UL's 1em boundary space. Padding keeps
+   markers and indentation guides moving with the complete visual box. */
+.butter-editor-view .callout-content > .butter-list-item {
+  padding-top: var(--list-spacing, 0.075em);
+  padding-bottom: var(--list-spacing, 0.075em);
+  --li-pad-top: var(--list-spacing, 0.075em);
+  margin-top: 0 !important;
+}
+.butter-editor-view .callout-content > .butter-list-item:not(.butter-list-item + .butter-list-item) {
+  margin-top: var(--p-spacing, 1em) !important;
+}
 
 /* Empty-body callout - keep the body in the layout but slim it down
    so it visually approximates LP's title-only look without the
@@ -1098,6 +1318,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 .butter-editor-view .butter-footnote-ref {
   color: var(--text-accent);
   font-size: 0.8em;
+  position: relative;
   vertical-align: super;
   line-height: 0;
 }
@@ -1112,6 +1333,63 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 
 .butter-editor-view .butter-footnote-ref .footnote-link:hover {
   text-decoration: underline;
+}
+
+.butter-editor-view .butter-inline-footnote-preview {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-s);
+  color: var(--text-normal);
+  display: none;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-normal);
+  left: 50%;
+  line-height: var(--line-height-normal);
+  max-height: min(280px, 50vh);
+  overflow: auto;
+  padding: var(--size-4-2) var(--size-4-3);
+  position: absolute;
+  text-align: start;
+  top: calc(100% + var(--size-4-1));
+  transform: translateX(-50%);
+  vertical-align: initial;
+  white-space: normal;
+  width: min(320px, calc(100vw - 32px));
+  z-index: var(--layer-popover);
+}
+
+.butter-editor-view .butter-footnote-ref:hover > .butter-inline-footnote-preview,
+.butter-editor-view .butter-footnote-ref:focus-within > .butter-inline-footnote-preview {
+  display: block;
+}
+
+.butter-editor-view .butter-inline-footnote-preview p {
+  margin: 0;
+}
+
+.butter-editor-view .butter-footnote-ref.is-unresolved {
+  color: var(--text-muted);
+  font-size: 1em;
+  vertical-align: baseline;
+}
+
+.butter-editor-view .butter-footnote-ref.is-unresolved .footnote-link {
+  color: var(--text-muted);
+  cursor: text;
+  font-size: 1em;
+  padding: 0;
+  text-decoration: none;
+}
+
+.butter-editor-view .butter-footnote-ref.is-footnote-target,
+.butter-editor-view .butter-footnote-def-view.is-footnote-target {
+  animation: butter-footnote-target 1.3s ease-out;
+}
+
+@keyframes butter-footnote-target {
+  0%, 28% { background-color: color-mix(in srgb, var(--text-accent) 22%, transparent); }
+  100% { background-color: transparent; }
 }
 
 /* ── Footnote definitions section ── */
@@ -1143,6 +1421,38 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 .butter-editor-view .butter-footnote-content p {
   display: inline;
   margin: 0;
+}
+
+.butter-editor-view .butter-footnote-backrefs {
+  display: inline-flex;
+  gap: 2px;
+  margin-inline-start: 4px;
+  vertical-align: baseline;
+}
+
+.butter-editor-view .butter-footnote-backref {
+  color: var(--text-accent);
+  display: inline-flex;
+  font-size: 0.85em;
+  height: 1.25em;
+  min-width: 1.25em;
+  padding: 0 2px;
+  vertical-align: baseline;
+}
+
+.butter-editor-view .butter-footnote-def-view.is-orphan .butter-footnote-label {
+  color: var(--text-muted);
+}
+
+/* Reference-link definitions have no rendered prose representation, but
+ * keeping them visible as compact source blocks preserves conventional
+ * selection, Cut, paste-over-selection, Ctrl+A/Delete, and drag behavior. */
+.butter-editor-view .butter-reference-definition {
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  font-size: var(--font-smaller, 0.9em);
+  line-height: var(--line-height-normal);
+  white-space: pre-wrap;
 }
 
 /* ── Block IDs ── */
@@ -1202,7 +1512,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    ruler. Element is fixed-positioned, parented to <body>, with
    pointer-events disabled - never interferes with PM coords or
    the underlying mousedown that actually spawns the paragraph.
-   The element's `left` is set to (block.left − 30) by the JS, so
+   The element's `left` is set to (block.left − 39) by the JS, so
    the first 22px (matching `.butter-drag-handle` width) lines up
    exactly with the per-block drag-handle column. */
 .butter-spawn-hint {
@@ -1244,12 +1554,12 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   -webkit-mask: var(--butter-plus-mask) center / 16px 16px no-repeat;
 }
 /* The horizontal line - solid edge-to-edge, starting at the
-   block's left edge (the gutter ends at 30px from hint-left)
+   block's left edge (the gutter ends at 39px from hint-left)
    and running flush to the right boundary. */
 .butter-spawn-hint::after {
   content: "";
   position: absolute;
-  left: 30px;
+  left: var(--butter-spawn-gutter-width, 39px);
   right: 0;
   top: 50%;
   height: 1px;
@@ -1261,54 +1571,179 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   opacity: 0.7;
 }
 
-/* IN / OUT animation for the spawned ephemeral paragraph itself.
-   Animates opacity + max-height + margins so the surrounding doc
-   smoothly absorbs/releases the paragraph's vertical space rather
-   than snapping at the start/end. `overflow: hidden` is required
-   for the max-height clamp to actually clip during the animation;
-   it has no visible side effect on an empty paragraph (no content
-   to clip).
+/* Direct image placement. Block destinations deliberately inherit the
+   ordinary click-to-spawn line and plus; the image glyph names the payload. */
+.butter-image-block-drop-indicator {
+  z-index: 1002;
+  opacity: 0;
+}
+.butter-image-block-drop-indicator.is-visible {
+  opacity: 1;
+}
+.butter-image-block-drop-icon {
+  position: absolute;
+  /* Center in the free span between the plus's 22px box and the
+     canonical ruler start, leaving equal air on both sides. */
+  left: calc((22px + var(--butter-spawn-gutter-width, 39px)) / 2);
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  color: var(--interactive-accent);
+  transform: translate(-50%, -50%);
+}
+.butter-image-block-drop-icon svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
 
-   Durations: in 160ms, out 140ms. The OUT keyframe uses `forwards`
-   so the paragraph stays at opacity 0 / height 0 after the
-   keyframe ends; the JS timer in click-to-spawn.ts then dispatches
-   the actual delete tr (LEAVE_ANIMATION_MS = 140ms - keep these
-   in lockstep). */
+.butter-image-inline-drop-indicator {
+  position: fixed;
+  z-index: 1002;
+  width: 2px;
+  min-height: 18px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+  box-shadow: 0 0 0 1px var(--background-primary);
+  pointer-events: none;
+  opacity: 0;
+}
+.butter-image-inline-drop-indicator.is-visible {
+  opacity: 1;
+}
+.butter-image-inline-drop-icon {
+  position: absolute;
+  left: 50%;
+  top: -22px;
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  color: var(--interactive-accent);
+  background: var(--background-primary);
+  border: 0;
+  border-radius: 3px;
+  transform: translateX(-50%);
+}
+.butter-image-inline-drop-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.butter-image-move-ghost {
+  position: fixed;
+  z-index: 1003;
+  max-width: 220px;
+  max-height: 160px;
+  overflow: hidden;
+  border: 1px solid var(--interactive-accent);
+  border-radius: var(--radius-s, 4px);
+  box-shadow: var(--shadow-l);
+  background: var(--background-primary);
+  opacity: 0.82;
+  pointer-events: none;
+}
+.butter-image-move-ghost > img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 220px;
+  max-height: 160px;
+  object-fit: contain;
+}
+.butter-image-move-badge {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+  border-radius: 5px;
+}
+.butter-image-move-badge svg {
+  width: 14px;
+  height: 14px;
+}
+body.butter-is-image-dragging,
+body.butter-is-image-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+/* IN / OUT animation for the spawned ephemeral paragraph itself.
+   Top-level flow gives every ordinary paragraph one `--p-spacing`
+   margin plus one line box. The ephemeral owns that same total footprint
+   as height + padding while it is empty, which makes the next block follow
+   one monotonic curve instead of receiving an immediate margin jump and a
+   second height animation. `1lh` resolves to the active theme's exact line
+   height; when typing removes the ephemeral class, the normal margin + line
+   box therefore has the same endpoint geometry.
+
+   Keep overflow visible: clipping this empty caret host can hide a caret
+   whose theme geometry extends just outside the paragraph bounds. Opacity
+   hides it while the footprint is near zero.
+
+   Durations: in 180ms, out 160ms. The OUT keyframe uses `forwards`
+   so the paragraph stays at opacity 0 / height 0 after the keyframe ends;
+   the JS timer in click-to-spawn.ts then dispatches the actual delete tr. */
 @keyframes butter-spawn-in {
   from {
     opacity: 0;
-    max-height: 0;
-    margin-top: 0;
-    margin-bottom: 0;
+    height: 0;
+    padding-top: 0;
   }
   to {
     opacity: 1;
-    max-height: 4em;
-    margin-top: var(--p-spacing, 1em);
-    margin-bottom: var(--p-spacing, 1em);
+    height: calc(1lh + var(--p-spacing, 1em));
+    padding-top: var(--p-spacing, 1em);
   }
 }
 @keyframes butter-spawn-out {
   from {
     opacity: 1;
-    max-height: 4em;
-    margin-top: var(--p-spacing, 1em);
-    margin-bottom: var(--p-spacing, 1em);
+    height: calc(1lh + var(--p-spacing, 1em));
+    padding-top: var(--p-spacing, 1em);
   }
   to {
     opacity: 0;
-    max-height: 0;
-    margin-top: 0;
-    margin-bottom: 0;
+    height: 0;
+    padding-top: 0;
   }
 }
-.butter-editor-view .ProseMirror > p.butter-spawn-ephemeral {
-  animation: butter-spawn-in 160ms cubic-bezier(0.2, 0.85, 0.3, 1);
-  overflow: hidden;
+.butter-editor-view .ProseMirror > p:is(.butter-spawn-ephemeral, .butter-spawn-leaving) {
+  box-sizing: border-box;
+  min-height: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
 }
-.butter-editor-view .ProseMirror > p.butter-spawn-leaving {
-  animation: butter-spawn-out 140ms ease-in forwards;
-  overflow: hidden;
+body:not(.butter-no-anim) .butter-editor-view .ProseMirror > p.butter-spawn-ephemeral {
+  height: calc(1lh + var(--p-spacing, 1em));
+  padding-top: var(--p-spacing, 1em);
+  /* Important only isolates this one interaction from the higher-specificity
+     staggered note-load animation. `body:not(.butter-no-anim)` keeps the
+     master animation preference authoritative. */
+  animation: butter-spawn-in 180ms cubic-bezier(0.2, 0.85, 0.3, 1) !important;
+  overflow: visible;
+}
+body:not(.butter-no-anim) .butter-editor-view .ProseMirror > p.butter-spawn-leaving {
+  animation: butter-spawn-out 160ms cubic-bezier(0.4, 0, 1, 1) forwards !important;
+  overflow: visible;
+}
+/* The animation preference removes motion, not endpoint geometry. Keeping the
+   same 40px-equivalent footprint prevents a later jump when typing confirms
+   the paragraph and removes its ephemeral class. */
+body.butter-no-anim .butter-editor-view .ProseMirror > p.butter-spawn-ephemeral {
+  height: calc(1lh + var(--p-spacing, 1em));
+  padding-top: var(--p-spacing, 1em);
+  opacity: 1;
+}
+body.butter-no-anim .butter-editor-view .ProseMirror > p.butter-spawn-leaving {
+  height: 0;
+  padding-top: 0;
+  opacity: 0;
 }
 
 /* Tables get paragraph-equivalent vertical spacing so they breathe
@@ -1451,15 +1886,13 @@ body:not(.is-mobile) .butter-toolbar-scroll > * {
    bottom mode). Real chrome row - content scrolls underneath it
    without sticky tricks. Hairline border separates it from the
    document. Default style. */
-body:not(.is-mobile) .butter-toolbar[data-toolbar-style="attached"][data-toolbar-pos="top"],
-body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"][data-toolbar-pos="top"] {
+body:not(.is-mobile) .butter-toolbar[data-toolbar-style="attached"][data-toolbar-pos="top"] {
   border-bottom: var(--border-width, 1px) solid
     var(--background-modifier-border);
   margin: 0;
   flex: 0 0 auto;
 }
-body:not(.is-mobile) .butter-toolbar[data-toolbar-style="attached"][data-toolbar-pos="bottom"],
-body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"][data-toolbar-pos="bottom"] {
+body:not(.is-mobile) .butter-toolbar[data-toolbar-style="attached"][data-toolbar-pos="bottom"] {
   border-top: var(--border-width, 1px) solid
     var(--background-modifier-border);
   margin: 0;
@@ -1474,7 +1907,12 @@ body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"][data-toolb
    The toolbar is transparent and borderless here so it inherits
    the view-header's own background. */
 body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"] {
-  flex: 1 1 auto;
+  /* Obsidian gives direct view-header children a non-growing flex
+     basis. Override that contract so Butter consumes only the space
+     between the native left and right controls instead of overflowing
+     the pane and pushing view-actions offscreen. */
+  flex: 1 1 0 !important;
+  width: 0;
   min-width: 0;
   background: transparent;
   border: 0;
@@ -1482,6 +1920,17 @@ body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"] {
   margin: 0;
   height: auto;
   overflow: hidden;
+}
+body:not(.is-mobile) .view-header.butter-integrated-header {
+  position: relative;
+  overflow: visible;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding-top: var(--size-2-2, 4px);
+  padding-bottom: var(--size-2-2, 4px);
+  border-bottom: var(--border-width, 1px) solid
+    var(--background-modifier-border);
 }
 body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"]
   .butter-toolbar-scroll {
@@ -1492,24 +1941,32 @@ body:not(.is-mobile) .butter-toolbar[data-toolbar-style="integrated"] .butter-to
   min-width: 0;
 }
 
-/* View-header marker class - applied by applyToolbarPosition when
-   integrated is active. Lets the title-container restyle as a pill
-   without affecting other Obsidian views. */
-.view-header.butter-integrated-header .view-header-title-container {
-  background: var(--background-modifier-hover);
-  border-radius: 999px;
-  padding: 2px 12px;
-  margin: 0 6px;
-  flex: 0 1 auto;
-  max-width: 220px;
-  transition: background 120ms ease;
-}
-.view-header.butter-integrated-header .view-header-title-container:hover {
-  background: var(--background-modifier-active-hover, var(--background-secondary));
-}
-.view-header.butter-integrated-header[data-butter-show-title="0"]
-  .view-header-title-container {
+/* Obsidian centers the filename container independently of the
+   header's flex flow. It would overlap the integrated toolbar, while
+   the document's inline title already carries the note name. */
+body:not(.is-mobile) .view-header.butter-integrated-header
+  > .view-header-title-container {
   display: none;
+}
+
+body:not(.is-mobile) .view-header.butter-integrated-header
+  > :is(.view-header-left, .view-actions) {
+  position: relative;
+  z-index: 11;
+  flex: 0 0 auto;
+}
+
+/* Table tools remain a second row below the note header. Keeping
+   them out of the header's flex flow prevents the filename, main
+   toolbar, and native view actions from jumping when table focus
+   changes. */
+body:not(.is-mobile) .view-header.butter-integrated-header
+  > .butter-table-toolbar[data-toolbar-style="integrated"] {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  width: 100%;
 }
 
 /* ── Detached / floating-card style ──
@@ -2401,7 +2858,7 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
      hover/press/active states inside the pill use the theme's
      pressed-state tokens (set below) for a subtle focus inkblot.
      Reset UA chrome that survives our padding/border/font resets
-     on `<button>` elements (defensive - we use `<div>` today). */
+     on the native `<button>` action elements. */
   -webkit-appearance: none;
   appearance: none;
   background: transparent;
@@ -2644,8 +3101,15 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
   display: flex;
   align-items: center;
   gap: 12px;
+  width: 100%;
   padding: 10px 12px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: 0;
   border-radius: var(--radius-s, 4px);
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   color: var(--text-normal);
 }
@@ -2717,7 +3181,14 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
   display: flex;
   align-items: center;
   gap: 16px;
+  width: 100%;
   padding: 14px 20px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   min-height: 56px;
   color: var(--text-normal);
@@ -2793,14 +3264,20 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
 }
 
 /* Mobile insert-image dialog. */
+.butter-image-insert-options,
 .butter-mobile-image-options {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
+.butter-image-file-option,
 .butter-mobile-image-option {
   min-height: 48px;
   font-size: var(--font-ui-medium, 14px);
+}
+.butter-image-file-input,
+.butter-mobile-file-input {
+  display: none;
 }
 .butter-mobile-image-url-row {
   display: flex;
@@ -2955,6 +3432,516 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
 /* `.butter-setting-group` is a scope marker. Obsidian owns the
    spacing of native setting groups and rows so Butter follows the
    density of the installed Obsidian version and active theme. */
+.butter-settings-page {
+  --butter-settings-content-inset: var(--size-4-5, 20px);
+}
+.butter-normalizer-command-note {
+  margin-inline: var(--butter-settings-content-inset, 20px);
+  padding: 12px 0 16px;
+  border-top: var(--border-width, 1px) solid var(--background-modifier-border);
+}
+
+/* Declarative settings pages remain native navigable rows. Obsidian's page
+   definition API has no icon property, so Butter adds a small, non-layout-
+   owning Lucide prefix inside the native name element. */
+.butter-settings-page-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: var(--size-4-2, 8px);
+  color: var(--text-muted);
+  vertical-align: -3px;
+}
+.butter-settings-page-icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+.butter-settings-page-new-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  margin-left: var(--size-2-2, 4px);
+  padding: 0 var(--size-2-2, 4px);
+  border-radius: var(--radius-s, 4px);
+  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+  color: var(--text-accent);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold, 600);
+  line-height: 1;
+  vertical-align: 1px;
+}
+.setting-item.mod-navigable.butter-settings-page-link {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+.setting-item.mod-navigable.butter-settings-page-link > .setting-item-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: var(--size-4-3, 12px);
+}
+.setting-item.mod-navigable.butter-settings-page-link > .setting-item-control {
+  flex: 0 0 auto;
+  margin: 0;
+}
+.is-phone .modal .setting-item.mod-navigable.butter-settings-page-link {
+  flex-direction: row;
+  align-items: center;
+}
+.is-phone .modal .setting-item.mod-navigable.butter-settings-page-link
+  > .setting-item-info {
+  align-self: center;
+  margin-inline-end: var(--size-4-3, 12px);
+}
+.is-phone .modal .setting-item.mod-navigable.butter-settings-page-link
+  > .setting-item-control {
+  width: auto;
+  justify-content: flex-end;
+}
+.setting-item.mod-navigable.butter-settings-page-link:focus-visible {
+  background-color: var(--background-modifier-hover);
+}
+.setting-item.mod-navigable.butter-settings-page-link:focus-visible .butter-settings-page-icon {
+  color: var(--text-normal);
+}
+@media (hover: hover) and (pointer: fine) {
+  .setting-item.mod-navigable.butter-settings-page-link:hover,
+  .setting-item.mod-navigable.butter-settings-page-link:active {
+    background-color: var(--background-modifier-hover);
+  }
+  .setting-item.mod-navigable.butter-settings-page-link:hover
+    .butter-settings-page-icon {
+    color: var(--text-normal);
+  }
+}
+.butter-settings-page-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.butter-settings-page-chevron .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Obsidian mobile versions without SettingPage still receive the same
+   grouped settings index. Native setting-group/setting-item geometry owns
+   spacing and touch density; Butter only supplies page navigation. */
+.butter-settings-fallback-index {
+  --butter-settings-content-inset: var(--size-4-5, 20px);
+}
+.butter-settings-fallback-index > .setting-group + .setting-group {
+  margin-top: var(--size-4-4, 16px);
+}
+.butter-settings-fallback-header {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2, 8px);
+  min-height: 40px;
+  margin-bottom: var(--size-4-3, 12px);
+}
+.butter-settings-fallback-title.setting-item {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.butter-settings-fallback-title .setting-item-name {
+  margin: 0;
+}
+.butter-settings-fallback-back {
+  flex: 0 0 auto;
+  margin: 0;
+}
+.butter-settings-fallback-back .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+.is-mobile .butter-settings-scroll-safe-slider {
+  touch-action: pan-y;
+}
+
+.butter-feedback-form .setting-item-control input[type="text"],
+.butter-feedback-form .setting-item-control input[type="email"],
+.butter-feedback-form .setting-item-control textarea {
+  width: min(100%, 420px);
+}
+.butter-feedback-message {
+  min-height: 132px;
+  resize: vertical;
+}
+.butter-feedback-diagnostics-row.is-hidden {
+  display: none;
+}
+.butter-feedback-diagnostics {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--size-2-1, 2px) var(--size-4-3, 12px);
+  margin: var(--size-2-2, 4px) 0 0;
+}
+.butter-feedback-diagnostics dt {
+  color: var(--text-faint);
+}
+.butter-feedback-diagnostics dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.butter-feedback-status {
+  min-height: 1.3em;
+  margin-top: var(--size-2-2, 4px);
+  font-size: var(--font-ui-smaller);
+}
+.butter-feedback-status.is-success {
+  color: var(--text-success, var(--color-green));
+}
+.butter-feedback-status.is-error {
+  color: var(--text-error);
+}
+@media (max-width: 700px) {
+  .butter-feedback-form .setting-item {
+    align-items: stretch;
+  }
+  .butter-feedback-form .setting-item-control,
+  .butter-feedback-form .setting-item-control input[type="text"],
+  .butter-feedback-form .setting-item-control input[type="email"],
+  .butter-feedback-form .setting-item-control textarea {
+    width: 100%;
+  }
+  .butter-feedback-diagnostics {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .butter-feedback-diagnostics dd + dt {
+    margin-top: var(--size-2-2, 4px);
+  }
+}
+
+/* The dynamic license summary is its own native declarative setting group,
+   structurally separate from the page-navigation group below it. Obsidian
+   therefore owns both containers' surface, corners, and padding equally. */
+.setting-group.butter-settings-license-status-container
+  .setting-item.butter-settings-license-status {
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+.setting-group.butter-settings-license-status-container
+  .setting-item.butter-settings-license-status:focus-visible {
+  background-color: var(--background-modifier-hover);
+}
+@media (hover: hover) and (pointer: fine) {
+  .setting-group.butter-settings-license-status-container
+    .setting-item.butter-settings-license-status:hover {
+    background-color: var(--background-modifier-hover);
+  }
+}
+.setting-group.butter-settings-license-status-container
+  .setting-item.butter-settings-license-status:focus {
+  outline: none;
+}
+.setting-group.butter-settings-license-status-container
+  .setting-item.butter-settings-license-status:focus-visible {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+.butter-settings-license-status .setting-item-name {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2, 4px);
+  font-weight: var(--font-semibold, 600);
+}
+.butter-settings-license-status .setting-item-description {
+  margin-top: var(--size-2-1, 2px);
+  line-height: var(--line-height-tight, 1.3);
+}
+.butter-settings-license-status__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+.butter-settings-license-status__icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+.butter-settings-license-status.is-accent .butter-settings-license-status__icon {
+  color: var(--text-accent);
+}
+.butter-settings-license-status.is-warning .butter-settings-license-status__icon {
+  color: var(--text-warning, var(--color-yellow));
+}
+.butter-settings-license-status.is-danger .butter-settings-license-status__icon {
+  color: var(--text-error);
+}
+.butter-settings-license-status.is-muted .butter-settings-license-status__icon {
+  animation: butter-spin 1.2s linear infinite;
+}
+.butter-settings-license-status .setting-item-control button {
+  white-space: nowrap;
+}
+.setting-group.butter-settings-whats-new-container
+  .setting-item.butter-settings-whats-new-card {
+  transition: background-color 100ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .setting-group.butter-settings-whats-new-container
+    .setting-item.butter-settings-whats-new-card:hover {
+    background-color: var(--background-modifier-hover);
+  }
+}
+.butter-settings-whats-new-card .setting-item-name {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2, 4px);
+  font-weight: var(--font-semibold, 600);
+}
+.butter-settings-whats-new-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-accent);
+}
+.butter-settings-whats-new-card__icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+.butter-settings-whats-new-card .setting-item-control > button {
+  white-space: nowrap;
+}
+@media (max-width: 520px) {
+  .setting-group.butter-settings-license-status-container
+    .setting-item.butter-settings-license-status {
+    align-items: center;
+    gap: var(--size-4-2, 8px);
+  }
+  .butter-settings-license-status .setting-item-info {
+    min-width: 0;
+  }
+  .butter-settings-license-status .setting-item-description {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ── What's New transient release-note view ───────────────── */
+.butter-whats-new-view {
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  background: var(--background-primary);
+}
+.butter-whats-new-scroller {
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.butter-whats-new-article {
+  box-sizing: border-box;
+  width: min(100%, 860px);
+  min-height: 100%;
+  margin-inline: auto;
+  padding: clamp(32px, 6vw, 72px) clamp(22px, 6vw, 64px) 80px;
+}
+.butter-whats-new-hero {
+  margin-bottom: clamp(44px, 7vw, 68px);
+}
+.butter-whats-new-release {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-m, 8px);
+  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+  color: var(--text-accent);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold, 600);
+}
+.butter-whats-new-release .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+.butter-whats-new-hero h1 {
+  margin: 18px 0 6px;
+  border: 0;
+  font-size: clamp(2.25rem, 7vw, 4rem);
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+}
+.butter-whats-new-headline {
+  margin: 0;
+  color: var(--text-normal);
+  font-size: clamp(1.2rem, 2.5vw, 1.55rem);
+  font-weight: var(--font-semibold, 600);
+  line-height: 1.3;
+}
+.butter-whats-new-summary {
+  max-width: 680px;
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-text-size);
+  line-height: 1.65;
+}
+.butter-whats-new-preference {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  max-width: 680px;
+  margin-top: 28px;
+  padding: 16px 18px;
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-radius: var(--radius-l, 12px);
+  background: var(--background-secondary);
+  box-shadow: none;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+.butter-whats-new-preference.is-enabled {
+  border-color: color-mix(in srgb, var(--interactive-accent) 72%, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--interactive-accent) 15%, var(--background-primary));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--interactive-accent) 9%, transparent);
+}
+.butter-whats-new-preference-control {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+.butter-whats-new-preference-control .checkbox-container.is-enabled {
+  background-color: var(--interactive-accent);
+}
+.butter-whats-new-preference-title {
+  color: var(--text-normal);
+  font-weight: var(--font-semibold, 600);
+}
+.butter-whats-new-preference.is-enabled .butter-whats-new-preference-title {
+  color: color-mix(in srgb, var(--interactive-accent) 70%, var(--text-normal));
+}
+.butter-whats-new-release-section {
+  margin: 0 0 clamp(64px, 9vw, 92px);
+  padding-top: 24px;
+  border-top: var(--border-width, 1px) solid var(--background-modifier-border);
+}
+.butter-whats-new-article > .butter-whats-new-release-section:last-of-type {
+  margin-bottom: 0;
+}
+.butter-whats-new-section-title {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 0 0 clamp(34px, 5vw, 48px);
+  border: 0;
+  color: var(--text-accent);
+  font-size: clamp(1.8rem, 4vw, 2.35rem);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+.butter-whats-new-section-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-accent);
+}
+.butter-whats-new-section-icon .svg-icon {
+  width: 0.9em;
+  height: 0.9em;
+  stroke-width: 2;
+}
+.butter-whats-new-demo {
+  margin: 0 0 clamp(52px, 8vw, 78px);
+}
+.butter-whats-new-demo:last-child {
+  margin-bottom: 0;
+}
+.butter-whats-new-demo h3 {
+  margin-bottom: 8px;
+  border: 0;
+  font-size: clamp(1.45rem, 3vw, 1.85rem);
+  letter-spacing: -0.015em;
+}
+.butter-whats-new-demo > p {
+  margin: 0 0 18px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.butter-whats-new-demo-frame {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  overflow: hidden;
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-radius: var(--radius-l, 12px);
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+}
+.butter-whats-new-demo-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  border-radius: inherit;
+}
+.butter-whats-new-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.butter-whats-new-play .svg-icon {
+  width: 15px;
+  height: 15px;
+}
+.butter-whats-new-demo-error {
+  max-width: 460px;
+  padding: 28px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.butter-whats-new-list {
+  margin: 0;
+}
+.butter-whats-new-list ul {
+  margin-top: 14px;
+  padding-inline-start: 1.35em;
+}
+.butter-whats-new-list li {
+  margin-block: 9px;
+  padding-inline-start: 5px;
+  line-height: 1.55;
+}
+.butter-whats-new-list li::marker {
+  color: var(--text-accent);
+}
+.butter-whats-new-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 58px;
+  padding-top: 22px;
+  border-top: var(--border-width, 1px) solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.butter-whats-new-footer .svg-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-accent);
+}
+@media (max-width: 600px) {
+  .butter-whats-new-article {
+    padding-inline: 18px;
+    padding-bottom: max(64px, env(safe-area-inset-bottom));
+  }
+  .butter-whats-new-preference {
+    padding: 14px;
+  }
+  .butter-whats-new-demo-frame {
+    border-radius: var(--radius-m, 8px);
+  }
+}
 
 /* Icon prefix on the "Customize buttons" intro row. The icon shares
    the row's text color and sits inline with the title, separated by
@@ -3594,7 +4581,8 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
 /* Mobile preset editor: large swatch chips that open the in-app colour
    picker (replaces the desktop native <input type=color> row). */
 .butter-preset-chip-group {
-  margin-top: var(--size-4-2, 8px);
+  margin: var(--size-4-2, 8px)
+    var(--butter-settings-content-inset, 20px) 0;
 }
 .butter-preset-chip-label {
   color: var(--text-faint);
@@ -3815,6 +4803,15 @@ body.is-mobile .butter-editor-view .butter-table-toolbar {
   color: var(--text-faint);
 }
 
+.butter-properties-wrapper .butter-property-mixed-wikilinks {
+  cursor: text;
+  white-space: pre-wrap;
+}
+
+.butter-properties-wrapper .butter-property-wikilink {
+  cursor: pointer;
+}
+
 /* Collapse indicator + content fold. Obsidian's native rules scope
    to .markdown-source-view / .markdown-rendered which Butter's view
    doesn't carry, so the rotation never fires without these. */
@@ -3851,17 +4848,17 @@ body.is-mobile .butter-editor-view .butter-table-toolbar {
    shows raw), and visually pushing the note down. Leave it
    alone on mobile. */
 
-/* Push view-actions to the far right. Obsidian relies on
-   .view-header-title-container's `flex: 1` to absorb the middle
-   space and push view-actions right. We've taken title-container
-   out of the flex flow (absolute positioning above), so view-
-   actions would otherwise pack next to nav-buttons on the left.
-   `margin-left: auto` on view-actions absorbs the gap and
-   re-pins it to the right. */
-body:not(.is-mobile) .butter-view-root .view-header .view-actions {
+/* Optional filename pill. When enabled, the title container leaves
+   Obsidian's native flex flow and centers absolutely. The matching
+   view-actions rule keeps native actions pinned to the right. With
+   the setting off, none of these rules apply and Obsidian owns the
+   filename geometry and appearance. */
+body:not(.is-mobile) .butter-view-root[data-filename-pill="true"]
+  .view-header .view-actions {
   margin-left: auto;
 }
-body:not(.is-mobile) .butter-view-root .view-header-title-container {
+body:not(.is-mobile) .butter-view-root[data-filename-pill="true"]
+  .view-header-title-container {
   position: absolute;
   left: 50%;
   top: 50%;
@@ -3883,9 +4880,28 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container {
   transition: background 120ms ease;
   pointer-events: auto;
 }
-body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
+body:not(.is-mobile) .butter-view-root[data-filename-pill="true"]
+  .view-header-title-container:hover {
   background: var(--background-modifier-active-hover, var(--background-secondary));
   color: var(--text-normal);
+}
+
+/* Match Obsidian's native filename-edit transition: the breadcrumb portion
+   collapses and fades while the title receives the editing focus, then
+   returns when editing finishes. Width is measured by the view because the
+   breadcrumb text varies; all visual properties remain class-driven. */
+body:not(.is-mobile) .butter-view-root
+  .view-header-title-parent.butter-header-breadcrumb-animated {
+  flex: 0 0 auto;
+  width: var(--butter-header-breadcrumb-width);
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 150ms ease-in-out, width 150ms ease-in-out;
+}
+body:not(.is-mobile) .butter-view-root
+  .view-header-title-parent.butter-header-breadcrumb-animated.is-collapsed {
+  width: 0;
+  opacity: 0;
 }
 
 /* Native LP/Reading toggle is hidden per-view by main.ts's
@@ -4043,6 +5059,28 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
   font-size: 12px;
 }
 
+.butter-slash-category {
+  padding: 8px 8px 3px;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller, 11px);
+  font-weight: var(--font-semibold, 600);
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  user-select: none;
+}
+
+.butter-slash-category:first-child {
+  padding-top: 5px;
+}
+
+.butter-slash-trigger {
+  color: hsla(var(--interactive-accent-hsl), 0.58);
+}
+
+.butter-slash-query {
+  color: var(--interactive-accent);
+}
+
 /* ══════════════════════════════════════════
    External suggest bridge layout
    ══════════════════════════════════════════ */
@@ -4145,99 +5183,6 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
    Block drag handle
    ══════════════════════════════════════════ */
 
-/* ══════════════════════════════════════════
-   Settings: tabs
-
-   Visual style: small underline-on-active, muted/normal/accent
-   color states, native font sizes. Two intentional details:
-     1. NOT position: sticky - sticky fights the keyboard on mobile
-        and rarely earns its keep at this scroll length.
-     2. Horizontal scroll on overflow so the row of tabs never
-        forces the settings page wider than the modal viewport.
-        Scrollbar is hidden for the clean look; tabs still scroll
-        via touch swipe / trackpad / shift-wheel.
-   ══════════════════════════════════════════ */
-/* Wrap holds the scrollable tab bar plus its overflow indicators.
- * Position:relative so the absolute-positioned indicators anchor
- * to the wrap's bounds. The bottom border lives here (not on
- * .butter-settings-tabs) so the indicators sit on top of it
- * uninterrupted instead of leaving a visible gap at each edge. */
-.butter-settings-tabs-wrap {
-  position: relative;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-.butter-settings-tabs {
-  display: flex;
-  gap: 0;
-  /* Horizontal scroll on overflow - page width never exceeds the modal. */
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  -webkit-overflow-scrolling: touch;
-  flex-wrap: nowrap;
-}
-.butter-settings-tabs::-webkit-scrollbar { display: none; height: 0; }
-
-/* Overflow indicators - chevrons that appear at the bar's edges
- * when content is scrolled off-screen. Clickable, scroll by one
- * tab's width in their direction. Visible state is toggled by
- * .is-visible from JS. A subtle background gradient hints that
- * content continues underneath. */
-.butter-settings-tabs-indicator {
-  position: absolute;
-  top: 0;
-  bottom: 1px;            /* leave the bottom border visible underneath */
-  width: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  user-select: none;
-  transition: opacity 0.15s ease, color 0.15s ease;
-  z-index: 1;
-}
-.butter-settings-tabs-indicator.is-visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-.butter-settings-tabs-indicator:hover {
-  color: var(--text-normal);
-}
-.butter-settings-tabs-indicator:focus {
-  outline: none;
-}
-.butter-settings-tabs-indicator:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: -2px;
-}
-.butter-settings-tabs-indicator.is-left {
-  left: 0;
-  background: linear-gradient(
-    to right,
-    var(--background-primary) 0%,
-    var(--background-primary) 50%,
-    transparent 100%
-  );
-}
-.butter-settings-tabs-indicator.is-right {
-  right: 0;
-  background: linear-gradient(
-    to left,
-    var(--background-primary) 0%,
-    var(--background-primary) 50%,
-    transparent 100%
-  );
-}
-.butter-settings-tabs-indicator .svg-icon {
-  width: 16px;
-  height: 16px;
-}
-
 .butter-toolbar-update-toast {
   position: sticky;
   top: var(--size-4-2, 8px);
@@ -4280,64 +5225,6 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
 .butter-toolbar-update-toast__label {
   font-size: var(--font-ui-small);
   font-weight: var(--font-medium);
-}
-
-/* The tab is a <div role="tab">, not a <button>, specifically so
- * Obsidian's and themes' button styling doesn't apply. The resets
- * below are explicit so even if a theme reaches the class directly,
- * the tab stays a plain text label with an underline-on-active.
- * `box-shadow` and `background` reset matter most - those are what
- * common themes use to give buttons their "chip" look. */
-.butter-settings-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  margin: 0;
-  margin-bottom: -1px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  background-color: transparent;
-  background-image: none;
-  box-shadow: none;
-  color: var(--text-muted);
-  font-size: var(--font-ui-small);
-  font-weight: var(--font-medium);
-  font-family: inherit;
-  line-height: 1.4;
-  text-shadow: none;
-  cursor: pointer;
-  user-select: none;
-  flex: 0 0 auto;
-  white-space: nowrap;
-  transition: color 0.15s ease, border-color 0.15s ease;
-}
-.butter-settings-tab:hover {
-  color: var(--text-normal);
-  background: transparent;
-  background-color: transparent;
-  box-shadow: none;
-}
-.butter-settings-tab.is-active {
-  color: var(--text-accent);
-  border-bottom-color: var(--interactive-accent);
-  background: transparent;
-  background-color: transparent;
-  box-shadow: none;
-}
-.butter-settings-tab:focus {
-  outline: none;
-  box-shadow: none;
-}
-.butter-settings-tab:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: -2px;
-}
-
-.butter-settings-tab-body {
-  padding-bottom: 24px;
 }
 
 /* ── License tab - minimal hooks for native Setting rows ─────── */
@@ -4395,10 +5282,9 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
    butter progress hairline, a nested settings card (bg-secondary
    surface with hairline-divided rows), and a state-aware
    destructive footer button (Sign out for licensed/trial states,
-   Reset for the rest). Below the column the Device + Support
-   sections render as plain native Obsidian setting stacks for
-   utility access; only the polished column carries the
-   polished chrome.
+   Reset for the rest). Below the column the Devices section renders
+   as a plain native Obsidian setting stack; help and diagnostics live
+   on their own Support page.
    ────────────────────────────────────────────────────────────── */
 
 :root {
@@ -4467,6 +5353,7 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
    current-device row and the "no active license on this device"
    line for unlicensed states. */
 .butter-license-devices-hint {
+  margin-inline: var(--butter-settings-content-inset, 20px);
   padding: 12px 0 6px;
   font-size: 12px;
   line-height: 1.4;
@@ -4481,6 +5368,7 @@ body:not(.is-mobile) .butter-view-root .view-header-title-container:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-inline: var(--butter-settings-content-inset, 20px);
   padding: 18px 0;
   border-top: 1px solid var(--background-modifier-border);
   gap: 16px;
@@ -4711,6 +5599,12 @@ body.butter-status-bar-hide .status-bar {
   flex-direction: column;
   gap: var(--size-4-3, 12px);
   margin: var(--size-2-2, 4px) 0;
+  /* The editor is a direct child of `.setting-items`, unlike native
+     `.setting-item` rows whose 20px padding establishes the content column.
+     Recreate that one inset here so labels, handles, and actions align with
+     the rows above instead of touching the group edges. */
+  padding-inline: var(--butter-settings-content-inset, 20px);
+  box-sizing: border-box;
 }
 .butter-layout-list {
   display: flex;
@@ -4722,7 +5616,36 @@ body.butter-status-bar-hide .status-bar {
   letter-spacing: 0.05em;
   color: var(--text-muted);
   font-weight: var(--font-semibold);
-  padding: var(--size-2-2, 4px) var(--size-2-2, 4px);
+  padding: var(--size-2-2, 4px) 0;
+}
+.butter-layout-available-catalog {
+  padding-bottom: var(--size-4-3, 12px);
+}
+.butter-layout-category-summary {
+  cursor: pointer;
+  border-radius: var(--radius-s, 4px);
+  padding-inline: var(--size-2-2, 4px);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.butter-layout-category-summary:hover,
+.butter-layout-category-summary:focus-visible {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.butter-layout-category-summary::marker {
+  color: var(--text-faint);
+}
+.butter-layout-category-content {
+  padding-top: var(--size-2-1, 2px);
+}
+.butter-layout-available-category + .butter-layout-available-category {
+  margin-top: var(--size-4-3, 12px);
+}
+.butter-layout-category-label {
+  padding: var(--size-2-2, 4px) 0 var(--size-2-1, 2px);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
 }
 .butter-layout-rows {
   display: flex;
@@ -4865,6 +5788,11 @@ body.butter-status-bar-hide .status-bar {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.butter-layout-usage-count {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-normal);
+}
 .butter-layout-label.butter-layout-meta {
   color: var(--text-muted);
   font-style: italic;
@@ -4911,6 +5839,7 @@ body.butter-status-bar-hide .status-bar {
 }
 .butter-layout-add-row {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--size-2-3, 6px);
   padding: var(--size-2-3, 6px) 0;
 }
@@ -5566,6 +6495,207 @@ body.butter-status-bar-hide .status-bar {
   flex-direction: column;
   padding: var(--menu-padding, var(--size-2-3, 6px));
 }
+.menu.butter-rich-menu .butter-link-mode-switch {
+  width: auto;
+  margin-top: 0;
+  margin-bottom: var(--size-2-2, 4px);
+  background: var(--background-secondary);
+}
+.menu.butter-rich-menu .butter-link-mode-switch
+  .butter-toolbar-platform-switcher__indicator {
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+}
+.menu.butter-rich-menu .butter-link-mode-switch
+  .butter-rich-menu-mode-button {
+  min-width: 0;
+  min-height: 30px;
+}
+.menu.butter-rich-menu .butter-link-mode-switch
+  .butter-rich-menu-mode-button:hover:not(.is-active) {
+  color: var(--text-normal);
+}
+.menu.butter-rich-menu .butter-link-mode-switch
+  .butter-rich-menu-mode-button.is-active {
+  color: var(--text-normal);
+}
+.menu.butter-rich-menu .butter-rich-menu-mode-icon,
+.menu.butter-rich-menu .butter-rich-menu-mode-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.menu.butter-rich-menu.butter-link-editor {
+  width: min(320px, calc(100vw - 16px));
+  max-width: min(320px, calc(100vw - 16px));
+}
+.menu.butter-mobile-link-drawer .butter-mobile-link-drawer-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-4, 16px);
+  padding-bottom: max(var(--size-4-4, 16px), env(safe-area-inset-bottom));
+}
+/* Obsidian caps phone Menu drawers at 60vh, which suits action rows but
+   clips this two-field form after an action drawer turns into Edit mode.
+   Raise only the link-form ceiling; intrinsic sizing keeps short forms
+   compact, while dvh follows the keyboard-reduced visual viewport. */
+.is-phone .menu.butter-mobile-link-drawer .menu-scroll {
+  max-height: 90vh;
+}
+@supports (height: 100dvh) {
+  .is-phone .menu.butter-mobile-link-drawer .menu-scroll {
+    max-height: min(
+      90dvh,
+      calc(
+        100dvh - var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) -
+          var(--size-4-3, 12px)
+      )
+    );
+  }
+}
+.menu.butter-mobile-link-drawer .butter-mobile-link-drawer-header {
+  padding-bottom: var(--size-4-3, 12px);
+}
+.menu.butter-mobile-link-drawer .butter-mobile-link-mode-switch {
+  width: auto;
+  margin: 0 var(--size-4-4, 16px);
+  background: var(--background-secondary);
+  border-radius: var(--mobile-radius, 22px);
+}
+.menu.butter-mobile-link-drawer .butter-mobile-link-mode-switch
+  .butter-toolbar-platform-switcher__indicator,
+.menu.butter-mobile-link-drawer .butter-mobile-link-mode-button {
+  min-height: 40px;
+  border-radius: calc(var(--mobile-radius, 22px) - 4px);
+}
+.menu.butter-mobile-link-drawer .butter-mobile-link-mode-switch
+  .butter-toolbar-platform-switcher__indicator {
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+}
+.butter-mobile-link-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3, 12px);
+  padding: 0 var(--size-4-4, 16px);
+}
+.menu.butter-mobile-link-drawer .butter-mobile-edit-input {
+  min-height: 44px;
+  font-size: max(16px, var(--font-ui-medium));
+}
+.butter-mobile-link-suggestions {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  max-height: min(220px, 28vh);
+  box-sizing: border-box;
+  margin-top: var(--size-2-2, 4px);
+  padding: var(--size-2-2, 4px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+.butter-mobile-link-suggestions::-webkit-scrollbar {
+  display: none;
+}
+.menu.butter-mobile-link-drawer .butter-mobile-link-suggestion {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--size-4-2, 8px);
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: var(--size-4-2, 8px) var(--size-4-3, 12px);
+  margin: 0;
+  color: var(--text-normal);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-s);
+  touch-action: manipulation;
+}
+.butter-mobile-link-suggestion:hover,
+.butter-mobile-link-suggestion:focus-visible,
+.butter-mobile-link-suggestion:active {
+  background: var(--background-modifier-hover);
+}
+.butter-mobile-link-suggestion-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+.butter-mobile-link-suggestion-icon,
+.butter-mobile-link-suggestion-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.butter-mobile-link-suggestion-labels {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.2;
+}
+.butter-mobile-link-suggestion-title,
+.butter-mobile-link-suggestion-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.butter-mobile-link-suggestion-title {
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-medium);
+}
+.butter-mobile-link-suggestion-path {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.butter-mobile-link-create {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-4-2, 8px);
+  min-height: 40px;
+  margin: 0;
+  color: var(--text-accent);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-s);
+}
+.butter-mobile-link-create:hover,
+.butter-mobile-link-create:focus-visible,
+.butter-mobile-link-create:active {
+  background: var(--background-modifier-hover);
+}
+.butter-mobile-link-create svg {
+  width: 17px;
+  height: 17px;
+}
+.butter-mobile-link-drawer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--size-4-2, 8px);
+  padding: 0 var(--size-4-4, 16px);
+}
+.butter-mobile-link-drawer-actions button {
+  min-height: 44px;
+  padding-right: var(--size-4-4, 16px);
+  padding-left: var(--size-4-4, 16px);
+}
 .menu.butter-rich-menu .butter-rich-menu-fields {
   display: flex;
   flex-direction: column;
@@ -5612,6 +6742,14 @@ body.butter-status-bar-hide .status-bar {
 }
 .menu.butter-rich-menu .menu-item.butter-rich-menu-action {
   cursor: pointer;
+}
+.menu.butter-rich-menu .menu-item.butter-rich-menu-action:hover,
+.menu.butter-rich-menu .menu-item.butter-rich-menu-action:focus-visible {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
+}
+.menu.butter-rich-menu .menu-item.butter-rich-menu-action:active {
+  background-color: var(--background-modifier-active-hover);
 }
 
 /* Vault-files suggester (Obsidian's native AbstractInputSuggest popup
@@ -5662,25 +6800,235 @@ body.butter-status-bar-hide .status-bar {
   min-width: 240px;
   max-width: 240px;
   width: 240px;
+}
+
+/* Shared desktop motion for Butter-owned menus and anchored popovers. Keep
+   geometry fixed: these animations affect only paint, never layout. */
+.butter-surface-motion {
   transform-origin: top left;
-  animation: butter-menu-in 110ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation: butter-surface-menu-in 105ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
-.menu.butter-block-context-menu.butter-menu-leaving {
-  animation: butter-menu-out 100ms cubic-bezier(0.4, 0, 1, 1) both;
-  pointer-events: none;
+.butter-surface-motion[data-butter-surface-motion="submenu"] {
+  animation-name: butter-surface-submenu-in;
+  animation-duration: 85ms;
 }
-@keyframes butter-menu-in {
-  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+.butter-surface-motion[data-butter-surface-motion="popover"] {
+  animation-name: butter-surface-popover-in;
+  animation-duration: 120ms;
+}
+.butter-surface-motion.butter-surface-motion-leaving {
+  animation: butter-surface-out 80ms cubic-bezier(0.4, 0, 1, 1) both !important;
+  pointer-events: none !important;
+}
+@keyframes butter-surface-menu-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.985); }
   to   { opacity: 1; transform: scale(1) translateY(0); }
 }
-@keyframes butter-menu-out {
+@keyframes butter-surface-submenu-in {
+  from { opacity: 0; transform: translateX(-2px) scale(0.99); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes butter-surface-popover-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.99); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes butter-surface-out {
   from { opacity: 1; transform: scale(1) translateY(0); }
-  to   { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to   { opacity: 0; transform: translateY(-2px) scale(0.985); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .butter-surface-motion {
+    animation: none !important;
+  }
 }
 .menu.butter-block-context-menu .menu-item-title {
   text-overflow: ellipsis;
   overflow: hidden;
   white-space: nowrap;
+}
+
+/* General right-click menu quick actions. The containing menu item is a
+   non-command row; the buttons own focus and use a roving tab stop. */
+.menu.butter-general-context-menu .butter-context-menu-coachmark-group {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: var(--size-2-2, 4px);
+  border-top: var(--border-width, 1px) solid var(--background-modifier-border);
+}
+.menu.butter-general-context-menu.has-feature-coachmark {
+  width: var(--butter-context-menu-established-width, auto);
+  max-width: var(--butter-context-menu-established-width, calc(100vw - 16px));
+  box-sizing: border-box;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+.butter-context-menu-coachmark {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: var(--size-4-2, 8px);
+  border-radius: var(--radius-s, 4px);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent, #fff);
+}
+.butter-context-menu-coachmark-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--size-2-2, 4px);
+  color: inherit;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold, 600);
+}
+.butter-context-menu-coachmark-icon {
+  display: inline-flex;
+  color: inherit;
+}
+.butter-context-menu-coachmark-icon .svg-icon {
+  width: 15px;
+  height: 15px;
+}
+.butter-context-menu-coachmark-title,
+.butter-context-menu-coachmark-description {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.butter-context-menu-coachmark-description {
+  margin-top: var(--size-2-2, 4px);
+  color: color-mix(in srgb, var(--text-on-accent, #fff) 82%, transparent);
+  font-size: var(--font-ui-smaller);
+  line-height: var(--line-height-tight, 1.3);
+}
+.butter-context-menu-coachmark-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--size-2-2, 4px);
+  margin-top: var(--size-4-2, 8px);
+}
+.menu.butter-general-context-menu .butter-context-menu-coachmark-action {
+  appearance: none;
+  width: auto;
+  min-width: 0;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--text-on-accent, #fff) 38%, transparent);
+  border-radius: var(--radius-s, 4px);
+  box-shadow: none !important;
+  background: transparent !important;
+  color: var(--text-on-accent, #fff);
+  font-family: inherit;
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-medium, 500);
+  line-height: 1;
+  cursor: pointer;
+}
+.menu.butter-general-context-menu .butter-context-menu-coachmark-action:hover,
+.menu.butter-general-context-menu .butter-context-menu-coachmark-action:focus-visible {
+  border-color: color-mix(in srgb, var(--text-on-accent, #fff) 58%, transparent);
+  background: color-mix(in srgb, var(--text-on-accent, #fff) 16%, transparent) !important;
+  color: var(--text-on-accent, #fff);
+}
+.menu.butter-general-context-menu .butter-context-menu-coachmark-action.is-primary {
+  border-color: transparent;
+  background: var(--text-on-accent, #fff) !important;
+  color: var(--interactive-accent);
+  font-weight: var(--font-semibold, 600);
+}
+.menu.butter-general-context-menu .butter-context-menu-coachmark-action.is-primary:hover,
+.menu.butter-general-context-menu .butter-context-menu-coachmark-action.is-primary:focus-visible {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--text-on-accent, #fff) 88%, transparent) !important;
+  color: var(--interactive-accent);
+}
+.menu.butter-general-context-menu .menu-item.butter-context-quick-actions-item {
+  padding: 5px 7px;
+  cursor: default;
+  background: transparent;
+}
+.menu.butter-general-context-menu .menu-item.is-disabled,
+.menu.butter-general-context-menu .menu-item[aria-disabled="true"] {
+  color: var(--text-faint);
+  opacity: 0.45;
+  cursor: default;
+}
+.menu.butter-general-context-menu .menu-item.is-disabled:hover,
+.menu.butter-general-context-menu .menu-item.is-disabled.is-active,
+.menu.butter-general-context-menu .menu-item[aria-disabled="true"]:hover,
+.menu.butter-general-context-menu .menu-item[aria-disabled="true"].is-active {
+  color: var(--text-faint);
+  background-color: transparent;
+}
+.butter-context-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(var(--butter-context-quick-count, 5), minmax(30px, 1fr));
+  gap: 3px;
+  width: 100%;
+}
+.butter-context-quick-action {
+  width: 100%;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-s, 4px);
+  background: transparent;
+  color: var(--text-muted);
+}
+.butter-context-quick-action:hover:not(:disabled),
+.butter-context-quick-action:focus-visible {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.butter-context-quick-action.is-active,
+.butter-context-quick-action[aria-pressed="true"] {
+  color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+}
+.butter-context-quick-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.butter-context-quick-action svg {
+  width: 16px;
+  height: 16px;
+  opacity: 1;
+}
+
+.butter-context-dynamic-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-style: italic;
+}
+.butter-layout-row.is-quick-actions {
+  margin-top: var(--size-2-2, 4px);
+  padding-inline: var(--size-2-2, 6px);
+  border-radius: var(--radius-m, 8px);
+  background: var(--background-secondary);
+}
+.butter-context-quick-capacity {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--size-2-2, 4px);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-medium);
+}
+.butter-layout-row.is-command.is-missing {
+  opacity: 0.58;
+}
+.butter-layout-row.is-command.is-missing .butter-layout-label::after {
+  content: " (unavailable)";
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
 }
 
 /* ── Block-type info header ────────────────────────────────────
@@ -5889,33 +7237,6 @@ body.butter-status-bar-hide .status-bar {
 }
 
 /* ══════════════════════════════════════════
-   CM6 bridge - widgets re-parented from hidden mirror
-   ══════════════════════════════════════════ */
-
-.butter-cm6-widget {
-  display: inline-flex;
-  align-items: center;
-}
-
-.butter-cm6-hidden {
-  display: none !important;
-}
-
-.butter-cm6-mark {
-  /* Extensions can add their own class names on top of this. */
-}
-
-.butter-cm6-line {
-  /* Node-level decoration wrapper. */
-}
-
-.butter-cm6-mirror {
-  /* Hidden mirror container; kept offscreen so CM6 layout queries work. */
-  font-family: var(--font-text);
-  font-size: var(--font-text-size);
-}
-
-/* ══════════════════════════════════════════
    Table toolbar (docked stacked layer below main toolbar)
    ══════════════════════════════════════════
    Mounts as a sibling adjacent to the main `.butter-toolbar` (see
@@ -5981,7 +7302,7 @@ body:not(.is-mobile) .butter-table-toolbar {
    becomes horizontally scrollable when it exceeds the editor's
    width. Vertical overflow is hidden so a stray scrollbar doesn't
    show up; horizontal scrollbar is auto. */
-body:not(.is-mobile) .butter-table-toolbar-inner {
+body:not(.is-mobile) .butter-context-toolbar-inner {
   display: flex;
   align-items: center;
   gap: var(--size-2-1, 2px);
@@ -5992,10 +7313,10 @@ body:not(.is-mobile) .butter-table-toolbar-inner {
   scrollbar-width: thin;
   scrollbar-color: var(--background-modifier-border-hover) transparent;
 }
-body:not(.is-mobile) .butter-table-toolbar-inner::-webkit-scrollbar {
+body:not(.is-mobile) .butter-context-toolbar-inner::-webkit-scrollbar {
   height: 6px;
 }
-body:not(.is-mobile) .butter-table-toolbar-inner::-webkit-scrollbar-thumb {
+body:not(.is-mobile) .butter-context-toolbar-inner::-webkit-scrollbar-thumb {
   background: var(--background-modifier-border-hover);
   border-radius: 3px;
 }
@@ -6123,7 +7444,7 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-style="detached"][data-toolb
   margin-top: 0;
 }
 
-body:not(.is-mobile) .butter-table-toolbar-btn {
+body:not(.is-mobile) .butter-context-toolbar-btn {
   width: var(--input-height, 26px);
   height: var(--input-height, 26px);
   display: grid;
@@ -6136,11 +7457,11 @@ body:not(.is-mobile) .butter-table-toolbar-btn {
   padding: 0;
   transition: background 120ms ease, color 120ms ease;
 }
-body:not(.is-mobile) .butter-table-toolbar-btn:hover {
+body:not(.is-mobile) .butter-context-toolbar-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
-body:not(.is-mobile) .butter-table-toolbar-btn svg {
+body:not(.is-mobile) .butter-context-toolbar-btn svg {
   width: 15px;
   height: 15px;
   stroke-width: 2;
@@ -6387,7 +7708,7 @@ body.butter-table-drag-active * {
 /* Mobile: while a table-row/col drag is live, stop the browser
    from claiming the touch for scroll/zoom. Pointer events keep
    firing normally - this is the same lever the block-drag uses
-   (see `.butter-is-dragging` above). */
+   (see the Drag Scene touch rule below). */
 body.is-mobile.butter-table-drag-active {
   touch-action: none !important;
 }
@@ -6539,58 +7860,66 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
    ══════════════════════════════════════════ */
 
 .butter-task-checkbox-wrap {
-  /* Fixed-width decoration container - exactly --list-indent wide
-     (border-box), pulled fully to the LEFT by margin-left of the
-     same magnitude. Net horizontal contribution to inline flow is
-     zero, so post-widget text starts at the LI content edge - the
-     SAME X as bullet- and numbered-list text. `justify-content:
-     center` centers the checkbox horizontally inside the column,
-     matching the bullet glyph's position so all decorations share
-     the column visually as well as geometrically.
-     Vertical centering: `inline-flex` + `align-items: center`
-     bypasses the `<input type="checkbox">` baseline-of-its-bottom
-     quirk that makes raw `vertical-align: middle` align checkbox
-     center with x-height middle (visually too low). The `top:
-     -0.1em` is a residual nudge to account for descender room
-     making the line-box center sit slightly below the visual text
-     center. */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  /* Match the bullet/ordered marker model: a static inline box occupying
+     the reserved marker column with zero net inline advance. Keeping the
+     painted decoration in this line box prevents Chromium from retaining
+     an obsolete checkbox compositor position after block-drag reflow. */
+  display: inline-block;
   width: var(--list-indent, 1em);
   box-sizing: border-box;
   margin-left: calc(var(--list-indent, 1em) * -1);
+  line-height: inherit;
+  text-align: center;
+  vertical-align: baseline;
   user-select: none;
-  vertical-align: middle;
-  position: relative;
-  top: -0.2em;
-  /* Match the surrounding text's line-height = 0 inside the wrapper
-     so the checkbox doesn't inherit a tall line-box that would
-     stretch the wrapper vertically and re-introduce the alignment
-     drift we just fixed. */
-  line-height: 0;
+  cursor: pointer;
 }
 
 .butter-editor-view .butter-task-checkbox {
-  cursor: pointer;
-  /* Suppresses Obsidian's `.task-list-item-checkbox` vertical-align
-     rule - our 0,2,0 specificity already beats its 0,1,0. */
-  vertical-align: baseline;
-  /* Keep `position: relative` from Obsidian's base
-     `input[type=checkbox]` rule - its `:checked::after` pseudo-element
-     (the actual checkmark glyph) is `position: absolute` with
-     `top: -1px; inset-inline-start: -1px` and expects the checkbox
-     itself to be the containing block. Forcing `position: static`
-     here used to anchor the ::after to the (much wider) wrapper
-     instead, which painted the ✓ in the top-left of the decoration
-     column rather than centered inside the checkbox square. */
-  /* Zero out the generic `:where(input[type="checkbox"])` margin
-     above (which defaults to -1.5em for non-task checkbox use
-     elsewhere). With the wrap now sized exactly to --list-indent
-     and centering the checkbox via `justify-content: center`, any
-     residual margin would push the checkbox off-center inside its
-     decoration column. */
-  margin: 0;
+  /* Preserve native checkbox semantics for the accessibility tree without
+     allowing Chromium's form-control surface to paint independently from
+     the reflowing task line. Pointer activation is owned by the wrapper. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.butter-editor-view .butter-task-checkbox-visual {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: var(--border-width, 1px) solid
+    var(--checkbox-border-color, var(--text-faint));
+  border-radius: var(--checkbox-radius, var(--radius-s, 4px));
+  background: transparent;
+  color: var(--checkbox-marker-color, var(--background-primary));
+  font-family: var(--font-interface);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  vertical-align: -2px;
+  pointer-events: none;
+}
+
+.butter-task-checkbox-wrap:hover .butter-task-checkbox-visual {
+  border-color: var(--checkbox-border-color-hover, var(--text-muted));
+}
+
+.butter-editor-view .butter-task-checkbox:checked +
+  .butter-task-checkbox-visual {
+  border-color: var(--checkbox-color, var(--interactive-accent));
+  background: var(--checkbox-color, var(--interactive-accent));
 }
 
 .butter-editor-view li[data-task-state] {
@@ -6625,34 +7954,156 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
    Find / Replace bar
    ══════════════════════════════════════════ */
 
-.butter-search-bar {
-  position: absolute;
-  top: 8px;
-  right: 16px;
-  z-index: 30;
+.butter-search-toolbar {
   display: none;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px;
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m, 6px);
-  box-shadow: var(--shadow-m, 0 4px 12px rgba(0, 0, 0, 0.12));
+  box-sizing: border-box;
   font-family: var(--font-interface);
-  min-width: 340px;
-  max-width: 480px;
+}
+
+/* Desktop Find/Replace is a true second toolbar row. It mounts beside the
+   main toolbar using the same stack and positioning model as table tools,
+   rather than living in (and scrolling with) the note. */
+body:not(.is-mobile) .butter-search-toolbar {
+  position: relative;
+  z-index: 12;
+  display: flex;
+  width: 100%;
+  max-height: 72px;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateY(0);
+  background: color-mix(in srgb, var(--background-primary) 90%, black 10%);
+  border-bottom: var(--border-width, 1px) solid var(--background-modifier-border);
+  transition:
+    max-height 180ms ease,
+    opacity 140ms ease,
+    transform 140ms ease,
+    border-width 180ms ease;
+}
+body:not(.is-mobile) .butter-search-toolbar.is-hidden {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+  border-width: 0;
+  pointer-events: none;
+}
+body:not(.is-mobile) .butter-search-toolbar[data-toolbar-pos="bottom"] {
+  border-top: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-bottom: 0;
+}
+body:not(.is-mobile) .butter-search-toolbar[data-toolbar-pos="bottom"].is-hidden {
+  transform: translateY(6px);
+}
+body:not(.is-mobile) .butter-search-toolbar[data-toolbar-style="attached"] {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+body:not(.is-mobile) .butter-search-toolbar[data-toolbar-style="attached"][data-toolbar-pos="top"] {
+  top: 100%;
+}
+body:not(.is-mobile) .butter-search-toolbar[data-toolbar-style="attached"][data-toolbar-pos="bottom"] {
+  bottom: 100%;
+}
+body:not(.is-mobile) .butter-search-toolbar[data-toolbar-style="detached"] {
+  width: 100%;
+  max-width: 100%;
+  border-left: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-right: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-radius: 0 0 var(--radius-s, 4px) var(--radius-s, 4px);
+}
+body:not(.is-mobile) .butter-search-toolbar[data-toolbar-style="detached"][data-toolbar-pos="bottom"] {
+  border-radius: var(--radius-s, 4px) var(--radius-s, 4px) 0 0;
+}
+body:not(.is-mobile) .view-header.butter-integrated-header
+  > .butter-search-toolbar[data-toolbar-style="integrated"] {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  width: 100%;
+}
+
+/* Find takes the contextual row while it is open. A stale table selection
+   therefore cannot leave a second competing toolbar between Find and the
+   main toolbar. */
+body:not(.is-mobile) .butter-table-toolbar.butter-search-suppressed {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  border-width: 0;
+  pointer-events: none;
+}
+body:not(.is-mobile) .butter-toolbar-stack[data-toolbar-pos="top"].butter-has-search-toolbar
+  > .butter-toolbar {
+  border-bottom-color: transparent;
+}
+body:not(.is-mobile) .butter-toolbar-stack[data-toolbar-pos="bottom"].butter-has-search-toolbar
+  > .butter-toolbar {
+  border-top-color: transparent;
+}
+body:not(.is-mobile) .butter-view-root[data-toolbar-style="detached"][data-toolbar-pos="top"].butter-has-search-toolbar
+  .butter-toolbar {
+  margin-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+body:not(.is-mobile) .butter-view-root[data-toolbar-style="detached"][data-toolbar-pos="bottom"].butter-has-search-toolbar
+  .butter-toolbar {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.butter-search-toolbar-inner {
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
 }
 
 .butter-search-row {
+  display: grid;
+  grid-template-columns:
+    var(--input-height, 26px)
+    minmax(140px, 1fr)
+    var(--input-height, 26px)
+    var(--input-height, 26px)
+    9px
+    var(--input-height, 26px)
+    var(--input-height, 26px)
+    var(--input-height, 26px);
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--size-2-1, 2px);
+  width: min(100%, 520px);
+  min-width: min-content;
+  margin-inline: auto;
+}
+
+.butter-search-field {
   display: flex;
   align-items: center;
-  gap: 4px;
+  min-width: 140px;
+  height: var(--input-height, 26px);
+  overflow: hidden;
+  color: var(--text-muted);
+  background: var(--background-primary);
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  box-sizing: border-box;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.butter-search-field:focus-within {
+  border-color: var(--interactive-accent);
+  box-shadow: inset 0 0 0 1px var(--interactive-accent);
 }
 
 .butter-search-icon {
   display: grid;
   place-items: center;
-  width: 20px;
+  flex: 0 0 24px;
+  width: 24px;
   color: var(--text-muted);
 }
 .butter-search-icon svg {
@@ -6662,80 +8113,201 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 
 .butter-search-input {
   flex: 1;
-  padding: 4px 8px;
+  align-self: stretch;
+  min-width: 0;
+  height: 100%;
+  padding: 0 6px 0 0;
   font-family: var(--font-interface);
   font-size: 13px;
   color: var(--text-normal);
-  background: var(--background-primary-alt, var(--background-secondary));
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s, 4px);
-  outline: none;
-  min-width: 120px;
-}
-.butter-search-input:focus {
-  border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 2px hsla(var(--interactive-accent-hsl), 0.18);
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .butter-search-count {
-  min-width: 60px;
-  padding: 0 4px;
-  text-align: right;
+  flex: 0 0 auto;
+  min-width: 48px;
+  padding: 0 7px 0 4px;
+  text-align: end;
   font-size: 11px;
   font-family: var(--font-monospace);
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
-.butter-search-flag,
-.butter-search-action {
-  padding: 2px 7px;
+.butter-search-tool {
+  position: relative;
+  flex: 0 0 auto;
   font-size: 11px;
   font-family: var(--font-interface);
-  color: var(--text-muted);
-  background: transparent;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s, 4px);
-  cursor: pointer;
+  font-weight: var(--font-semibold, 600);
 }
-.butter-search-flag:hover,
-.butter-search-action:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-.butter-search-flag.is-active {
-  background: hsla(var(--interactive-accent-hsl), 0.15);
-  color: var(--interactive-accent);
-  border-color: var(--interactive-accent);
+.butter-search-tool.is-disabled,
+.butter-search-tool:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
-.butter-search-nav {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-s, 4px);
-  color: var(--text-muted);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 0;
+.butter-search-divider {
+  width: 1px;
+  height: 16px;
+  justify-self: center;
+  background: var(--background-modifier-border);
 }
-.butter-search-nav:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
+.butter-search-replace-spacer {
+  width: var(--input-height, 26px);
+  height: 1px;
 }
-.butter-search-nav svg {
-  width: 14px;
-  height: 14px;
+
+body:not(.is-mobile) .butter-search-toolbar[data-active-style="soft"]
+  .butter-search-flag.is-active,
+body:not(.is-mobile) .butter-search-toolbar:not([data-active-style])
+  .butter-search-flag.is-active {
+  background: hsla(var(--interactive-accent-hsl), 0.15);
+  color: var(--interactive-accent);
+}
+body:not(.is-mobile) .butter-search-toolbar[data-active-style="filled"]
+  .butter-search-flag.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+body:not(.is-mobile) .butter-search-toolbar[data-active-style="outlined"]
+  .butter-search-flag.is-active {
+  color: var(--interactive-accent);
+  box-shadow: inset 0 0 0 1.5px var(--interactive-accent);
+}
+body:not(.is-mobile) .butter-search-toolbar[data-active-style="underline"]
+  .butter-search-flag.is-active {
+  color: var(--interactive-accent);
+}
+body:not(.is-mobile) .butter-search-toolbar[data-active-style="underline"]
+  .butter-search-flag.is-active::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+}
+
+.butter-search-row-replace {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-3px);
+  pointer-events: none;
+  transition:
+    max-height 150ms ease,
+    opacity 120ms ease,
+    transform 150ms ease;
+}
+.butter-search-row-replace.is-visible {
+  max-height: var(--input-height, 26px);
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .butter-search-match {
-  background: hsla(var(--color-yellow-rgb, 255, 208, 0), 0.35);
+  background: rgba(var(--color-yellow-rgb, 255, 208, 0), 0.35);
   border-radius: 2px;
 }
 .butter-search-match.is-current {
   background: hsla(var(--interactive-accent-hsl), 0.55);
   color: var(--text-on-accent);
+}
+
+/* Mobile Find replaces the keyboard-accessory toolbar in the same fixed slot
+   used by the main and table bars. */
+body.is-mobile .butter-mobile-search-toolbar {
+  display: flex;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  background: var(--background-primary);
+  border-top: var(--border-width, 1px) solid var(--background-modifier-border);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+  transition:
+    opacity 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+body.is-mobile .butter-search-toolbar-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-1, 2px);
+  width: 100%;
+  padding: var(--size-2-2, 4px) var(--size-4-2, 8px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-sizing: border-box;
+}
+body.is-mobile .butter-search-row {
+  width: 100%;
+  grid-template-columns:
+    32px
+    minmax(140px, 1fr)
+    32px
+    32px
+    9px
+    32px
+    32px
+    32px;
+}
+body.is-mobile .butter-search-tool {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-s, 4px);
+}
+body.is-mobile .butter-search-tool:active {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+body.is-mobile .butter-search-tool svg {
+  width: 17px;
+  height: 17px;
+}
+body.is-mobile .butter-search-flag.is-active {
+  color: var(--interactive-accent);
+  background: hsla(var(--interactive-accent-hsl), 0.15);
+}
+body.is-mobile .butter-mobile-search-toolbar.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(100%);
+}
+body.is-mobile.butter-mobile-search-active
+  :is(.butter-mobile-toolbar, .butter-mobile-table-toolbar).butter-mobile-bar {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(100%) !important;
+}
+body.is-mobile .butter-mobile-search-toolbar[data-mobile-style="detached"] {
+  left: var(--size-4-2, 8px);
+  right: var(--size-4-2, 8px);
+  width: auto;
+  bottom: calc(var(--keyboard-height, 0px) + var(--size-4-2, 8px));
+  border: var(--border-width, 1px) solid var(--background-modifier-border);
+  border-radius: var(--touch-radius-m, 18px);
+  overflow: hidden;
+}
+body.is-mobile .butter-search-input {
+  min-width: 0;
+}
+
+body.is-mobile .butter-search-count {
+  min-width: 40px;
+  padding-inline: 2px;
 }
 
 /* ══════════════════════════════════════════
@@ -6744,17 +8316,12 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 
 .butter-image {
   position: relative;
-  /* Default inline-block so images inside paragraphs flow with
-     surrounding text. Top-level image blocks override to block
-     display below to avoid the baseline descender gap that
-     inline-block elements get in their parent's line box. */
-  display: inline-block;
-  line-height: 0;
-  /* Align to top of line box so no descender space gets reserved
-     below the image even when inline-block. Redundant with the
-     top-level display:block override but defends against themes
-     that cascade other display values into .butter-image. */
-  vertical-align: top;
+  /* Native Live Preview makes the complete image embed an inline flex
+     item. Keeping Butter's outer box in that same role preserves the
+     normal text line-height for small images; larger images then expand
+     the line upward from its bottom edge. */
+  display: inline-flex;
+  vertical-align: bottom;
   max-width: 100%;
 }
 
@@ -6772,25 +8339,159 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   display: block;
   max-width: 100%;
   height: auto;
+  cursor: grab;
   /* Subtle rounding on images - themes that want larger/smaller
      rounding for attached images should override this rule. */
   border-radius: var(--radius-s, 4px);
 }
 .butter-image-resize-handle {
   position: absolute;
-  right: -2px;
-  bottom: -2px;
+  /* The selector frame sits 9px outside the rendered image. The visible
+     accent corner below overlays that frame, while this transparent box
+     extends 20px inward so the resize target remains easy to acquire. */
+  right: -15px;
+  bottom: -15px;
+  box-sizing: border-box;
+  width: 35px;
+  height: 35px;
+  background: transparent;
+  border: 0;
+  cursor: nwse-resize;
+  pointer-events: auto;
+}
+.butter-image-resize-handle::after {
+  content: "";
+  position: absolute;
+  /* A 3px stroke straddles the center of the selector's 1px hover line.
+     The handle box ends 6px beyond the selector edge, so a 5px inset puts
+     this stroke's center exactly on the hover line's center. */
+  right: 5px;
+  bottom: 5px;
+  box-sizing: border-box;
   width: 12px;
   height: 12px;
-  background: var(--interactive-accent);
-  border: 2px solid var(--background-primary);
-  border-radius: 2px;
-  cursor: nwse-resize;
+  background: transparent;
+  border: 0;
+  border-right: 3px solid var(--interactive-accent);
+  border-bottom: 3px solid var(--interactive-accent);
+  border-bottom-right-radius: var(--menu-radius, 8px);
   opacity: 0;
   transition: opacity 120ms ease;
 }
-.butter-image:hover .butter-image-resize-handle {
+
+/* Inline images live inside a text line rather than an outer block selector.
+   Keep their visible corner centered on the image's own right/bottom bounds;
+   the transparent 35px hit target still extends inward for easy acquisition.
+   Standalone images retain the outer selector-frame alignment above. */
+.butter-image.butter-image-inline > .butter-image-resize-handle,
+.butter-obsidian-image-inline .butter-embed-image-resizable > .butter-image-resize-handle {
+  right: -6px;
+  bottom: -6px;
+}
+
+.butter-image:hover .butter-image-resize-handle::after,
+.butter-embed-image-resizable:hover > .butter-image-resize-handle::after,
+.butter-image-resize-handle.is-resizing::after {
   opacity: 1;
+}
+
+/* One compact edit affordance for images large enough to hold it. The
+   action re-enters the existing right-click menu path; it is not a second
+   editor or modal. */
+.butter-image-edit-button,
+.butter-image-edit-button:hover,
+.butter-image-edit-button:active,
+.butter-image-edit-button:focus,
+.butter-image-edit-button:focus-visible {
+  appearance: none !important;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0 !important;
+  margin: 0 !important;
+  color: var(--text-normal) !important;
+  background: color-mix(in srgb, var(--background-primary) 88%, transparent) !important;
+  border: 1px solid var(--background-modifier-border) !important;
+  border-radius: var(--radius-s, 4px) !important;
+  box-shadow: var(--shadow-s) !important;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer !important;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+.butter-image-edit-button svg {
+  width: 14px;
+  height: 14px;
+}
+.butter-image-edit-host:hover > .butter-image-edit-button.is-image-large-enough,
+.butter-image-edit-button.is-image-large-enough:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.butter-image-edit-host > .butter-image-edit-button.is-image-large-enough:hover {
+  background: var(--background-modifier-hover) !important;
+}
+
+/* Native ![[image.png]] embeds are rendered by Obsidian, so anchor
+   Butter's resize handle to the image-embed wrapper it creates. */
+.butter-embed-image-resizable {
+  display: inline-flex;
+  align-items: flex-end;
+  width: fit-content;
+  min-width: 12px;
+  min-height: 12px;
+  max-width: 100%;
+  position: relative;
+  vertical-align: bottom;
+  pointer-events: auto;
+}
+
+.butter-embed-image-resizable > .image-embed {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+}
+.butter-embed-image-resizable > .image-embed > .image-wrapper {
+  display: inline-flex;
+}
+.butter-embed-image-resizable img {
+  display: block;
+  cursor: grab;
+}
+
+/* MarkdownRenderer adds two Butter-owned inline hosts around native embed
+   markup. Once the render is known to be an image, make those hosts
+   participate as one bottom-aligned inline-flex box too; otherwise their
+   inherited text line boxes introduce geometry native Live Preview does
+   not have. */
+.butter-editor-view .butter-obsidian-image-inline,
+.butter-editor-view .butter-obsidian-image-inline > .obsidian-render-mount {
+  display: inline-flex;
+  vertical-align: bottom;
+}
+
+.butter-embed-image-resizable > .butter-image-resize-handle {
+  z-index: 2;
+  pointer-events: auto;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .butter-image-resize-handle {
+    width: 46px;
+    height: 46px;
+  }
+  .butter-image-resize-handle::after {
+    opacity: 1;
+  }
 }
 
 /* ── Full-width image display mode ────────────────────────────
@@ -7222,6 +8923,9 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
   border-radius: 6px;
   background: var(--background-secondary);
 }
+.butter-welcome-feedback-card {
+  margin-top: 12px;
+}
 .butter-welcome-license-header {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr) auto;
@@ -7543,18 +9247,6 @@ body.butter-no-anim .ProseMirror *::after {
   overflow: hidden;
 }
 
-/* CM6-bridge headless-mirror container - hidden offscreen iframe-like
- * mirror element for CM6 plugin compat. */
-.butter-cm6-mirror-hidden {
-  position: absolute;
-  top: -99999px;
-  left: 0;
-  width: 1000px;
-  height: 1000px;
-  visibility: hidden;
-  pointer-events: none;
-}
-
 /* Code-block edit toolbar - default pinned-to-viewport variant.
  * The non-pinned (in-flow above the shell) state uses no extra class
  * and relies on the existing absolute-top:-42px rule. */
@@ -7737,6 +9429,19 @@ body.butter-no-anim .ProseMirror *::after {
 
 /* Shared handle element — fixed on body, positioned by JS.
    Hover mode uses one; always mode uses a pool in the layer. */
+.butter-visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 .butter-drag-handle {
   position: fixed;
   width: 22px;
@@ -7758,6 +9463,16 @@ body.butter-no-anim .ProseMirror *::after {
   -webkit-appearance: none;
   appearance: none;
 }
+/* Keep the visible 22px handle and its established rail unchanged while
+   expanding the pointer-active area to 26px in both axes. Generated content
+   participates in hit testing as part of the originating button, so this
+   adds 2px of invisible reach on every side without crowding the heading
+   disclosure rail or enlarging the hover background. */
+.butter-drag-handle::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+}
 .butter-drag-handle.is-visible {
   /* Revealed whenever the pointer is anywhere over the block's row
      (full width, not just the gutter). Kept clearly visible so it's
@@ -7775,6 +9490,30 @@ body.butter-no-anim .ProseMirror *::after {
   transition: opacity 120ms ease, background 120ms ease;
 }
 
+/* A quiet preview of the selector ring's eventual footprint. It appears only
+   while the pointer is over a block's drag handle, helping users understand
+   which full block the compact six-dot control owns before they click. */
+.butter-handle-selector-preview {
+  position: fixed;
+  z-index: 49;
+  box-sizing: border-box;
+  border: 1px solid var(--text-faint);
+  border-radius: var(--menu-radius, 8px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease-out;
+}
+.butter-handle-selector-preview.is-visible {
+  opacity: 0.45;
+}
+
+/* Pointer capture keeps image resize and placement gestures alive across
+   other blocks. Never let stale hover chrome compete with their target UI. */
+body.butter-is-image-resizing .butter-handle-selector-preview,
+body.butter-is-image-dragging .butter-handle-selector-preview {
+  opacity: 0 !important;
+}
+
 /* Mobile: hide the visual handles entirely (no hover affordance, and
    they would get in the way of touch editing). The drag-handles
    plugin's view() still runs to keep the mobile tap-to-unlock-editable
@@ -7783,6 +9522,21 @@ body.butter-no-anim .ProseMirror *::after {
 body.is-mobile .butter-drag-handle,
 body.is-mobile .butter-drag-handles-layer {
   display: none !important;
+}
+
+/* A keyboard-hidden mobile editor is deliberately non-editable while it is
+   waiting to distinguish tap-to-edit from long-press-to-drag. Suppress the
+   native iOS selection loupe/callout only in that locked state so WebKit does
+   not cancel Butter's pointer stream before the 400ms drag intent resolves.
+   Normal editable text keeps native selection behavior unchanged. */
+body.is-mobile .butter-editor-view .ProseMirror[contenteditable="false"],
+body.is-mobile .butter-editor-view .ProseMirror[contenteditable="false"] * {
+  /* Direct descendant coverage plus `!important` is intentional: list text
+     lives in nested paragraphs, task rows contain native form-control chrome,
+     and mobile themes may explicitly restore selection on either surface. */
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
 }
 
 /* Mobile: suppress native text-selection long-press on the callout
@@ -7818,160 +9572,753 @@ body.is-mobile .butter-callout-title {
   pointer-events: auto;
 }
 
-/* ── Live reflow transitions (DISABLED) ──────────────────────
-   All drag-related CSS transitions are off so the system is a
-   clean slate to layer animations back on. The will-change hint
-   stays so blocks are already on their own GPU layer if/when we
-   re-enable transitions. */
-body.butter-is-dragging .butter-editor-view .ProseMirror > *,
-body.butter-is-dragging .butter-editor-view .ProseMirror blockquote > *,
-body.butter-is-dragging .butter-editor-view .butter-callout-content > * {
-  will-change: transform;
-  /* Sibling slide-into-place — 0.9.9's PUSH_DURATION (240ms) with
-     PUSH_EASING (the SOFT spring, not the bouncier `spring`). */
-  transition: transform 240ms
-              var(--butter-drag-spring-soft, cubic-bezier(0.2, 1.2, 0.4, 1));
-}
-
-/* Cross-container target containers grow their content area by
-   `draggedHeight` to make visual room for the incoming block. The
-   transition is armed here (the moment dragging starts) so when the
-   engine sets `padding-bottom` inline, the browser already has the
-   transition rule live and animates the change — no inline-transition
-   race condition. SAME easing/duration as the sibling transform so
-   the two halves of the symmetry (target-container grows, source-
-   container siblings close gap) move in lockstep — net visible
-   movement of blocks below the target container = 0. */
-body.butter-is-dragging .butter-editor-view .butter-callout-content,
-body.butter-is-dragging .butter-editor-view .ProseMirror blockquote {
-  transition: padding-bottom 240ms
-              var(--butter-drag-spring-soft, cubic-bezier(0.2, 1.2, 0.4, 1));
-}
-
-@media (prefers-reduced-motion: reduce) {
-  body.butter-is-dragging .butter-editor-view .ProseMirror > *,
-  body.butter-is-dragging .butter-editor-view .ProseMirror blockquote > *,
-  body.butter-is-dragging .butter-editor-view .butter-callout-content > *,
-  body.butter-is-dragging .butter-editor-view .butter-callout-content,
-  body.butter-is-dragging .butter-editor-view .ProseMirror blockquote {
-    transition: none;
-  }
-}
-
-/* Source block hiding during drag. Static rule (not in the
-   injected reflow stylesheet) so when the engine tears down the
-   reflow CSS post-dispatch the source stays hidden until the
-   ghost converge finishes and the class itself is removed. */
-.butter-editor-view .ProseMirror .butter-drag-source {
+/* Once Drag Scene owns the gesture, the source handle must not repaint from a
+   hover/always-layer refresh. The inert overlay handle stays registered to the
+   grabbed point on the pointer ghost instead. */
+body.butter-is-drag-scene-v2
+  .butter-drag-handle:not(.butter-drag-scene-ghost-handle) {
   opacity: 0 !important;
   pointer-events: none !important;
 }
 
-/* When the drop target is in a DIFFERENT container than the source
-   (cross-container drag), the source's flow contribution is collapsed
-   so its container visually shrinks — matching the user's expectation
-   that the "origin gap closes." With this collapse in place, the
-   close-source-gap transforms are not needed in cross-container mode:
-   the natural layout already removes the source's space, so source-
-   container siblings settle to the right positions without any
-   transform applied. (Same-container drags keep the source's natural
-   height so the user can still drop back at the original position.) */
-.butter-editor-view .ProseMirror .butter-drag-source.butter-drag-source-collapsed {
-  height: 0 !important;
-  margin: 0 !important;
-  padding: 0 !important;
+.butter-drag-scene-ghost-handle {
+  left: var(--butter-drag-scene-left);
+  top: var(--butter-drag-scene-top);
+  width: var(--butter-drag-scene-width);
+  height: var(--butter-drag-scene-height);
+  box-sizing: border-box;
+  z-index: 4;
+  opacity: 1 !important;
+  color: var(--text-muted);
+  pointer-events: none !important;
+  transition: none !important;
+}
+
+/* Drag Scene v2 measures only this inert offscreen renderer clone. The
+   ProseMirror editor itself remains untouched for the complete live gesture. */
+.butter-drag-scene-oracle .butter-drag-scene-oracle-node {
+  transition: none !important;
+  animation: none !important;
+}
+
+.butter-drag-scene-oracle .butter-drag-scene-oracle-shell {
+  position: static !important;
+  transform: none !important;
+  overflow: visible !important;
+}
+
+.butter-drag-scene-oracle .butter-drag-scene-oracle-root {
+  width: var(--butter-drag-scene-editor-width) !important;
+  max-width: none !important;
+  content-visibility: visible !important;
+  contain-intrinsic-size: auto 0 !important;
+}
+
+.butter-drag-scene-oracle .butter-drag-scene-oracle-root > * {
+  content-visibility: visible !important;
+  contain-intrinsic-size: auto 0 !important;
+}
+
+/* Cloned replaced elements do not retain decoded media metadata. The oracle
+   carries the live renderer's resolved size through variables so target
+   geometry remains exact while still shrinking inside narrower lanes. */
+.butter-drag-scene-oracle .butter-drag-scene-oracle-media {
+  width: min(var(--butter-drag-scene-media-width), 100%) !important;
+  height: auto !important;
+  aspect-ratio: var(--butter-drag-scene-media-aspect) !important;
+}
+
+/* Image embeds contain nested fit-content wrappers. Own the outer frame's
+   resolved size so the cloned intrinsic bitmap cannot collapse the oracle,
+   then make the native host and image fill that exact destination box. */
+.butter-drag-scene-oracle .butter-drag-scene-oracle-media-frame {
+  width: min(var(--butter-drag-scene-media-width), 100%) !important;
+  height: auto !important;
+  aspect-ratio: var(--butter-drag-scene-media-aspect) !important;
+}
+.butter-drag-scene-oracle .butter-drag-scene-oracle-media-frame
+  > .butter-drag-scene-oracle-media-host,
+.butter-drag-scene-oracle .butter-drag-scene-oracle-media-frame
+  .butter-drag-scene-oracle-media {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+}
+
+.butter-drag-scene-oracle .butter-drag-scene-oracle-root .butter-drag-scene-oracle-compact-member {
+  box-sizing: border-box !important;
+  min-height: 0 !important;
+  height: var(--butter-drag-scene-compact-height) !important;
   overflow: hidden !important;
 }
 
-/* Ghost clone — follows the pointer, fixed on body. The inner
-   wrapper replicates .butter-editor-view > .ProseMirror so cloned
-   blocks get the same CSS cascade as the live editor. */
-.butter-drag-ghost {
+/* A compact drag run is one layout item, not N zero-height items. Hidden
+   headings otherwise retain their high-specificity heading margins and make
+   the reflow vacancy grow with the number of selected headings. The first
+   member keeps its renderer-owned exterior spacing so its compact filler
+   remains anchored to the same leading edge as the natural committed run. */
+.butter-drag-scene-oracle .butter-drag-scene-oracle-root .butter-drag-scene-oracle-compact-tail {
+  display: none !important;
+}
+
+.butter-drag-scene-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  pointer-events: none;
+  inset: 0;
   z-index: 1000;
-  opacity: 0.88;
-  will-change: transform;
-}
-.butter-drag-ghost-inner {
-  background: transparent;
-  overflow: hidden;
-}
-
-/* Compact-mode ghost: height/maxHeight are set inline (dynamic); this
-   clamps content overflow so the scaled card crops cleanly. */
-.butter-drag-ghost-clamped {
-  overflow: hidden;
-}
-
-/* Off-screen probe used to measure a block's resolved margin in px. */
-.butter-gap-probe {
-  position: absolute;
-  visibility: hidden;
-  width: 0;
-  height: 0;
   pointer-events: none;
+  overflow: hidden;
+  contain: strict;
 }
 
-/* Hide selection overlays during drag — the ghost replaces the
-   visual feedback; overlays track the hidden source blocks at
-   their original positions which looks broken. */
-body.butter-is-dragging .butter-selection-overlay {
-  opacity: 0 !important;
-}
-
-/* Drop filler — sits in the open gap so the user can see where
-   the block will land. position:fixed on document.body, sized by JS
-   to match the gap's width × dragged-block height. */
-.butter-drop-filler {
+.butter-drag-scene-proxy,
+.butter-drag-scene-filler,
+.butter-drag-scene-ghost {
   position: fixed;
-  pointer-events: none;
-  z-index: 5;
-  opacity: 0.85;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
-  box-shadow:
-    inset 0 0 0 1.5px color-mix(in srgb, var(--interactive-accent) 50%, transparent),
-    0 0 0 2px color-mix(in srgb, var(--interactive-accent) 8%, transparent);
-  border: none;
+  left: var(--butter-drag-scene-left);
+  top: var(--butter-drag-scene-top);
+  width: var(--butter-drag-scene-width);
+  height: var(--butter-drag-scene-height);
   box-sizing: border-box;
-  /* 0.9.9 recipe: top gets the soft spring at 200ms; left/width/
-     height get the non-bouncy ease at 120ms. positionDropFiller
-     reads blockAfter's offsetTop (transform-free) so the
-     destination is stable even while siblings are mid-transition. */
-  transition:
-    top 200ms var(--butter-drag-spring-soft, cubic-bezier(0.2, 1.2, 0.4, 1)),
-    left 120ms var(--butter-drag-ease, cubic-bezier(0.2, 0.7, 0.2, 1)),
-    width 120ms var(--butter-drag-ease, cubic-bezier(0.2, 0.7, 0.2, 1)),
-    height 120ms var(--butter-drag-ease, cubic-bezier(0.2, 0.7, 0.2, 1));
-  animation: butter-drag-reflow-in 220ms var(--butter-drag-spring-soft, cubic-bezier(0.2, 1.2, 0.4, 1)) both;
 }
-/* While autoscroll is active, the filler must snap each tick to stay
-   anchored to its doc-slot — the CSS transition would otherwise turn
-   the per-tick position updates into a 200ms lag behind the scroll. */
-body.butter-drag-autoscrolling .butter-drop-filler {
+
+.butter-drag-scene-proxy,
+.butter-drag-scene-filler {
+  top: calc(
+    var(--butter-drag-scene-top) + var(--butter-drag-scene-scroll-y, 0px)
+  );
+}
+
+.butter-drag-scene-proxy {
+  overflow: visible;
+  contain: layout style paint;
+}
+
+/* Media edges and content-width elevation intentionally extend to the exact
+   measured boundary. Paint containment clips those pixels even when the
+   outer ghost itself permits overflow. */
+.butter-drag-scene-ghost-piece:is(.has-media-preview, .has-content-shadow) {
+  contain: layout style;
+}
+
+.butter-drag-scene-proxy-view,
+.butter-drag-scene-proxy-root {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  content-visibility: visible !important;
+  contain-intrinsic-size: auto 0 !important;
+}
+
+/* A media ghost piece already occupies the exact img/video rectangle. Remove
+   the outer embed's renderer-owned inset from its cloned view so the visible
+   media and the analytic landing box share the same origin. */
+.butter-drag-scene-media-aligned-view {
+  translate:
+    var(--butter-drag-scene-media-content-x, 0px)
+    var(--butter-drag-scene-media-content-y, 0px) !important;
+}
+
+/* A ghost piece is already positioned at the source block's measured border
+   box. Five class components intentionally outrank callout/quote direct-child
+   heading rules: external flow margins must not be recomputed inside the
+   fixed-height piece or nested blocks are displaced and clipped. */
+.butter-drag-scene-ghost-piece
+  .butter-editor-view.butter-drag-scene-proxy-view
+  .butter-drag-scene-proxy-root .butter-drag-scene-proxy-content {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  transition: none !important;
+  animation: none !important;
+  content-visibility: visible !important;
+  contain-intrinsic-size: auto 0 !important;
+}
+
+.butter-drag-scene-proxy-context {
+  display: block !important;
+  position: static !important;
+  width: 100% !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+.butter-drag-scene-proxy-shell-frame .butter-drag-scene-proxy-shell:is(
+  .butter-callout-view,
+  blockquote
+) {
+  height: 100% !important;
+  min-height: 0 !important;
+  box-sizing: border-box;
+}
+
+.butter-drag-scene-filler {
+  z-index: 2;
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 70%, transparent);
+  border-radius: var(--menu-radius, 8px);
+  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+  opacity: 1;
+  transition: opacity 120ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  will-change: opacity;
+}
+
+.butter-drag-scene-filler.is-exiting {
+  opacity: 0;
+}
+
+.butter-drag-scene-filler.is-container-release {
+  visibility: hidden;
   transition: none;
 }
 
-@keyframes butter-drag-reflow-in {
-  from { opacity: 0; transform: scale(0.97); }
-  to   { opacity: 0.85; transform: scale(1); }
+@media (prefers-reduced-motion: reduce) {
+  .butter-drag-scene-filler {
+    transition: none;
+  }
+}
+
+.butter-drag-scene-ghost {
+  z-index: 3;
+  opacity: 1;
+  overflow: hidden;
+  border-radius: var(--menu-radius, 8px);
+  box-shadow: 0 8px 18px rgb(0 0 0 / 22%);
+}
+
+.butter-drag-scene-ghost.has-container-backing {
+  border-radius: var(--callout-radius, var(--butter-block-radius, 8px));
+}
+
+/* Box shadow leaves the cloned content on Chromium's ordinary text-paint path;
+   filter/opacity compositing can rasterize glyphs at a subtly different
+   subpixel origin and make exact geometry appear to jump at teardown. */
+.butter-drag-scene-ghost.is-shadow-exiting {
+  box-shadow: 0 8px 18px rgb(0 0 0 / 0%);
+  transition: box-shadow 180ms 40ms cubic-bezier(0.2, 0.85, 0.3, 1);
+}
+
+/* Ordinary text keeps its full measured drag geometry, but its elevation
+   follows the rendered text rather than the editor column. */
+.butter-drag-scene-ghost.has-content-shadow {
+  overflow: visible;
+  box-shadow: none;
+}
+
+.butter-drag-scene-content-shadow {
+  position: absolute;
+  left: var(--butter-drag-scene-content-shadow-left);
+  top: var(--butter-drag-scene-content-shadow-top);
+  z-index: 0;
+  width: var(--butter-drag-scene-content-shadow-width);
+  height: var(--butter-drag-scene-content-shadow-height);
+  border-radius: var(--radius-s, 4px);
+  box-shadow: 0 8px 18px rgb(0 0 0 / 22%);
+  pointer-events: none;
+}
+
+.butter-drag-scene-ghost-piece.has-content-shadow
+  > .butter-drag-scene-proxy-view {
+  z-index: 1;
+}
+
+.butter-drag-scene-ghost.is-shadow-exiting
+  .butter-drag-scene-content-shadow {
+  box-shadow: 0 8px 18px rgb(0 0 0 / 0%);
+  transition: box-shadow 180ms 40ms cubic-bezier(0.2, 0.85, 0.3, 1);
+}
+
+/* Single oversized media uses its faithful renderer clone as the compact
+   preview. Scaling the complete piece preserves aspect ratio and lets the
+   shared ghost-size spring own both pickup shrink and landing expansion. */
+.butter-drag-scene-ghost.has-media-preview,
+.butter-drag-scene-ghost.is-media-compact {
+  overflow: visible;
+}
+
+.butter-drag-scene-ghost.is-media-compact
+  > .butter-drag-scene-ghost-piece {
+  transform: scale(
+    var(--butter-drag-scene-media-scale-x, 1),
+    var(--butter-drag-scene-media-scale-y, 1)
+  );
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.butter-drag-scene-ghost.has-media-preview
+  :is(.butter-image-resize-handle, .butter-image-edit-button) {
+  display: none !important;
+}
+
+.butter-drag-scene-frozen-media-frame {
+  max-width: none !important;
+}
+
+.butter-drag-scene-frozen-media-host {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+}
+
+/* Container surfaces retain a subtle 10% passthrough through this dedicated
+   backing; the cloned content itself remains renderer-faithful. */
+.butter-drag-scene-container-backing {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: var(--callout-radius, var(--butter-block-radius, 8px));
+  background: var(--background-primary);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.butter-drag-scene-container-backing + .butter-drag-scene-proxy-view {
+  z-index: 1;
+}
+
+.butter-drag-scene-ghost.is-shadow-exiting
+  .butter-drag-scene-container-backing {
+  opacity: 0;
+  transition: opacity 70ms 20ms cubic-bezier(0.2, 0.85, 0.3, 1);
+}
+
+.butter-drag-scene-ghost.has-aggregate-preview
+  .butter-drag-scene-ghost-piece {
+  visibility: hidden !important;
+}
+
+.butter-drag-scene-ghost.has-aggregate-preview {
+  overflow: visible;
+}
+
+.butter-drag-scene-aggregate-preview {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  overflow: visible;
+}
+
+/* Multi-selection reflow keeps its normalized compact footprint, while the
+   stacked visual card gets the same readable preview height as a compact
+   single block. The overlay may overpaint; it never changes document flow. */
+.butter-drag-scene-aggregate-preview:not(.is-single) {
+  inset: 0 0 auto;
+  height: max(100%, 80px);
+}
+
+.butter-drag-scene-aggregate-card {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--menu-radius, 8px);
+  background: var(--background-secondary);
+}
+
+.butter-drag-scene-aggregate-card-far {
+  z-index: 0;
+  translate: 6px 6px;
+  opacity: 0.5;
+}
+
+.butter-drag-scene-aggregate-card-near {
+  z-index: 1;
+  translate: 3px 3px;
+  opacity: 0.75;
+}
+
+.butter-drag-scene-aggregate-card-front {
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 10px;
+  overflow: hidden;
+  border-color: var(--background-modifier-border-hover);
+  background: var(--background-primary-alt, var(--background-primary));
+  color: var(--text-normal);
+}
+
+.butter-drag-scene-aggregate-count {
+  display: inline-flex;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  border: 1px solid var(--background-modifier-border-hover);
+  border-radius: 50%;
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold, 600);
+  line-height: 1;
+}
+
+.butter-drag-scene-aggregate-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.butter-drag-scene-aggregate-placeholder {
+  width: min(42%, 220px);
+  height: 3px;
+  border-radius: 2px;
+  background: var(--text-faint);
+  opacity: 0.55;
+}
+
+.butter-drag-scene-aggregate-preview.is-content-preview
+  .butter-drag-scene-aggregate-card-front {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 8px 10px 0;
+}
+
+.butter-drag-scene-aggregate-preview.is-content-preview
+  .butter-drag-scene-aggregate-content {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: 8px;
+  overflow: hidden;
+}
+
+.butter-drag-scene-aggregate-rendered-block {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  max-width: 100%;
+  height: var(--butter-drag-scene-piece-height);
+  overflow: visible;
+}
+
+.butter-drag-scene-aggregate-rendered-member {
+  position: absolute;
+  left: var(--butter-drag-scene-piece-left);
+  top: var(--butter-drag-scene-piece-top);
+  width: var(--butter-drag-scene-piece-width);
+  height: var(--butter-drag-scene-piece-height);
+}
+
+.butter-drag-scene-aggregate-preview.has-overflow
+  .butter-drag-scene-aggregate-content::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 28px;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    var(--background-primary-alt, var(--background-primary))
+  );
+}
+
+.butter-drag-scene-aggregate-more {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  margin: 0 -10px;
+  padding: 5px 10px 6px;
+  overflow: hidden;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-medium, 500);
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.butter-drag-scene-aggregate-more-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.butter-drag-scene-aggregate-more[hidden] {
+  display: none;
+}
+
+/* A compact single-block drop is a shared-element handoff. The committed
+   renderer clone is introduced beneath the crop, then the crop chrome and
+   source-context rendering leave together. The real committed DOM remains
+   hidden until teardown, so the final swap is between identical geometry. */
+.butter-drag-scene-ghost.is-compact-handoff {
+  overflow: hidden;
+}
+
+/* The compact card keeps the dimensions it had at release. The committed
+   block and scene expand behind it; the card itself only fades. */
+.butter-drag-scene-ghost.is-live-reveal
+  .butter-drag-scene-aggregate-preview {
+  inset: 0 auto auto 0;
+  width: var(--butter-drag-scene-compact-card-width);
+  height: var(--butter-drag-scene-compact-card-height);
+}
+
+.butter-drag-scene-ghost.is-compact-handoff-ready {
+  opacity: 1;
+  box-shadow: 0 0 0 rgb(0 0 0 / 0%);
+  transition:
+    opacity 110ms cubic-bezier(0.2, 0.85, 0.3, 1),
+    box-shadow 110ms cubic-bezier(0.2, 0.85, 0.3, 1);
+}
+
+.butter-drag-scene-ghost.has-aggregate-preview.is-compact-handoff-ready
+  > .butter-drag-scene-ghost-piece {
+  visibility: visible !important;
+  opacity: 0;
+  transition: opacity 110ms cubic-bezier(0.2, 0.85, 0.3, 1);
+}
+
+.butter-drag-scene-ghost.is-compact-handoff-active
+  > .butter-drag-scene-ghost-piece {
+  opacity: 1;
+}
+
+.butter-drag-scene-ghost.is-live-reveal.is-compact-handoff-active
+  > .butter-drag-scene-ghost-piece {
+  opacity: 0;
+  transition: none;
+}
+
+.butter-drag-scene-ghost.is-compact-handoff-ready
+  .butter-drag-scene-aggregate-preview {
+  opacity: 1;
+  transition: opacity 110ms cubic-bezier(0.2, 0.85, 0.3, 1);
+}
+
+.butter-drag-scene-ghost.is-compact-handoff-active:not(.is-registered-handoff)
+  .butter-drag-scene-aggregate-preview {
+  opacity: 0;
+}
+
+/* The real committed ProseMirror block fades and uncrops while the analytic
+   scene expands its destination space. Clip and opacity do not participate in
+   layout, so downstream geometry remains owned by the shared motion clock. */
+body.butter-is-drag-scene-v2
+  .butter-drag-scene-live-compact-reveal {
+  visibility: visible !important;
+  opacity: 0;
+  clip-path: inset(
+    0
+    var(--butter-drag-scene-live-reveal-right, 0px)
+    var(--butter-drag-scene-live-reveal-bottom, 0px)
+    0
+  );
+  transition:
+    opacity var(--butter-drag-scene-live-reveal-duration, 240ms)
+      var(--butter-drag-scene-live-reveal-easing, cubic-bezier(0.2, 1, 0.4, 1)),
+    clip-path var(--butter-drag-scene-live-reveal-duration, 240ms)
+      var(--butter-drag-scene-live-reveal-easing, cubic-bezier(0.2, 1, 0.4, 1));
+  will-change: translate, opacity, clip-path !important;
+}
+
+body.butter-is-drag-scene-v2
+  .butter-drag-scene-live-compact-reveal-active {
+  opacity: 1;
+  clip-path: inset(0 0 0 0);
+}
+
+.butter-drag-scene-ghost.is-compact-handoff-active.is-registered-handoff
+  > .butter-drag-scene-ghost-piece {
+  opacity: 1;
+  transition: none;
+}
+
+.butter-drag-scene-ghost.is-compact-handoff-active.is-registered-handoff
+  .butter-drag-scene-aggregate-rendered-block {
+  visibility: hidden;
+}
+
+.butter-drag-scene-ghost.is-compact-handoff-active.is-registered-handoff
+  .butter-drag-scene-aggregate-card-front {
+  border-color: transparent;
+  background: transparent;
+  transition:
+    border-color 110ms cubic-bezier(0.2, 0.85, 0.3, 1),
+    background-color 110ms cubic-bezier(0.2, 0.85, 0.3, 1);
+}
+
+.butter-drag-scene-ghost.is-compact-handoff-active.is-registered-handoff
+  .butter-drag-scene-aggregate-more,
+.butter-drag-scene-ghost.is-compact-handoff-active.is-registered-handoff
+  .butter-drag-scene-aggregate-content::after {
+  opacity: 0;
+  transition: opacity 110ms cubic-bezier(0.2, 0.85, 0.3, 1);
+}
+
+/* The faithful committed clone leaves only after the real renderer has been
+   restored beneath it. Teardown then removes an already transparent overlay
+   instead of exposing the final block in a hard one-frame swap. */
+.butter-drag-scene-ghost.is-final-reveal {
+  opacity: 0;
+  transition: opacity 90ms cubic-bezier(0.2, 0.85, 0.3, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .butter-drop-filler { animation: none; transition: none; }
+  .butter-drag-scene-ghost.is-shadow-exiting,
+  .butter-drag-scene-ghost.is-shadow-exiting
+    .butter-drag-scene-content-shadow,
+  .butter-drag-scene-ghost.is-shadow-exiting
+    .butter-drag-scene-container-backing,
+  .butter-drag-scene-ghost.is-compact-handoff-ready,
+  .butter-drag-scene-ghost.has-aggregate-preview.is-compact-handoff-ready
+    > .butter-drag-scene-ghost-piece,
+  .butter-drag-scene-ghost.is-compact-handoff-ready
+    .butter-drag-scene-aggregate-preview,
+  .butter-drag-scene-ghost.is-compact-handoff-active.is-registered-handoff
+    .butter-drag-scene-aggregate-card-front,
+  .butter-drag-scene-ghost.is-compact-handoff-active.is-registered-handoff
+    .butter-drag-scene-aggregate-more,
+  .butter-drag-scene-ghost.is-compact-handoff-active.is-registered-handoff
+    .butter-drag-scene-aggregate-content::after {
+    transition: none;
+  }
+
+  .butter-drag-scene-ghost.is-final-reveal {
+    transition: none;
+  }
+
+  body.butter-is-drag-scene-v2
+    .butter-drag-scene-live-compact-reveal {
+    transition: none;
+  }
+}
+
+.butter-drag-scene-ghost-piece {
+  position: absolute;
+  left: var(--butter-drag-scene-piece-left);
+  top: var(--butter-drag-scene-piece-top);
+  width: var(--butter-drag-scene-piece-width);
+  height: var(--butter-drag-scene-piece-height);
+}
+
+/* List depth guides belong to the landed document. The pointer ghost keeps
+   pickup geometry while targeting another depth, so painting guides there
+   would show a transient rail that cannot stay aligned until commit. */
+.butter-drag-scene-ghost .butter-list-item {
+  background-image: none !important;
+}
+
+.butter-drag-scene-proxy-content :is(
+  .butter-image-resize-handle,
+  .butter-image-edit-button
+) {
+  visibility: hidden !important;
+}
+
+body.butter-is-drag-scene-v2 .butter-drag-scene-live-block {
+  translate:
+    var(--butter-drag-scene-live-x, 0px)
+    var(--butter-drag-scene-live-y, 0px) !important;
+}
+body.butter-is-drag-scene-v2 .butter-drag-scene-live-moving {
+  will-change: translate !important;
+}
+/* Dynamic container heights are owned by the analytic scene clock. Excluding
+   the editor subtree from browser scroll-anchor selection prevents Chromium
+   from applying a second, asynchronous viewport correction to those writes. */
+body.butter-is-drag-scene-v2 .butter-editor-view {
+  overflow-anchor: none !important;
+}
+.butter-drag-scene-scroll-host {
+  overflow-anchor: none !important;
+}
+body.butter-is-drag-scene-v2 .butter-drag-scene-live-dragged {
+  visibility: hidden !important;
+}
+body.butter-is-drag-scene-v2 .butter-drag-scene-live-source-vacancy {
+  box-sizing: border-box !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-width: 0 !important;
+  overflow: hidden !important;
+}
+body.butter-is-drag-scene-v2 .butter-drag-scene-live-container {
+  box-sizing: border-box !important;
+  height: var(--butter-drag-scene-live-height) !important;
+}
+/* A committed atomic block can briefly report intrinsic placeholder height in
+   Chromium after ProseMirror moves it. Preserve the renderer-owned destination
+   height until natural committed geometry is stable so later blocks never
+   receive a one-paint displacement. */
+body.butter-is-drag-scene-v2 .butter-drag-scene-live-height-lock {
+  box-sizing: border-box !important;
+  height: var(--butter-drag-scene-live-height) !important;
+}
+/* V2 keeps the real ProseMirror rendering visible. Container height is sampled
+   from the shared analytic clock; its real children must retain their natural
+   boxes while that shell grows or shrinks. */
+body.butter-is-drag-scene-v2 .butter-editor-view :is(
+  .butter-callout-view,
+  blockquote
+) {
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+/* A callout normally clips vertical overflow to prevent a sub-pixel scrollbar.
+   During drag, its children and shell height move on the shared scene clock;
+   the child lane must therefore remain paint-visible between those samples. */
+body.butter-is-drag-scene-v2 .butter-editor-view .butter-drag-scene-live-lane {
+  overflow: visible !important;
+  clip-path: none !important;
+  contain: none !important;
+}
+body.butter-is-drag-scene-v2 .butter-editor-view blockquote > *,
+body.butter-is-drag-scene-v2 .butter-editor-view .butter-callout-view > * {
+  flex-shrink: 0 !important;
+}
+
+/* The Drag Scene ghost replaces selection feedback during a gesture. */
+body.butter-is-drag-scene-v2 .butter-selection-overlay {
+  opacity: 0 !important;
 }
 
 /* Body-wide grabbing cursor during drag */
-body.butter-is-dragging,
-body.butter-is-dragging * {
+body.butter-is-drag-scene-v2,
+body.butter-is-drag-scene-v2 * {
   cursor: grabbing !important;
   user-select: none !important;
 }
 
 /* Mobile: prevent browser scroll during block drag */
-body.is-mobile.butter-is-dragging {
+body.is-mobile.butter-is-drag-scene-v2 {
   touch-action: none !important;
 }
+
+.butter-search-zero-width { border-left: 2px solid var(--text-accent); }

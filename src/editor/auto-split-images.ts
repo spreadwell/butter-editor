@@ -33,7 +33,7 @@
  * fingerprint check would fail.
  *
  * Drag interlock: the plugin SKIPS its work when a Butter drag is
- * in progress (the `butter-is-dragging` body class is set). Splits
+ * in progress (the Drag Scene body class is set). Splits
  * happening mid-drag corrupt the drag's tracked positions and have
  * been observed to cause save round-trip failures. The next post-
  * drag transaction triggers any needed splits cleanly.
@@ -45,6 +45,7 @@
 import { Plugin, PluginKey } from "prosemirror-state";
 import type { Schema } from "prosemirror-model";
 import type { Node as PMNode } from "prosemirror-model";
+import { changedRangesInFinalDoc } from "./changed-ranges";
 
 const key = new PluginKey("butter-auto-split-images");
 
@@ -100,15 +101,17 @@ export function autoSplitImagesPlugin(
 ) {
   return new Plugin({
     key,
-    appendTransaction(_trs, _oldState, newState) {
+    appendTransaction(transactions, _oldState, newState) {
       if (!isEnabled()) return null;
+      const changedRanges = changedRangesInFinalDoc(transactions, newState.doc);
+      if (changedRanges.length === 0) return null;
       // Skip while a drag is in progress - splitting paragraphs
       // mid-drag invalidates the drag's tracked positions and has
       // been observed to corrupt save round-trips. The next post-
       // drag transaction handles any needed splits.
       if (
         typeof document !== "undefined" &&
-        activeDocument.body?.classList?.contains("butter-is-dragging")
+        activeDocument.body?.classList?.contains("butter-is-drag-scene-v2")
       ) {
         return null;
       }
@@ -122,7 +125,10 @@ export function autoSplitImagesPlugin(
         paraNode: PMNode;
         atomIdx: number;
       }> = [];
-      newState.doc.forEach((child, offset) => {
+      const visited = new Set<number>();
+      const inspectParagraph = (child: PMNode, offset: number) => {
+        if (visited.has(offset)) return;
+        visited.add(offset);
         if (child.type.name !== "paragraph") return;
         // Trivial case: paragraph IS just the atom - already isolated.
         if (
@@ -139,7 +145,14 @@ export function autoSplitImagesPlugin(
         }
         if (atomIdx < 0) return;
         work.push({ paraPos: offset, paraNode: child, atomIdx });
-      });
+      };
+      for (const range of changedRanges) {
+        newState.doc.nodesBetween(range.from, range.to, (child, offset, parent) => {
+          if (parent !== newState.doc) return false;
+          inspectParagraph(child, offset);
+          return false;
+        });
+      }
       if (work.length === 0) return null;
 
       // Apply replacements in REVERSE order so earlier paragraph

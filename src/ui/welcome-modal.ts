@@ -11,12 +11,14 @@ import {
   LIFETIME_LICENSE_PRICE,
   TRIAL_LENGTH_DAYS,
 } from "../integration/license/policy";
+import { LINKS } from "../integration/license/links";
 import { tx, tv } from "../i18n";
 import { appendInlineNotice } from "./inline-notice";
 import {
   applyOnboardingChoices,
   initialRichFormattingChoice,
 } from "./rich-formatting-preference";
+import { allCommonMarkdownShortcutsEnabled } from "../editor/markdown-shortcuts";
 
 export const BUTTER_GITHUB_README =
   "https://github.com/spreadwell/butter-editor#readme";
@@ -30,7 +32,9 @@ export class WelcomeModal extends Modal {
   constructor(app: App, private plugin: ButterEditorPlugin) {
     super(app);
     this.richFormattingEnabled = initialRichFormattingChoice(plugin.settings);
-    this.markdownShortcutsEnabled = plugin.settings.enableMarkdownShortcuts;
+    this.markdownShortcutsEnabled = allCommonMarkdownShortcutsEnabled(
+      plugin.settings.markdownShortcuts,
+    );
   }
 
   onOpen() {
@@ -127,7 +131,7 @@ export class WelcomeModal extends Modal {
 
     const intro = body.createDiv({ cls: "butter-welcome-intro" });
     intro.createEl("p", {
-      text: `${tx("Choose the options that fit how you write.")} ${tx("These are off by default for the simplest writing experience.")}`,
+      text: `${tx("Choose the options that fit how you write.")} ${tx("You can change these later in Settings.")}`,
     });
 
     const formatting = body.createDiv({ cls: "butter-welcome-formatting" });
@@ -146,7 +150,7 @@ export class WelcomeModal extends Modal {
       formatting,
       "keyboard",
       tx("Markdown typing shortcuts"),
-      tx("When this is on, typing things like *word*, # Heading, or - List turns them into formatting. Leave it off to keep those characters as text."),
+      tx("Turn familiar Markdown into formatting as you type, including **bold**, [[links]], headings, lists, and tasks."),
       this.markdownShortcutsEnabled,
       (enabled) => {
         this.markdownShortcutsEnabled = enabled;
@@ -169,6 +173,7 @@ export class WelcomeModal extends Modal {
     const body = contentEl.createDiv({ cls: "butter-welcome-body is-license" });
 
     this.renderTrialSection(body);
+    this.renderEarlyAccessSection(body);
 
     const footer = contentEl.createDiv({
       cls: "butter-welcome-footer",
@@ -359,6 +364,20 @@ export class WelcomeModal extends Modal {
       });
     });
     this.renderEnterKeyRow(parent);
+  }
+
+  private renderEarlyAccessSection(parent: HTMLElement): void {
+    const panel = parent.createDiv({
+      cls: "butter-welcome-license-card butter-welcome-feedback-card",
+    });
+    this.renderLicenseHeader(
+      panel,
+      "messages-square",
+      tx("Help shape Butter Editor"),
+      tv("Butter Editor is still in early access. Found a bug or have a feature idea? Send feedback to {email}.", {
+        email: LINKS.supportEmail,
+      }),
+    );
   }
 
   private renderEnterKeyRow(parent: HTMLElement) {

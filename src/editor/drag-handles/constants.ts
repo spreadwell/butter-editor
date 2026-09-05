@@ -1,54 +1,107 @@
-
-// ── Constants ────────────────────────────────────────────────
-
-
-export const HANDLE_OFFSET_LEFT = 30;
+/** Stable outer gutter rail shared by blocks at the same nesting depth. */
+export const HANDLE_OFFSET_LEFT = 39;
 export const HANDLE_WIDTH = 22;
 export const HANDLE_HEIGHT = 22;
+export const HANDLE_OFFSET_TOP = 1;
 export const DRAG_THRESHOLD = 4;
 export const TOUCH_LONGPRESS_MS = 400;
 export const TOUCH_LONGPRESS_MOVE_PX = 8;
 export const MENU_GAP = 6;
 export const MENU_WIDTH = 240;
+
 export const AUTOSCROLL_EDGE_PX = 70;
-// Time-based so 60Hz, 90Hz, and 144Hz displays scroll at the same
-// rate. 600 px/s ≈ the 0.9.9 feel on a 60Hz display (16 px/frame ×
-// 60 fps = 960, but 0.9.9 felt fast even there — settled on 600).
 export const AUTOSCROLL_MAX_PX_PER_SECOND = 600;
-export const COMPACT_THRESHOLD_PX = 240;
-export const VIEWPORT_MARGIN_PX = 400;
+export const DEFAULT_DRAG_TRIGGER_OFFSET_PX = 18;
+export const DEFAULT_CONTAINER_DRAG_TRIGGER_OFFSET_PX = 0;
+export const DRAG_TRIGGER_OFFSET_MIN_PX = -32;
+export const DRAG_TRIGGER_OFFSET_MAX_PX = 32;
 
-// ── Types ────────────────────────────────────────────────────
+export function resolveDragTriggerOffsetPx(
+  value: number,
+  fallback = DEFAULT_DRAG_TRIGGER_OFFSET_PX,
+): number {
+  const finite = Number.isFinite(value) ? value : fallback;
+  return Math.min(
+    DRAG_TRIGGER_OFFSET_MAX_PX,
+    Math.max(DRAG_TRIGGER_OFFSET_MIN_PX, finite),
+  );
+}
 
-export const DRAG_MOTIONS = {
-  springy: {
-    spring: "cubic-bezier(0.34, 1.56, 0.64, 1)",
-    soft: "cubic-bezier(0.2, 1.2, 0.4, 1)",
-  },
-  snappy: {
-    spring: "cubic-bezier(0.2, 0.8, 0.2, 1)",
-    soft: "cubic-bezier(0.2, 0.8, 0.2, 1)",
-  },
-  smooth: {
-    spring: "cubic-bezier(0.4, 0, 0.2, 1)",
-    soft: "cubic-bezier(0.4, 0, 0.2, 1)",
-  },
-} as const;
+/** Resolve one refresh-rate-independent autoscroll step. */
+export function resolveDragAutoscrollDelta(
+  pointerY: number,
+  viewportTop: number,
+  viewportBottom: number,
+  frameMs: number,
+): number {
+  const boundedFrameMs = Math.max(0, Math.min(50, frameMs));
+  const frameMax = AUTOSCROLL_MAX_PX_PER_SECOND * (boundedFrameMs / 1000);
+  const topPenetration = Math.max(
+    0,
+    Math.min(
+      1,
+      (viewportTop + AUTOSCROLL_EDGE_PX - pointerY) / AUTOSCROLL_EDGE_PX,
+    ),
+  );
+  if (topPenetration > 0) return -(topPenetration ** 2) * frameMax;
+  const bottomPenetration = Math.max(
+    0,
+    Math.min(
+      1,
+      (pointerY - (viewportBottom - AUTOSCROLL_EDGE_PX)) / AUTOSCROLL_EDGE_PX,
+    ),
+  );
+  return bottomPenetration > 0 ? (bottomPenetration ** 2) * frameMax : 0;
+}
+
+export const DEFAULT_DRAG_COMPACTION_TRIGGER_PX = 180;
+export const DEFAULT_DRAG_COMPACTED_HEIGHT_PX = 100;
+export const DRAG_COMPACTION_TRIGGER_MIN_PX = 160;
+export const DRAG_COMPACTION_TRIGGER_MAX_PX = 800;
+export const DRAG_COMPACTED_HEIGHT_MIN_PX = 80;
+export const DRAG_COMPACTED_HEIGHT_MAX_PX = 800;
+
+export interface DragCompactionGeometry {
+  triggerHeight: number;
+  compactedHeight: number;
+}
+
+export function resolveDragCompactionGeometry(
+  triggerHeight: number,
+  compactedHeight: number,
+): DragCompactionGeometry {
+  const finiteTrigger = Number.isFinite(triggerHeight)
+    ? triggerHeight
+    : DEFAULT_DRAG_COMPACTION_TRIGGER_PX;
+  const normalizedTrigger = Math.min(
+    DRAG_COMPACTION_TRIGGER_MAX_PX,
+    Math.max(DRAG_COMPACTION_TRIGGER_MIN_PX, finiteTrigger),
+  );
+  const finiteCompacted = Number.isFinite(compactedHeight)
+    ? compactedHeight
+    : DEFAULT_DRAG_COMPACTED_HEIGHT_PX;
+  const normalizedCompacted = Math.min(
+    DRAG_COMPACTED_HEIGHT_MAX_PX,
+    Math.max(DRAG_COMPACTED_HEIGHT_MIN_PX, finiteCompacted),
+  );
+  return {
+    triggerHeight: normalizedTrigger,
+    compactedHeight: Math.min(normalizedTrigger, normalizedCompacted),
+  };
+}
 
 const HANDLE_DOT_POSITIONS: ReadonlyArray<readonly [number, number]> = [
   [1, 1], [5, 1], [1, 5], [5, 5], [1, 9], [5, 9],
 ];
 
-/** Build the six-dot drag-handle icon as a real SVG element. Built via
- *  DOM rather than an innerHTML string so it satisfies the Obsidian
- *  plugin-review guideline against writing markup to innerHTML. */
-export function buildHandleDotsSvg(): SVGElement {
-  const svg = activeWindow.createSvg("svg");
+export function buildHandleDotsSvg(ownerDocument: Document): SVGElement {
+  const svgNamespace = "http://www.w3.org/2000/svg";
+  const svg = ownerDocument.createElementNS(svgNamespace, "svg");
   svg.setAttribute("class", "butter-drag-handle-svg");
   svg.setAttribute("viewBox", "0 0 6 10");
   svg.setAttribute("aria-hidden", "true");
   for (const [cx, cy] of HANDLE_DOT_POSITIONS) {
-    const dot = activeWindow.createSvg("circle");
+    const dot = ownerDocument.createElementNS(svgNamespace, "circle");
     dot.setAttribute("cx", String(cx));
     dot.setAttribute("cy", String(cy));
     dot.setAttribute("r", "1");
@@ -56,14 +109,3 @@ export function buildHandleDotsSvg(): SVGElement {
   }
   return svg;
 }
-
-export const SEL = ".ProseMirror [data-butter-drag-idx=";
-
-/** Unified slot-driven reflow. Emits transforms for siblings in the
- *  target slot's container (open gap at target) and the source
- *  container (close gap from dragged blocks). When source and target
- *  share a container, the two contributions superpose into the
- *  closure-aware formula. Otherwise they apply independently.
- *
- *  Source hiding lives in static CSS (.butter-drag-source) so it
- *  survives stylesheet cleanup post-dispatch. */

@@ -1,4 +1,4 @@
-export type AutocompleteMode = "wikilink" | "tag";
+export type AutocompleteMode = "wikilink" | "embed" | "tag";
 
 const TAG_QUERY_RE = /^[A-Za-z0-9_/-]*$/;
 
@@ -10,9 +10,10 @@ export function getAutocompleteQuery(
   mode: AutocompleteMode,
   text: string,
 ): string | null {
-  if (mode === "wikilink") {
-    if (!text.startsWith("[[")) return null;
-    const body = text.slice(2);
+  if (mode === "wikilink" || mode === "embed") {
+    const opener = mode === "embed" ? "![[" : "[[";
+    if (!text.startsWith(opener)) return null;
+    const body = text.slice(opener.length);
     const closeIndex = body.indexOf("]]");
     if (closeIndex >= 0) {
       const trailing = body.slice(closeIndex + 2);

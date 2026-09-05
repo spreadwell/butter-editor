@@ -6,7 +6,7 @@
  *                 Default when opened from the toolbar `+` button.
  *   • "block-actions" - block-context items for a specific block
  *                 (Turn into / Edit source / Language / Callout type
- *                 / List type, plus universal Copy / Duplicate /
+ *                 / List type, plus universal Copy / Cut / Duplicate /
  *                 Delete). Default when opened via mobile long-press
  *                 on a block (no drag).
  * A toggle button at the top swaps between modes in place; the
@@ -32,13 +32,14 @@
  *      editor; the OS slides the keyboard back in and Obsidian
  *      resets `--keyboard-height` automatically.
  */
-import { App, Notice, setIcon } from "obsidian";
+import { App, setIcon } from "obsidian";
 import type { EditorView } from "prosemirror-view";
 import type { Schema, Node as PMNode } from "prosemirror-model";
 import { TextSelection } from "prosemirror-state";
 import { SLASH_ITEMS, type SlashItem } from "./slash-menu";
 import {
   buildSingleBlockMenuItems,
+  buildBlockLifecycleMenuItems,
   validTurnIntoTargets,
   type BlockMenuItem,
   type BlockSubItem,
@@ -541,7 +542,7 @@ const TURN_INTO_CATEGORIES: Array<{ name: string; ids: string[] }> = [
  *  Turn-into submenu (Turn into has its own toolbar button +
  *  drawer mode). Includes per-block-type items (Edit source,
  *  Language, Callout type, List type) and universal Copy /
- *  Duplicate / Delete. */
+ *  Cut / Duplicate / Delete. */
 function renderBlockActionsView(
   grid: HTMLElement,
   view: EditorView,
@@ -580,62 +581,15 @@ function renderBlockActionsView(
       renderBlockTile(grid, item, view, blockCtx);
     }
   }
-  // Universal lifecycle actions - same set as the desktop block
-  // context menu (`drag-handles.ts:openBlockContextMenu`), shaped
-  // as `BlockMenuItem`s so the renderer treats them identically.
+  // Universal lifecycle actions come from the same canonical catalog as the
+  // desktop drag-handle and general context menus.
   const headerUniversal = activeWindow.createDiv();
   headerUniversal.className = "butter-mobile-insert-drawer-category";
   headerUniversal.textContent = tx("Block");
   grid.appendChild(headerUniversal);
-  if (blockCtx.serializeNode) {
-    const serialize = blockCtx.serializeNode;
-    renderBlockTile(
-      grid,
-      {
-        id: "block-copy",
-        title: "Copy",
-        icon: "copy",
-        sideEffect: (_v, _p, n) => {
-          const md = serialize(n);
-          void navigator.clipboard.writeText(md.replace(/\n+$/, "")).then(
-            () => new Notice(tx("Copied block")),
-            () => new Notice(tx("Clipboard write failed")),
-          );
-        },
-      },
-      view,
-      blockCtx,
-    );
+  for (const item of buildBlockLifecycleMenuItems(blockCtx.serializeNode)) {
+    renderBlockTile(grid, item, view, blockCtx);
   }
-  renderBlockTile(
-    grid,
-    {
-      id: "block-duplicate",
-      title: "Duplicate",
-      icon: "copy-plus",
-      sideEffect: (v, p, n) => {
-        const after = p + n.nodeSize;
-        const clone = n.type.create(n.attrs, n.content, n.marks);
-        v.dispatch(v.state.tr.insert(after, clone));
-      },
-    },
-    view,
-    blockCtx,
-  );
-  renderBlockTile(
-    grid,
-    {
-      id: "block-delete",
-      title: "Delete",
-      icon: "trash-2",
-      warning: true,
-      sideEffect: (v, p, n) => {
-        v.dispatch(v.state.tr.delete(p, p + n.nodeSize));
-      },
-    },
-    view,
-    blockCtx,
-  );
 }
 
 function renderEmptyState(grid: HTMLElement, message: string): void {

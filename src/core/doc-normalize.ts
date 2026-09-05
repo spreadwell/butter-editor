@@ -3,18 +3,19 @@
  *
  * Markdown can not represent every PM tree shape the schema admits.
  * When a user edit produces an unrepresentable shape (block_id in
- * the middle of a paragraph, orphan-nested list_item, heading with
- * softbreaks, embed-inline alone in a paragraph, text node with
+ * the middle of a paragraph, orphan-nested list_item, embed-inline
+ * alone in a paragraph, text node with
  * embedded newline), the serializer either emits invalid markdown
  * or output that reparses to a structurally different doc — the
  * save guard fires.
  *
  * This module rewrites those shapes into their canonical equivalents
- * BEFORE serialization. The user's in-memory PM tree is NOT touched
- * (the normalizer is pure: input doc, output doc). The save pipeline
- * passes the normalized doc to both serializer and fingerprint, so
- * the fingerprint divergence check sees the SAME shape on both sides
- * of the round-trip. Drift can only fire on genuine serializer bugs.
+ * BEFORE serialization. The normalizer itself is pure (input doc, output
+ * doc). Its explicit presentation mode applies every durable, visible rewrite
+ * while retaining editing ephemera that Markdown cannot encode: transient
+ * empty paragraphs and emphasis-edge whitespace marks. The view reconciles
+ * that presentation target before a successful write, while the default
+ * persisted target remains the sole serializer/fingerprint input.
  *
  * Each normalization is idempotent. Each is documented with the bug
  * class that motivated it.
@@ -26,21 +27,16 @@
  *      → clamp depth to whatever has a real ancestor chain (down to
  *      0). Round-trip-safe: orphan reparses as list_item depth=0
  *      instead of code_block.
- *   3. Heading with inline softbreak/hardbreak nodes → flatten to
- *      spaces in the text content.
- *   4. Heading content with leading/trailing whitespace on the
- *      first/last unmarked text node → strip. Markdown-it strips
- *      both on heading reparse.
- *   5. Paragraph containing ONLY an obsidian_embed_inline → replace
+ *   3. Paragraph containing ONLY an obsidian_embed_inline → replace
  *      with a top-level obsidian_embed block node. Markdown-it
  *      auto-promotes the inline form when isolated, so we make the
  *      tree match.
- *   6. Text node with embedded `\n` → split into text + softbreak
+ *   4. Text node with embedded `\n` → split into text + softbreak
  *      + text alternations. Round-trips cleanly; the original
  *      shape reparses with the softbreak as an explicit node.
- *   7. Plain text `$...$` that matches Butter's inline math delimiter
+ *   5. Plain text `$...$` that matches Butter's inline math delimiter
  *      rules -> inline_math atom. Currency-shaped dollars stay text.
- *   8. Top-level empty paragraphs -> dropped. Blank lines are markdown
+ *   6. Top-level empty paragraphs -> dropped. Blank lines are markdown
  *      gaps, not durable empty paragraph blocks.
  *
  * All other PM shapes pass through unchanged.
@@ -52,6 +48,26 @@ import {
   findInlineMathClose,
   isValidInlineMathOpenAt,
 } from "./inline-math-delimiters";
+import {
+  flatListLayoutFor,
+  listItemCanRepresentLooseNestedEdge,
+  listItemHasSyntheticLeadingParagraph,
+  listItemIsMarkerOnly,
+  listItemRequiresLooseParentEdge,
+  listKind,
+  orderedListStart,
+} from "./list-layout";
+import { __mdit } from "./bridge/common";
+
+export interface NormalizeDocForSaveOptions {
+  /**
+   * `persisted` is the exact Markdown-representable tree (the default).
+   * `presentation` retains non-persistable editing ephemera in the live PM
+   * state. The save boundary proves that normalizing the presentation target
+   * in persisted mode is exactly equal to the persisted target before write.
+   */
+  readonly mode?: "persisted" | "presentation";
+}
 
 // ── Per-node normalizers ─────────────────────────────────────────
 
@@ -71,99 +87,265 @@ function hoistBlockIdsToEnd(children: PMNode[]): PMNode[] {
   return hasMid ? [...main, ...tail] : children;
 }
 
-function clampOrphanListItemDepth(
-  child: PMNode,
-  idx: number,
-  parent: PMNode,
-): PMNode {
-  if (child.type.name !== "list_item") return child;
-  const depth = (child.attrs.depth as number | undefined) ?? 0;
-  if (depth === 0) return child;
-  // Walk backward to find the highest existing-ancestor depth.
-  let effectiveDepth = depth;
-  while (effectiveDepth > 0) {
-    let hasAncestor = false;
-    for (let j = idx - 1; j >= 0; j--) {
-      const prev = parent.child(j);
-      if (prev.type.name !== "list_item") break;
-      const pd = (prev.attrs.depth as number | undefined) ?? 0;
-      if (pd < effectiveDepth - 1) break;
-      if (pd === effectiveDepth - 1) {
-        hasAncestor = true;
-        break;
+function insertRequiredTagBoundaries(node: PMNode, schema: Schema): PMNode {
+  if (!node.inlineContent || node.childCount < 2) return node;
+  const children: PMNode[] = [];
+  let changed = false;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child.type.name === "obsidian_tag" && children.length > 0) {
+      const previous = children[children.length - 1];
+      const hasBoundary =
+        previous.type.name === "softbreak" ||
+        previous.type.name === "hard_break" ||
+        (previous.isText && /\s$/.test(previous.text ?? ""));
+      if (!hasBoundary) {
+        children.push(schema.text(" "));
+        changed = true;
       }
     }
-    if (hasAncestor) break;
-    effectiveDepth--;
+    children.push(child);
   }
-  if (effectiveDepth === depth) return child;
-  return child.type.create(
-    { ...child.attrs, depth: effectiveDepth },
-    child.content,
-    child.marks,
-  );
+  return changed ? node.copy(Fragment.fromArray(children)) : node;
 }
 
-function isBreakNode(n: PMNode): boolean {
-  return n.type.name === "softbreak" || n.type.name === "hard_break";
+function canonicalizeDestinationValue(value: unknown): string {
+  // The parser delegates destination normalization to Markdown-it. Use that
+  // exact owner here as well so invalid percent escapes, Unicode, and URI
+  // punctuation cannot drift between PM attrs and reparsed attrs.
+  return __mdit.normalizeLink(typeof value === "string" ? value : "");
 }
 
-// Detect a list_item whose only child paragraph has no inline
-// content at all (truly empty `- `). When emitted inside a callout
-// body, markdown-it interprets the bare `- ` as a setext-style HR
-// or empty bullet that doesn't round-trip back into a list_item.
-// Production users rarely leave a list_item truly empty across a
-// save (the scheduler's idle window catches transient empties);
-// when they do, dropping the empty li is the only way to make the
-// document survive the round-trip. Outside containers (top-level)
-// empty list_items DO round-trip cleanly via `- \n`, so we only
-// drop them when they live inside a container.
-function isEmptyListItem(node: PMNode): boolean {
-  if (node.type.name !== "list_item") return false;
-  if (node.childCount !== 1) return false;
-  const p = node.child(0);
-  if (p.type.name !== "paragraph") return false;
-  if (p.childCount > 0) return false;
-  return true;
-}
-
-function dropEmptyListItems(
-  parent: PMNode,
-  schema: Schema,
-): PMNode | null {
-  // Empty list_items never survive a round-trip — markdown-it
-  // interprets the bare `- ` differently depending on context
-  // (heading underline inside a callout, list-item continuation
-  // outside, or just dropped if nested). Real users only have an
-  // empty list_item transiently (just pressed Enter, about to
-  // type); the save scheduler's 1500ms idle window means it's
-  // very unlikely to fire during that transient state. Drop them
-  // at save time to keep the round-trip safe. Applies to ALL
-  // parent contexts (top-level doc, callout body, blockquote body,
-  // even nested list_item content) — the drop is universal.
+function normalizeLinkAndImageAttrs(node: PMNode): PMNode {
+  if (!node.inlineContent || node.childCount === 0) return node;
+  const children: PMNode[] = [];
   let changed = false;
-  const kids: PMNode[] = [];
-  for (let i = 0; i < parent.childCount; i++) {
-    const c = parent.child(i);
-    if (isEmptyListItem(c)) {
+
+  for (let index = 0; index < node.childCount; index++) {
+    const child = node.child(index);
+    let next = child;
+
+    if (child.type.name === "image") {
+      const width = Number.isFinite(child.attrs.width) && child.attrs.width > 0
+        ? Math.floor(child.attrs.width as number)
+        : null;
+      const height = width !== null &&
+          Number.isFinite(child.attrs.height) && child.attrs.height > 0
+        ? Math.floor(child.attrs.height as number)
+        : null;
+      const attrs = {
+        ...child.attrs,
+        src: canonicalizeDestinationValue(child.attrs.src),
+        alt: child.attrs.alt ? String(child.attrs.alt) : null,
+        title: child.attrs.title ? String(child.attrs.title) : null,
+        width,
+        height,
+        displayMode: child.attrs.displayMode === "full" ? "full" : null,
+      };
+      if (JSON.stringify(attrs) !== JSON.stringify(child.attrs)) {
+        next = child.type.create(attrs, child.content, child.marks);
+        changed = true;
+      }
+    }
+
+    const marks = next.marks.map((mark) => {
+      if (mark.type.name !== "link") return mark;
+      const attrs = {
+        ...mark.attrs,
+        href: canonicalizeDestinationValue(mark.attrs.href),
+        title: mark.attrs.title ? String(mark.attrs.title) : null,
+      };
+      if (JSON.stringify(attrs) === JSON.stringify(mark.attrs)) return mark;
       changed = true;
+      return mark.type.create(attrs);
+    });
+    if (marks.some((mark, markIndex) => mark !== next.marks[markIndex])) {
+      next = next.mark(marks);
+    }
+    children.push(next);
+  }
+
+  return changed ? node.copy(Fragment.fromArray(children)) : node;
+}
+
+const WHITESPACE_EXPELLING_MARKS = new Set([
+  "strong",
+  "em",
+  "strikethrough",
+]);
+
+const markExpelsWhitespace = (mark: PMNode["marks"][number]): boolean =>
+  WHITESPACE_EXPELLING_MARKS.has(mark.type.name) ||
+  (mark.type.name === "highlight" && !mark.attrs.color && !mark.attrs.html);
+
+function normalizeExpelledMarkWhitespace(node: PMNode, schema: Schema): PMNode {
+  if (!node.inlineContent || node.childCount === 0) return node;
+  const children: PMNode[] = [];
+  let changed = false;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (
+      !child.isText ||
+      !child.text ||
+      child.marks.some((mark) => mark.type.name === "comment") ||
+      !child.marks.some(markExpelsWhitespace)
+    ) {
+      children.push(child);
       continue;
     }
-    kids.push(c);
+    const match = /^(\s*)(.*?)(\s*)$/s.exec(child.text);
+    if (!match || (!match[1] && !match[3])) {
+      children.push(child);
+      continue;
+    }
+    const outerMarks = child.marks.filter(
+      (mark) => !markExpelsWhitespace(mark),
+    );
+    if (match[1]) children.push(schema.text(match[1], outerMarks));
+    if (match[2]) children.push(schema.text(match[2], child.marks));
+    if (match[3]) children.push(schema.text(match[3], outerMarks));
+    changed = true;
   }
-  if (!changed) return null;
-  // Container with no children: insert empty paragraph so the
-  // schema remains satisfied (block+ requirement).
-  if (
-    kids.length === 0 &&
-    (parent.type.name === "obsidian_callout" ||
-      parent.type.name === "blockquote")
-  ) {
-    const para = schema.nodes.paragraph;
-    if (para) kids.push(para.create());
+  return changed ? node.copy(Fragment.fromArray(children)) : node;
+}
+
+function normalizeFlatListChildren(
+  parent: PMNode,
+): PMNode | null {
+  const layout = flatListLayoutFor(parent);
+  const hasRepresentableNestedEdgeByOwner = new Array<boolean>(
+    parent.childCount,
+  ).fill(false);
+  const runStats = new Map<
+    number,
+    {
+      count: number;
+      hasMultipleBlocks: boolean;
+      hasLooseItem: boolean;
+      hasRepresentableNestedEdge: boolean;
+      requiresLooseContainer: boolean;
+    }
+  >();
+
+  for (let index = 0; index < parent.childCount; index++) {
+    const child = parent.child(index);
+    const entry = layout[index];
+    if (!entry || child.type.name !== "list_item") continue;
+
+    const stats = runStats.get(entry.runStartIndex) ?? {
+      count: 0,
+      hasMultipleBlocks: false,
+      hasLooseItem: false,
+      hasRepresentableNestedEdge: false,
+      requiresLooseContainer: false,
+    };
+    stats.count += 1;
+    // The schema inserts an empty leading paragraph when authored Markdown
+    // starts a list item with another block (for example indented code). That
+    // carrier has no source representation and must not make a one-block item
+    // semantically loose by itself.
+    const hasSyntheticLeadingParagraph =
+      listItemHasSyntheticLeadingParagraph(child);
+    const representedBlockCount = child.childCount -
+      (hasSyntheticLeadingParagraph ? 1 : 0);
+    stats.hasMultipleBlocks ||= representedBlockCount > 1;
+    stats.hasLooseItem ||= child.attrs.tight === false;
+    runStats.set(entry.runStartIndex, stats);
   }
-  if (kids.length === 0) return null;
-  return parent.copy(Fragment.fromArray(kids));
+
+  // A one-item run can still carry observable looseness when its represented
+  // paragraph owns nested flat-list children. Preserve that authored state;
+  // canonical serialization has a real parent-to-child edge on which to emit
+  // the blank line. Block-first schema carriers are excluded by the shared
+  // representability predicate.
+  for (let index = 0; index < parent.childCount; index++) {
+    const entry = layout[index];
+    if (entry?.parentIndex === null || entry?.parentIndex === undefined) {
+      continue;
+    }
+    const owner = parent.child(entry.parentIndex);
+    if (!listItemCanRepresentLooseNestedEdge(owner)) continue;
+    const ownerEntry = layout[entry.parentIndex];
+    if (!ownerEntry) continue;
+    hasRepresentableNestedEdgeByOwner[entry.parentIndex] = true;
+    runStats.get(ownerEntry.runStartIndex)!.hasRepresentableNestedEdge = true;
+  }
+
+  // Flat descendants are siblings in the PM model, but Markdown reparses
+  // them inside their owning list item. When a first nested marker cannot
+  // interrupt the owner's paragraph, the required blank line makes that
+  // owner's containing list loose. Retain that representable ancestor state
+  // even for a one-item run instead of normalizing it back to tight.
+  for (let index = 0; index < parent.childCount; index++) {
+    const entry = layout[index];
+    if (!entry || !listItemRequiresLooseParentEdge(parent, index, entry)) {
+      continue;
+    }
+    const ownerEntry = layout[entry.parentIndex!];
+    if (!ownerEntry) continue;
+    runStats.get(ownerEntry.runStartIndex)!.requiresLooseContainer = true;
+  }
+
+  let changed = false;
+  const children: PMNode[] = [];
+
+  for (let index = 0; index < parent.childCount; index++) {
+    const child = parent.child(index);
+    const entry = layout[index];
+    if (!entry || child.type.name !== "list_item") {
+      children.push(child);
+      continue;
+    }
+
+    const kind = listKind(child);
+    const normalizedStart = kind === "ordered"
+      ? entry.continuation
+        ? null
+        : orderedListStart(child.attrs.start)
+      : null;
+    const stats = runStats.get(entry.runStartIndex)!;
+    // CommonMark tightness belongs to the containing list, not to an
+    // individual item. Any item with multiple block children necessarily
+    // makes the whole run loose because Markdown must separate those blocks
+    // with a blank line. A one-item list whose sole block merely carries a
+    // stale `tight: false` attribute has no distinct loose source form, so it
+    // canonicalizes to tight unless a nested marker requires a blank parent
+    // edge that makes the containing list observably loose.
+    // A marker-only bullet/ordered item has no loose paragraph edge of its own
+    // and reparses tight even when sibling items are loose. A task checkbox is
+    // source paragraph content, so task items retain the run-derived value.
+    // Marker-only non-task items can still own a tight nested edge.
+    const normalizedTight = listItemIsMarkerOnly(child) &&
+        !hasRepresentableNestedEdgeByOwner[index]
+      ? true
+      : !(
+          stats.hasMultipleBlocks ||
+          stats.requiresLooseContainer ||
+          (stats.hasLooseItem &&
+            (stats.count > 1 || stats.hasRepresentableNestedEdge))
+        );
+    if (
+      entry.effectiveDepth !== entry.rawDepth ||
+      child.attrs.start !== normalizedStart ||
+      child.attrs.tight !== normalizedTight
+    ) {
+      children.push(child.type.create(
+        {
+          ...child.attrs,
+          depth: entry.effectiveDepth,
+          start: normalizedStart,
+          tight: normalizedTight,
+        },
+        child.content,
+        child.marks,
+      ));
+      changed = true;
+    } else {
+      children.push(child);
+    }
+  }
+
+  return changed ? parent.copy(Fragment.fromArray(children)) : null;
 }
 
 function dropTopLevelEmptyParagraphs(doc: PMNode): PMNode | null {
@@ -180,68 +362,6 @@ function dropTopLevelEmptyParagraphs(doc: PMNode): PMNode | null {
   }
   if (!changed || kids.length === 0) return null;
   return doc.copy(Fragment.fromArray(kids));
-}
-
-function normalizeHeadingInline(
-  heading: PMNode,
-  schema: Schema,
-): PMNode {
-  if (heading.type.name !== "heading") return heading;
-  const children: PMNode[] = [];
-  for (let i = 0; i < heading.childCount; i++) {
-    children.push(heading.child(i));
-  }
-  // Flatten softbreak/hardbreak to spaces in unmarked text runs.
-  const out: PMNode[] = [];
-  let buf = "";
-  const flush = () => {
-    if (buf) {
-      out.push(schema.text(buf));
-      buf = "";
-    }
-  };
-  for (const n of children) {
-    if (isBreakNode(n)) {
-      buf += " ";
-    } else if (n.isText && n.marks.length === 0) {
-      buf += n.text!;
-    } else {
-      flush();
-      out.push(n);
-    }
-  }
-  flush();
-  // Trim leading on first unmarked-text-at-start, trailing on last
-  // unmarked-text-at-end. Never at mark boundaries (preserves
-  // `**bold** word` separator so reparse doesn't lose the close).
-  if (out.length > 0 && out[0].isText && out[0].marks.length === 0) {
-    const trimmed = out[0].text!.replace(/^[ \t]+/, "");
-    out[0] = trimmed ? schema.text(trimmed) : null as unknown as PMNode;
-  }
-  const lastIdx = out.length - 1;
-  if (
-    lastIdx >= 0 &&
-    out[lastIdx] &&
-    out[lastIdx].isText &&
-    out[lastIdx].marks.length === 0
-  ) {
-    const trimmed = out[lastIdx].text!.replace(/[ \t]+$/, "");
-    out[lastIdx] = trimmed ? schema.text(trimmed) : null as unknown as PMNode;
-  }
-  const cleaned = out.filter((n) => n != null);
-  // Build comparison signatures to skip rebuild when nothing changed.
-  const sameLength = cleaned.length === heading.childCount;
-  if (sameLength) {
-    let allSame = true;
-    for (let i = 0; i < cleaned.length; i++) {
-      if (cleaned[i] !== heading.child(i)) {
-        allSame = false;
-        break;
-      }
-    }
-    if (allSame) return heading;
-  }
-  return heading.copy(Fragment.fromArray(cleaned));
 }
 
 function splitTextOnNewlines(
@@ -370,6 +490,171 @@ function promoteSoleEmbedInline(
   return blockType.create(attrs);
 }
 
+function isEmptyParagraph(node: PMNode): boolean {
+  return node.type.name === "paragraph" && node.childCount === 0;
+}
+
+/**
+ * Canonicalize transient empty paragraphs that Markdown cannot encode as
+ * durable child blocks. Blank source lines separate blocks; they do not create
+ * empty paragraph nodes between them.
+ *
+ * A list_item is the one schema-sensitive case: it must start with a
+ * paragraph. When its first real block is not a paragraph, retain one empty
+ * leading paragraph as the schema/parser filler. A sole empty paragraph is
+ * also representable as a bare list marker. Blockquotes similarly retain one
+ * empty paragraph when it is their only content (`> `).
+ */
+function normalizeContainerEmptyParagraphs(
+  node: PMNode,
+  schema: Schema,
+): PMNode {
+  const kind = node.type.name;
+  if (
+    kind !== "obsidian_callout" &&
+    kind !== "blockquote" &&
+    kind !== "list_item"
+  ) {
+    return node;
+  }
+
+  const nonEmpty: PMNode[] = [];
+  let emptyCount = 0;
+  for (let index = 0; index < node.childCount; index++) {
+    const child = node.child(index);
+    if (isEmptyParagraph(child)) emptyCount += 1;
+    else nonEmpty.push(child);
+  }
+  if (emptyCount === 0) return node;
+
+  if (kind === "obsidian_callout") {
+    return node.copy(Fragment.fromArray(nonEmpty));
+  }
+
+  if (nonEmpty.length === 0) {
+    // Both blockquote (`block+`) and list_item (`paragraph block*`) need one
+    // child, and their sole empty paragraph has an exact Markdown form.
+    const paragraph = schema.nodes.paragraph;
+    return emptyCount === 1 || !paragraph
+      ? node
+      : node.copy(Fragment.from(paragraph.create()));
+  }
+
+  if (kind === "list_item" && nonEmpty[0].type.name !== "paragraph") {
+    // The parser already supplies exactly one leading empty paragraph for
+    // block-first list items. Retain that node and its ancestors by identity;
+    // rebuilding an already-canonical carrier needlessly forfeits the item's
+    // source-preservation range on a no-op save. For tasks this paragraph is
+    // also the source-backed checkbox content, so preserving it is semantic.
+    if (emptyCount === 1 && isEmptyParagraph(node.firstChild!)) {
+      return node;
+    }
+    const paragraph = schema.nodes.paragraph;
+    if (paragraph) nonEmpty.unshift(paragraph.create());
+  }
+  return node.copy(Fragment.fromArray(nonEmpty));
+}
+
+/**
+ * Derive flat-list attrs from the persisted projection without deleting the
+ * presentation tree's empty paragraphs. This keeps depth, numbering, and
+ * tightness identical on disk and on screen even when an empty editor block
+ * temporarily sits between list rows. Only list attrs are transferred back;
+ * presentation children and their reference identities are retained.
+ */
+function normalizeFlatListChildrenForPresentation(
+  parent: PMNode,
+  schema: Schema,
+): PMNode | null {
+  let layoutParent = parent.type.name === "doc"
+    ? dropTopLevelEmptyParagraphs(parent) ?? parent
+    : normalizeContainerEmptyParagraphs(parent, schema);
+
+  let projectedChildrenChanged = false;
+  const projectedChildren: PMNode[] = [];
+  for (let index = 0; index < layoutParent.childCount; index++) {
+    const child = layoutParent.child(index);
+    const projected = child.type.name === "list_item"
+      ? normalizeContainerEmptyParagraphs(child, schema)
+      : child;
+    projectedChildrenChanged ||= projected !== child;
+    projectedChildren.push(projected);
+  }
+  if (projectedChildrenChanged) {
+    layoutParent = layoutParent.copy(Fragment.fromArray(projectedChildren));
+  }
+
+  const normalizedLayout =
+    normalizeFlatListChildren(layoutParent) ?? layoutParent;
+  const normalizedListItems: PMNode[] = [];
+  for (let index = 0; index < normalizedLayout.childCount; index++) {
+    const child = normalizedLayout.child(index);
+    if (child.type.name === "list_item") normalizedListItems.push(child);
+  }
+  if (normalizedListItems.length === 0) return null;
+
+  let listIndex = 0;
+  let changed = false;
+  const presentationChildren: PMNode[] = [];
+  for (let index = 0; index < parent.childCount; index++) {
+    const child = parent.child(index);
+    if (child.type.name !== "list_item") {
+      presentationChildren.push(child);
+      continue;
+    }
+    const normalized = normalizedListItems[listIndex++];
+    if (!normalized) {
+      throw new Error("presentation list projection lost a list item");
+    }
+    const normalizedAttrs = normalized.attrs as Record<string, unknown>;
+    const normalizedDepth = typeof normalizedAttrs.depth === "number"
+      ? normalizedAttrs.depth
+      : 0;
+    const normalizedStart = typeof normalizedAttrs.start === "number"
+      ? normalizedAttrs.start
+      : null;
+    const normalizedTight = normalizedAttrs.tight !== false;
+    if (
+      child.attrs.depth !== normalizedDepth ||
+      child.attrs.start !== normalizedStart ||
+      child.attrs.tight !== normalizedTight
+    ) {
+      presentationChildren.push(child.type.create(
+        {
+          ...child.attrs,
+          depth: normalizedDepth,
+          start: normalizedStart,
+          tight: normalizedTight,
+        },
+        child.content,
+        child.marks,
+      ));
+      changed = true;
+    } else {
+      presentationChildren.push(child);
+    }
+  }
+  if (listIndex !== normalizedListItems.length) {
+    throw new Error("presentation list projection added a list item");
+  }
+  return changed ? parent.copy(Fragment.fromArray(presentationChildren)) : null;
+}
+
+function normalizeCodeBlockLanguage(node: PMNode): PMNode {
+  if (node.type.name !== "code_block") return node;
+  const language = String(node.attrs.language ?? "")
+    .replace(/\0/g, "\uFFFD")
+    .replace(/\r\n?|\n/g, " ")
+    .trim();
+  return language === node.attrs.language
+    ? node
+    : node.type.create(
+        { ...node.attrs, language },
+        node.content,
+        node.marks,
+      );
+}
+
 // ── Top-level walk ───────────────────────────────────────────────
 
 /**
@@ -378,8 +663,12 @@ function promoteSoleEmbedInline(
  * === normalize(d) in structure (reference identity preserved when
  * nothing changes).
  */
-export function normalizeDocForSave(doc: PMNode): PMNode {
+export function normalizeDocForSave(
+  doc: PMNode,
+  options: NormalizeDocForSaveOptions = {},
+): PMNode {
   const schema = doc.type.schema;
+  const presentation = options.mode === "presentation";
   // Walk inner nodes recursively so deep block_id-mid-paragraph or
   // softbreak-in-heading shapes inside containers (blockquote,
   // callout, list_item body) also get normalized.
@@ -397,19 +686,29 @@ export function normalizeDocForSave(doc: PMNode): PMNode {
     let current = childrenChanged
       ? node.copy(Fragment.fromArray(newChildren))
       : node;
+    // Empty source lines are separators, not durable nested paragraph nodes.
+    // Canonicalize transient Enter/split shapes before parent list tightness is
+    // derived so the layout calculation observes the representable tree.
+    if (!presentation) {
+      current = normalizeContainerEmptyParagraphs(current, schema);
+    }
+    current = normalizeCodeBlockLanguage(current);
     // Apply node-shape-specific normalizations.
     // 0. Drop empty list_items — they never survive round-trip
     //    (bare `- ` is interpreted differently per context).
-    const dropped = dropEmptyListItems(current, schema);
-    if (dropped) current = dropped;
-    // 1. Heading inline flatten + trim.
-    if (current.type.name === "heading") {
-      current = normalizeHeadingInline(current, schema);
+    // 1. Canonicalize link/image attrs to values CommonMark can represent.
+    current = normalizeLinkAndImageAttrs(current);
+    // 2. CommonMark emphasis-like marks cannot own edge whitespace.
+    if (!presentation) {
+      current = normalizeExpelledMarkWhitespace(current, schema);
     }
-    // 2. Textblock text-with-newline split into softbreak runs.
+    // 3. Inline Obsidian tags require a whitespace/start boundary.
+    current = insertRequiredTagBoundaries(current, schema);
+    // 4. Textblock text-with-newline split into softbreak runs. Heading
+    // whitespace is preserved by numeric-entity encoding in the serializer.
     const textSplit = normalizeTextNodesInInline(current, schema);
     if (textSplit) current = textSplit;
-    // 3. Paragraph block_id hoist.
+    // 6. Paragraph block_id hoist.
     if (current.type.name === "paragraph" && current.childCount > 1) {
       const kids: PMNode[] = [];
       for (let i = 0; i < current.childCount; i++) kids.push(current.child(i));
@@ -418,6 +717,13 @@ export function normalizeDocForSave(doc: PMNode): PMNode {
         current = current.copy(Fragment.fromArray(hoisted));
       }
     }
+    // 8. Resolve flat-list ancestry in one linear pass. Explicit ordered-run
+    //    boundaries remain in the `start` attr; the shared serializer layout
+    //    represents them by alternating CommonMark `.` / `)` delimiters.
+    const normalizedLists = presentation
+      ? normalizeFlatListChildrenForPresentation(current, schema)
+      : normalizeFlatListChildren(current);
+    if (normalizedLists) current = normalizedLists;
     return current;
   };
 
@@ -425,11 +731,17 @@ export function normalizeDocForSave(doc: PMNode): PMNode {
   // li clamp needs parent context; embed-inline promote replaces the
   // node entirely).
   const topChildren: PMNode[] = [];
+  let topChildrenChanged = false;
   for (let i = 0; i < doc.childCount; i++) {
-    topChildren.push(walk(doc.child(i)));
+    const child = doc.child(i);
+    const walked = walk(child);
+    topChildrenChanged ||= walked !== child;
+    topChildren.push(walked);
   }
   // Build a temporary parent so we can apply position-aware ops.
-  const tempDoc = doc.copy(Fragment.fromArray(topChildren));
+  const tempDoc = topChildrenChanged
+    ? doc.copy(Fragment.fromArray(topChildren))
+    : doc;
 
   // 4. Embed-inline-alone-in-paragraph → embed block.
   const promoted: PMNode[] = [];
@@ -448,109 +760,19 @@ export function normalizeDocForSave(doc: PMNode): PMNode {
     ? doc.copy(Fragment.fromArray(promoted))
     : tempDoc;
 
-  // 5. Orphan-li depth clamp (must walk in final order so positions
-  // match the surrounding context after any earlier transforms).
-  const clamped: PMNode[] = [];
-  let clampChanged = false;
-  for (let i = 0; i < afterPromote.childCount; i++) {
-    const c = afterPromote.child(i);
-    const cc = clampOrphanListItemDepth(c, i, afterPromote);
-    if (cc !== c) clampChanged = true;
-    clamped.push(cc);
-  }
-  const afterClamp = clampChanged
-    ? doc.copy(Fragment.fromArray(clamped))
-    : afterPromote;
+  // 5. Drop transient top-level empty paragraphs before deriving list runs.
+  // Markdown blank lines are separators, not paragraph nodes; once removed,
+  // formerly separated list items may become one run and must be normalized in
+  // that final adjacency rather than against the transient editor tree.
+  const withoutEmptyParagraphs = presentation
+    ? afterPromote
+    : dropTopLevelEmptyParagraphs(afterPromote) ?? afterPromote;
 
-  // 6. Drop empty list_items at the top level (the walker handles
-  // them inside containers via the per-node pass, but a top-level
-  // empty list_item needs this final pass).
-  const topDropped = dropEmptyListItems(afterClamp, schema);
-  const afterTopDrop = topDropped ?? afterClamp;
-
-  // 7. Drop top-level empty paragraphs. These come from click-to-
-  // spawn / transient blank-line editing affordances; CommonMark
-  // represents blank lines as inter-block gaps, not durable empty
-  // paragraph nodes.
-  return dropTopLevelEmptyParagraphs(afterTopDrop) ?? afterTopDrop;
-}
-
-/**
- * Inspect a doc and return a list of normalization actions that
- * would be applied. Used by validateDocForRoundTrip + diagnostic
- * tooling. Each item describes the violation in plain English.
- */
-export function describeNormalizations(doc: PMNode): string[] {
-  const violations: string[] = [];
-  doc.descendants((node, pos, parent) => {
-    if (node.type.name === "paragraph") {
-      let midBlockId = false;
-      for (let i = 0; i < node.childCount - 1; i++) {
-        if (node.child(i).type.name === "block_id") {
-          midBlockId = true;
-          break;
-        }
-      }
-      if (midBlockId) {
-        violations.push(`paragraph @${pos}: block_id mid-content (will hoist to end)`);
-      }
-      if (
-        node.childCount === 1 &&
-        node.child(0).type.name === "obsidian_embed_inline"
-      ) {
-        violations.push(`paragraph @${pos}: sole embed_inline (will promote to embed block)`);
-      }
-    }
-    if (node.type.name === "heading") {
-      let hasBreak = false;
-      for (let i = 0; i < node.childCount; i++) {
-        if (
-          node.child(i).type.name === "softbreak" ||
-          node.child(i).type.name === "hard_break"
-        ) {
-          hasBreak = true;
-          break;
-        }
-      }
-      if (hasBreak) {
-        violations.push(`heading @${pos}: softbreak/hard_break in content (will flatten to space)`);
-      }
-    }
-    if (node.isText && node.text && node.text.includes("\n")) {
-      // Only flag text in textblocks where the newline is a parser
-      // quirk, not legitimate content. Code/math content textblocks
-      // legitimately carry newlines and are skipped by the normalizer.
-      const inCodeContent =
-        parent && (parent.type.spec.code || parent.type.name === "math_block" || parent.type.name === "block_comment");
-      if (!inCodeContent) {
-        violations.push(`text @${pos}: embedded newline (will split into text+softbreak runs)`);
-      }
-    }
-  });
-  // List_item orphans are top-level only.
-  for (let i = 0; i < doc.childCount; i++) {
-    const c = doc.child(i);
-    if (doc.childCount > 1 && c.type.name === "paragraph" && c.childCount === 0) {
-      violations.push(`paragraph @top[${i}]: empty top-level paragraph (will drop)`);
-      continue;
-    }
-    if (c.type.name !== "list_item") continue;
-    const depth = (c.attrs.depth as number | undefined) ?? 0;
-    if (depth === 0) continue;
-    let hasImmediateParent = false;
-    for (let j = i - 1; j >= 0; j--) {
-      const prev = doc.child(j);
-      if (prev.type.name !== "list_item") break;
-      const pd = (prev.attrs.depth as number | undefined) ?? 0;
-      if (pd < depth - 1) break;
-      if (pd === depth - 1) {
-        hasImmediateParent = true;
-        break;
-      }
-    }
-    if (!hasImmediateParent) {
-      violations.push(`list_item @top[${i}]: depth=${depth} but no depth-${depth - 1} sibling (will clamp)`);
-    }
-  }
-  return violations;
+  // 6. Resolve top-level flat-list structure after every order-changing
+  // normalization. Inner containers were handled by `walk`; this is the same
+  // owner and linear pass.
+  const normalizedTopLists = presentation
+    ? normalizeFlatListChildrenForPresentation(withoutEmptyParagraphs, schema)
+    : normalizeFlatListChildren(withoutEmptyParagraphs);
+  return normalizedTopLists ?? withoutEmptyParagraphs;
 }

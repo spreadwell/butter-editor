@@ -1,16 +1,75 @@
+import { REVEAL_CALLOUT_EVENT } from "./fold-reveal";
 /**
  * ProseMirror NodeViews that delegate rendering to Obsidian's MarkdownRenderer.
  */
 import { App, Component, MarkdownRenderer, Notice, setIcon } from "obsidian";
 import type { Node as PMNode } from "prosemirror-model";
-import type { EditorView, NodeView } from "prosemirror-view";
+import type { EditorView, NodeView, ViewMutationRecord } from "prosemirror-view";
 import { Selection } from "prosemirror-state";
 import { MathEditModal } from "./math-edit-modal";
+import {
+  canResizeEmbedSource,
+  findRenderedImageAttachment,
+  IMAGE_RESIZE_MIN_WIDTH,
+  parseEmbedSize,
+  resizeEmbedSource,
+} from "./embed-image-resize";
+import { attachImageBodyPlacementDrag } from "./image-placement";
 import { recordError } from "../integration/debug";
 import { tx, tv } from "../i18n";
+import { animateVerticalFold } from "./fold-animation";
+import {
+  attachImageEditButton,
+  dispatchImageContextMenu,
+} from "./image-edit-button";
 
 interface WidgetInfoHost extends HTMLElement {
   __butterWidgetInfo?: unknown;
+}
+
+let calloutContentId = 0;
+const calloutFoldStateByView = new WeakMap<object, Map<string, boolean>>();
+const calloutFileGenerationByObject = new WeakMap<object, number>();
+let nextCalloutFileGeneration = 1;
+const MAX_REMEMBERED_CALLOUT_FOLDS = 256;
+
+function calloutFoldCache(viewOwner: unknown): Map<string, boolean> | null {
+  if ((typeof viewOwner !== "object" && typeof viewOwner !== "function") || viewOwner === null) {
+    return null;
+  }
+  let cache = calloutFoldStateByView.get(viewOwner);
+  if (!cache) {
+    cache = new Map();
+    calloutFoldStateByView.set(viewOwner, cache);
+  }
+  return cache;
+}
+
+function rememberCalloutFold(cache: Map<string, boolean> | null, key: string, collapsed: boolean) {
+  if (!cache) return;
+  cache.delete(key);
+  cache.set(key, collapsed);
+  while (cache.size > MAX_REMEMBERED_CALLOUT_FOLDS) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
+function calloutFileGeneration(viewOwner: unknown): string {
+  if ((typeof viewOwner !== "object" && typeof viewOwner !== "function") || viewOwner === null) {
+    return "no-view";
+  }
+  const file = (viewOwner as { file?: unknown }).file;
+  if ((typeof file !== "object" && typeof file !== "function") || file === null) {
+    return "no-file";
+  }
+  let generation = calloutFileGenerationByObject.get(file);
+  if (generation === undefined) {
+    generation = nextCalloutFileGeneration++;
+    calloutFileGenerationByObject.set(file, generation);
+  }
+  return String(generation);
 }
 
 /** Safe wrapper around MarkdownRenderer.render. Buggy third-party
@@ -766,13 +825,183 @@ export function codeBlockView(
 
 // ── Embed NodeView  ![[...]] ──
 
-function parseSize(raw: string): { target: string; width: number | null; height: number | null } {
-  const m = raw.match(/^(.*?)\|(\d+)(?:x(\d+))?$/);
-  if (!m) return { target: raw, width: null, height: null };
+interface EmbedRenderEnhancement {
+  destroy(): void;
+  ignoreMutation(mutation: ViewMutationRecord): boolean;
+}
+
+/** Apply persisted sizing after Obsidian's async renderer finishes and,
+ * for real image attachments, install a live drag-resize handle. Source
+ * changes only on pointerup, as one undoable ProseMirror transaction. */
+function enhanceRenderedEmbedImage(
+  dom: HTMLElement,
+  mount: HTMLElement,
+  rawSrc: string,
+  view: EditorView,
+  getPos: () => number | undefined,
+  inline: boolean,
+): EmbedRenderEnhancement {
+  // MarkdownRenderer wraps an isolated render in a block <p>. That is
+  // correct for the block NodeView but forces an unwanted line break in
+  // the inline NodeView. Lift its children into the inline mount first.
+  const renderedParagraph = inline && mount.firstElementChild?.tagName === "P"
+    ? mount.firstElementChild
+    : null;
+  if (renderedParagraph) renderedParagraph.replaceWith(...Array.from(renderedParagraph.childNodes));
+  const sized = parseEmbedSize(rawSrc);
+  const img = findRenderedImageAttachment(mount);
+
+  if (sized.width && img) {
+    img.width = sized.width;
+    if (sized.height) img.height = sized.height;
+  }
+
+  if (sized.width && !img) {
+    const empty = mount.querySelector<HTMLElement>(".mod-empty-attachment");
+    if (empty) {
+      empty.className = "butter-image-missing-sized";
+      empty.style.width = `${sized.width}px`;
+      empty.style.height = `${sized.height ?? sized.width}px`;
+      empty.textContent = "";
+      setIcon(empty, "image-off");
+    }
+  }
+
+  // Only the attachment rendered by this node receives image controls. Note
+  // embeds can contain images in their rendered body, but those descendants
+  // belong to the embedded note and are not this ProseMirror block.
+  if (!img || !canResizeEmbedSource(rawSrc)) {
+    return { destroy() {}, ignoreMutation: () => false };
+  }
+
+  const nativeHost = img.closest<HTMLElement>(".image-embed") ?? img.parentElement;
+  if (!nativeHost) {
+    return { destroy() {}, ignoreMutation: () => false };
+  }
+  dom.classList.add("butter-obsidian-image");
+  // Obsidian's internal embed host participates in its preview layout and
+  // can span or align independently of the image. Wrap it so the resize
+  // control has a Butter-owned, image-sized positioning and hit-test box.
+  const host = activeWindow.createSpan();
+  host.className = "butter-embed-image-resizable";
+  nativeHost.replaceWith(host);
+  host.appendChild(nativeHost);
+  if (inline) dom.classList.add("butter-obsidian-image-inline");
+  const handle = activeWindow.createSpan();
+  handle.className = "butter-image-resize-handle butter-embed-image-resize-handle";
+  handle.setAttribute("aria-label", "Drag to resize embedded image");
+  handle.contentEditable = "false";
+  host.appendChild(handle);
+
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startWidth = 0;
+  let startHeight = 0;
+  let naturalRatio = 1;
+  let moved = false;
+  const resizeBody = host.ownerDocument.body;
+
+  const onPointerMove = (event: PointerEvent) => {
+    if (!dragging) return;
+    moved = moved || event.clientX !== startX || event.clientY !== startY;
+    const width = Math.max(
+      IMAGE_RESIZE_MIN_WIDTH,
+      Math.round(startWidth + event.clientX - startX),
+    );
+    const height = !event.shiftKey
+      ? Math.round(width / naturalRatio)
+      : Math.max(16, Math.round(startHeight + event.clientY - startY));
+    img.width = width;
+    img.height = height;
+  };
+
+  const finishDrag = (event: PointerEvent, commit: boolean) => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove("is-resizing");
+    resizeBody.classList.remove("butter-is-image-resizing");
+    handle.releasePointerCapture?.(event.pointerId);
+    activeWindow.removeEventListener("pointermove", onPointerMove);
+    activeWindow.removeEventListener("pointerup", onPointerUp);
+    activeWindow.removeEventListener("pointercancel", onPointerCancel);
+    if (!commit || !moved) {
+      if (!commit) {
+        img.width = startWidth;
+        img.height = startHeight;
+      }
+      return;
+    }
+
+    const pos = getPos();
+    if (pos == null) return;
+    const liveNode = view.state.doc.nodeAt(pos);
+    if (
+      !liveNode ||
+      (liveNode.type.name !== "obsidian_embed" &&
+        liveNode.type.name !== "obsidian_embed_inline")
+    ) return;
+
+    const currentSrc = String(liveNode.attrs.src ?? "");
+    if (!canResizeEmbedSource(currentSrc)) return;
+    const nextSrc = resizeEmbedSource(
+      currentSrc,
+      img.width,
+      event.shiftKey ? img.height : null,
+    );
+    if (nextSrc === currentSrc) return;
+    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+      ...liveNode.attrs,
+      src: nextSrc,
+    }));
+  };
+
+  const onPointerUp = (event: PointerEvent) => finishDrag(event, true);
+  const onPointerCancel = (event: PointerEvent) => finishDrag(event, false);
+  const onPointerDown = (event: PointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragging = true;
+    handle.classList.add("is-resizing");
+    resizeBody.classList.add("butter-is-image-resizing");
+    moved = false;
+    startX = event.clientX;
+    startY = event.clientY;
+    startWidth = img.offsetWidth || img.naturalWidth || 200;
+    startHeight = img.offsetHeight || img.naturalHeight || 150;
+    naturalRatio = img.naturalWidth && img.naturalHeight
+      ? img.naturalWidth / img.naturalHeight
+      : startHeight > 0 ? startWidth / startHeight : 1;
+    handle.setPointerCapture?.(event.pointerId);
+    activeWindow.addEventListener("pointermove", onPointerMove);
+    activeWindow.addEventListener("pointerup", onPointerUp);
+    activeWindow.addEventListener("pointercancel", onPointerCancel);
+  };
+
+  handle.addEventListener("pointerdown", onPointerDown);
+  const detachEditButton = attachImageEditButton(host, (event) => {
+    dispatchImageContextMenu(host, event);
+  });
+  const detachPlacementDrag = attachImageBodyPlacementDrag({ image: img, view, getPos });
   return {
-    target: m[1],
-    width: parseInt(m[2]),
-    height: m[3] ? parseInt(m[3]) : null,
+    destroy() {
+      dom.classList.remove("butter-obsidian-image");
+      dom.classList.remove("butter-obsidian-image-inline");
+      activeWindow.removeEventListener("pointermove", onPointerMove);
+      activeWindow.removeEventListener("pointerup", onPointerUp);
+      activeWindow.removeEventListener("pointercancel", onPointerCancel);
+      if (dragging) {
+        dragging = false;
+        resizeBody.classList.remove("butter-is-image-resizing");
+      }
+      handle.classList.remove("is-resizing");
+      handle.removeEventListener("pointerdown", onPointerDown);
+      detachEditButton();
+      detachPlacementDrag();
+    },
+    ignoreMutation(mutation) {
+      return mutation.type !== "selection" && dom.contains(mutation.target);
+    },
   };
 }
 
@@ -812,40 +1041,15 @@ export function embedView(
     dom.appendChild(mount);
 
     const comp = manager.createComponent();
-    void safeMarkdownRender(app, `![[${src}]]`, mount, getSourcePath(), comp, `embed(${src})`);
-
-    // Apply |WxH sizing if encoded in src
-    const sized = parseSize(src);
-    if (sized.width) {
-      const img = mount.querySelector("img");
-      if (img) {
-        img.width = sized.width;
-        if (sized.height) img.height = sized.height;
+    let destroyed = false;
+    let enhancement: EmbedRenderEnhancement | null = null;
+    void safeMarkdownRender(
+      app, `![[${src}]]`, mount, getSourcePath(), comp, `embed(${src})`,
+    ).then(() => {
+      if (!destroyed) {
+        enhancement = enhanceRenderedEmbedImage(dom, mount, src, view, getPos, false);
       }
-      // When the file is missing, Obsidian renders a
-      // `.mod-empty-attachment` placeholder (full-width "could not
-      // be found" text card) instead of an `<img>`. For sized
-      // embeds, replace it with a plain gray rectangle holding the
-      // declared footprint + a centered broken-image icon. Same
-      // visual the markdown-image NodeView produces for sized
-      // missing srcs.
-      const empty = mount.querySelector<HTMLElement>(
-        ".mod-empty-attachment",
-      );
-      if (empty) {
-        empty.className = "butter-image-missing-sized";
-        // Square fallback when only one axis is declared in the
-        // |WxH suffix - the placeholder has no intrinsic art to
-        // size against, so an unset axis would collapse to 0.
-        // `![[bg.jpg|300]]` → 300×300 tile.
-        const effectiveW = sized.width;
-        const effectiveH = sized.height ?? sized.width;
-        empty.style.width = `${effectiveW}px`;
-        empty.style.height = `${effectiveH}px`;
-        empty.textContent = "";
-        setIcon(empty, "image-off");
-      }
-    }
+    });
 
     // Native hover-preview for note embeds. Strips any |size suffix
     // since hover-link wants the file reference only.
@@ -864,7 +1068,14 @@ export function embedView(
     return {
       dom,
       stopEvent: () => true,
-      destroy() { manager.removeComponent(comp); },
+      ignoreMutation(mutation) {
+        return enhancement?.ignoreMutation(mutation) ?? false;
+      },
+      destroy() {
+        destroyed = true;
+        enhancement?.destroy();
+        manager.removeComponent(comp);
+      },
     };
   };
 }
@@ -907,35 +1118,15 @@ export function embedInlineView(
     dom.appendChild(mount);
 
     const comp = manager.createComponent();
-    void safeMarkdownRender(app, `![[${src}]]`, mount, getSourcePath(), comp, `embed-sized(${src})`);
-
-    const sized = parseSize(src);
-    if (sized.width) {
-      const img = mount.querySelector("img");
-      if (img) {
-        img.width = sized.width;
-        if (sized.height) img.height = sized.height;
+    let destroyed = false;
+    let enhancement: EmbedRenderEnhancement | null = null;
+    void safeMarkdownRender(
+      app, `![[${src}]]`, mount, getSourcePath(), comp, `embed-sized(${src})`,
+    ).then(() => {
+      if (!destroyed) {
+        enhancement = enhanceRenderedEmbedImage(dom, mount, src, view, getPos, true);
       }
-      // Mirror the block embedView's missing-attachment swap: when
-      // the file is missing, Obsidian's MarkdownRenderer produces a
-      // `.mod-empty-attachment` placeholder that defaults to full-
-      // column width. For sized inline embeds we want a tile sized
-      // to the declared footprint (square fallback when only one
-      // axis given), with a centered broken-image icon - matches
-      // the block-level treatment.
-      const empty = mount.querySelector<HTMLElement>(
-        ".mod-empty-attachment",
-      );
-      if (empty) {
-        empty.className = "butter-image-missing-sized";
-        const effectiveW = sized.width;
-        const effectiveH = sized.height ?? sized.width;
-        empty.style.width = `${effectiveW}px`;
-        empty.style.height = `${effectiveH}px`;
-        empty.textContent = "";
-        setIcon(empty, "image-off");
-      }
-    }
+    });
 
     const linktext = stripEmbedSize(src);
     dom.addEventListener("mouseover", (event) => {
@@ -952,7 +1143,14 @@ export function embedInlineView(
     return {
       dom,
       stopEvent: () => true,
-      destroy() { manager.removeComponent(comp); },
+      ignoreMutation(mutation) {
+        return enhancement?.ignoreMutation(mutation) ?? false;
+      },
+      destroy() {
+        destroyed = true;
+        enhancement?.destroy();
+        manager.removeComponent(comp);
+      },
     };
   };
 }
@@ -995,7 +1193,7 @@ export function calloutIcon(type: string): string {
 
 export function calloutView(
   _app: unknown,
-  _getSourcePath: unknown,
+  getSourcePath: () => string,
   _manager: unknown,
   butterView?: unknown,
 ) {
@@ -1044,6 +1242,10 @@ export function calloutView(
     const label = activeWindow.createSpan();
     label.className = "butter-callout-title callout-title-inner";
     label.contentEditable = "true";
+    label.tabIndex = 0;
+    label.setAttribute("role", "textbox");
+    label.setAttribute("aria-multiline", "false");
+    label.setAttribute("aria-label", tx("Callout"));
     label.spellcheck = false;
     label.textContent =
       attrStr(node, "title") || defaultLabel(attrStr(node, "calloutType"));
@@ -1143,6 +1345,92 @@ export function calloutView(
 
     header.appendChild(label);
 
+    // Obsidian's `+` / `-` source marker chooses only the initial view state.
+    // Disclosure changes stay local to this NodeView: opening or closing a
+    // callout must not dirty the note, add an undo step, or rewrite Markdown.
+    // Match Obsidian's native callout disclosure DOM exactly. A semantic
+    // button picks up host/theme button chrome (background, radius, padding)
+    // and visibly diverges from `.callout-fold`; role + keyboard handling keep
+    // the native element accessible without changing its geometry.
+    const foldButton = activeWindow.createDiv();
+    foldButton.className = "butter-callout-fold callout-fold";
+    foldButton.contentEditable = "false";
+    foldButton.setAttribute("role", "button");
+    foldButton.setAttribute("tabindex", "0");
+    setIcon(foldButton, "chevron-down");
+    header.appendChild(foldButton);
+
+    const foldCache = calloutFoldCache(butterView);
+    const fileGeneration = calloutFileGeneration(butterView);
+    const makeFoldKey = (value: PMNode) => {
+      let pos = -1;
+      try { pos = getPos() ?? -1; } catch { /* detached NodeView */ }
+      return [
+        fileGeneration,
+        getSourcePath(),
+        pos,
+        attrStr(value, "calloutType"),
+        attrStr(value, "title"),
+        attrStr(value, "foldState"),
+      ].join("\u0000");
+    };
+    let currentFoldState = attrStr(node, "foldState");
+    let currentFoldKey = makeFoldKey(node);
+    let collapsed = foldCache?.get(currentFoldKey) ?? currentFoldState === "-";
+    const contentId = `butter-callout-content-${++calloutContentId}`;
+    foldButton.setAttribute("aria-controls", contentId);
+    const contentDOM = activeWindow.createDiv();
+    contentDOM.className = "butter-callout-content callout-content";
+    contentDOM.id = contentId;
+
+    const syncFoldUi = () => {
+      const foldable = currentFoldState === "+" || currentFoldState === "-";
+      dom.classList.toggle("is-collapsible", foldable);
+      dom.classList.toggle("is-collapsed", foldable && collapsed);
+      foldButton.classList.toggle("is-collapsed", foldable && collapsed);
+      foldButton.hidden = !foldable;
+      foldButton.setAttribute(
+        "aria-expanded",
+        foldable && !collapsed ? "true" : "false",
+      );
+      const action = tx(collapsed ? "Expand callout" : "Collapse callout");
+      foldButton.setAttribute("aria-label", action);
+      foldButton.setAttribute("title", action);
+    };
+
+    dom.addEventListener(REVEAL_CALLOUT_EVENT, () => {
+      if (!collapsed) return;
+      collapsed = false;
+      rememberCalloutFold(foldCache, currentFoldKey, false);
+      syncFoldUi();
+    });
+    const toggleFold = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (currentFoldState !== "+" && currentFoldState !== "-") return;
+      const nextCollapsed = !collapsed;
+      if (nextCollapsed) animateVerticalFold([contentDOM], "collapse");
+      collapsed = nextCollapsed;
+      rememberCalloutFold(foldCache, currentFoldKey, collapsed);
+      syncFoldUi();
+      if (!nextCollapsed) animateVerticalFold([contentDOM], "expand");
+    };
+    const preserveFoldSelection = (e: Event) => {
+      // This view-only control must not steal editor focus. A focus change can
+      // rebuild the NodeView and restore the source-default fold state.
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    // iOS may dispatch pointerdown without the desktop compatibility
+    // mousedown that previously protected ProseMirror's selection.
+    foldButton.addEventListener("pointerdown", preserveFoldSelection);
+    foldButton.addEventListener("mousedown", preserveFoldSelection);
+    foldButton.addEventListener("click", toggleFold);
+    const onFoldKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") toggleFold(e);
+    };
+    foldButton.addEventListener("keydown", onFoldKeyDown);
+
     // Clicking the header area OUTSIDE the title label (icon, empty
     // header space) places the caret into the first editable
     // position of the callout's body - the "focus the card"
@@ -1150,6 +1438,11 @@ export function calloutView(
     // title's own mousedown handler stopPropagation()s up.
     const focusInside = (e: Event) => {
       e.preventDefault();
+      if (collapsed) {
+        collapsed = false;
+        syncFoldUi();
+        animateVerticalFold([contentDOM], "expand");
+      }
       const pos = getPos();
       if (pos == null) return;
       const currentNode = view.state.doc.nodeAt(pos);
@@ -1177,9 +1470,9 @@ export function calloutView(
 
     // Editable content lives in contentDOM; PM fills this with the
     // callout's child blocks (paragraphs, lists, code, etc.).
-    const contentDOM = activeWindow.createDiv();
-    contentDOM.className = "butter-callout-content callout-content";
     dom.appendChild(contentDOM);
+
+    syncFoldUi();
 
     // Slim-display the callout only when its body has ZERO children
     // (the new `block*` natural empty state - title-only, matches
@@ -1211,6 +1504,24 @@ export function calloutView(
           dom.removeAttribute("data-fold");
           dom.removeAttribute("data-callout-fold");
         }
+        const foldKey = makeFoldKey(updated);
+        const foldStateChanged = foldState !== currentFoldState;
+        if (foldStateChanged || foldKey !== currentFoldKey) {
+          currentFoldState = foldState;
+          currentFoldKey = foldKey;
+          // An explicit source-default change is authoritative for the live
+          // view. Only identity-only rebuilds (title/type/position changes)
+          // should restore remembered disclosure state; otherwise choosing
+          // Open or Closed can appear to do the opposite because an older
+          // view-only cache entry wins immediately after the transaction.
+          collapsed = foldStateChanged
+            ? foldState === "-"
+            : foldCache?.get(foldKey) ?? foldState === "-";
+          if (foldStateChanged) {
+            rememberCalloutFold(foldCache, foldKey, collapsed);
+          }
+        }
+        syncFoldUi();
         // Don't overwrite the label while the user is typing in it
         // that would yank their caret. The commit flow on blur
         // brings the attribute + DOM back into sync.
@@ -1230,7 +1541,22 @@ export function calloutView(
       },
       ignoreMutation(m) {
         const target = m.target as Node | null | undefined;
-        return target != null && header.contains(target);
+        // The outer callout classes/attributes are NodeView-owned chrome.
+        // Folding changes `is-collapsed` on that shell; if PM interprets the
+        // class mutation as editable content, it recreates the NodeView and
+        // discards the real content box while its fold animation is running.
+        // Child-list and text mutations in contentDOM still fall through to
+        // ProseMirror, so editable callout content keeps its normal owner.
+        return target != null && (
+          header.contains(target) ||
+          (m.type === "attributes" && target === dom)
+        );
+      },
+      destroy() {
+        foldButton.removeEventListener("pointerdown", preserveFoldSelection);
+        foldButton.removeEventListener("mousedown", preserveFoldSelection);
+        foldButton.removeEventListener("click", toggleFold);
+        foldButton.removeEventListener("keydown", onFoldKeyDown);
       },
     };
   };
@@ -1469,12 +1795,16 @@ export function rawBlockView() {
 
 // ── Inline footnote NodeView - renders as superscript [n] with tooltip ──
 
-export function inlineFootnoteView() {
+export function inlineFootnoteView(
+  app: App,
+  getSourcePath: () => string,
+  manager: NodeViewManager,
+) {
   return (node: PMNode): NodeView => {
     const dom = activeWindow.createEl("sup");
     dom.classList.add("butter-footnote-ref");
     dom.setAttribute("data-footnote-inline", "");
-    dom.title = attrStr(node, "content");
+    dom.setAttribute("data-footnote-kind", "inline");
 
     const link = activeWindow.createEl("a");
     link.classList.add("footnote-link");
@@ -1483,7 +1813,30 @@ export function inlineFootnoteView() {
     link.addEventListener("click", (e) => e.preventDefault());
     dom.appendChild(link);
 
-    return { dom, stopEvent: () => true };
+    const preview = activeWindow.createSpan();
+    preview.classList.add(
+      "butter-inline-footnote-preview",
+      "markdown-rendered",
+    );
+    preview.setAttribute("contenteditable", "false");
+    preview.setAttribute("role", "tooltip");
+    dom.appendChild(preview);
+
+    const comp = manager.createComponent();
+    void safeMarkdownRender(
+      app,
+      attrStr(node, "content"),
+      preview,
+      getSourcePath(),
+      comp,
+      "inline_footnote_preview",
+    );
+
+    return {
+      dom,
+      stopEvent: () => true,
+      destroy() { manager.removeComponent(comp); },
+    };
   };
 }
 
@@ -1494,6 +1847,8 @@ export function footnoteRefView() {
     const dom = activeWindow.createEl("sup");
     dom.classList.add("butter-footnote-ref");
     dom.setAttribute("data-footnote-id", attrStr(node, "label"));
+    dom.setAttribute("data-footnote-kind", "reference");
+    dom.setAttribute("data-footnote-label", attrStr(node, "label"));
 
     const link = activeWindow.createEl("a");
     link.classList.add("footnote-link");
@@ -1528,6 +1883,11 @@ export function footnoteDefView(
     const mount = activeWindow.createSpan();
     mount.classList.add("butter-footnote-content");
     dom.appendChild(mount);
+
+    const backrefs = activeWindow.createSpan();
+    backrefs.classList.add("butter-footnote-backrefs");
+    backrefs.setAttribute("contenteditable", "false");
+    dom.appendChild(backrefs);
 
     const comp = manager.createComponent();
     // Render the content as regular markdown, not as [^label]: syntax
