@@ -23,6 +23,7 @@ import {
   type RenderCtx,
   clearFormatting,
   execBlockCmd,
+  canExecuteConversion,
   execHistoryCmd,
   execInsertCmd,
   execListCmd,
@@ -506,6 +507,7 @@ function resolveCurrentBlock(
   node: import("prosemirror-model").Node;
   blockDom?: HTMLElement;
   serializeNode?: (node: import("prosemirror-model").Node) => string;
+  selectionScope?: boolean;
 } | null {
   const sel = view.state.selection;
   // `NodeSelection`-style: cursor IS the block boundary already.
@@ -520,6 +522,7 @@ function resolveCurrentBlock(
     node,
     blockDom: dom instanceof HTMLElement ? dom : undefined,
     serializeNode,
+    selectionScope: true,
   };
 }
 
@@ -583,6 +586,8 @@ function openMobileVariantsPopover(
     label.textContent = tx(def.label);
     row.appendChild(icon);
     row.appendChild(label);
+    const currentView = ctx.getView();
+    row.disabled = !currentView?.editable || !canExecuteConversion(def, currentView.state);
     row.addEventListener("click", (e) => {
       e.preventDefault();
       ctx.closePopover();
@@ -696,6 +701,8 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
     label.textContent = tx(def.label);
     row.appendChild(icon);
     row.appendChild(label);
+    const currentView = ctx.getView();
+    row.disabled = !currentView?.editable || !canExecuteConversion(def, currentView.state);
     row.addEventListener("click", () => {
       close();
       dispatchDef(def);

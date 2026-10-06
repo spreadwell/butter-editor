@@ -30,6 +30,23 @@ export interface WhatsNewState {
 
 export const WHATS_NEW_RELEASES: readonly WhatsNewRelease[] = [
   {
+    version: "0.12.1",
+    headline: "List editing and link fixes",
+    summary:
+      "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.",
+    demos: [],
+    improvements: [
+      "Replace selected text with Enter while keeping the surrounding list structure intact.",
+      "Indent or outdent selected list items together with Tab or Shift+Tab.",
+    ],
+    fixed: [
+      "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.",
+      "Convert selected lines into a list without losing text, including lines separated by soft breaks.",
+      "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.",
+      "Toolbar buttons become available again when you resume editing a restored note on mobile.",
+    ],
+  },
+  {
     version: "0.12.0",
     headline: "A more fluid Butter Editor",
     summary:
@@ -107,8 +124,6 @@ export const WHATS_NEW_RELEASES: readonly WhatsNewRelease[] = [
 
 export const LATEST_WHATS_NEW_RELEASE = WHATS_NEW_RELEASES[0];
 
-declare const __BUTTER_DEV_WHATS_NEW_ASSETS__: Record<string, string>;
-
 export function whatsNewRelease(version: string): WhatsNewRelease | null {
   return WHATS_NEW_RELEASES.find((release) => release.version === version) ?? null;
 }
@@ -119,10 +134,6 @@ export function stableWhatsNewRelease(runtimeVersion: string): WhatsNewRelease |
 }
 
 export function whatsNewAssetUrl(release: WhatsNewRelease, asset: string): string {
-  const embedded = typeof __BUTTER_DEV_WHATS_NEW_ASSETS__ === "object"
-    ? __BUTTER_DEV_WHATS_NEW_ASSETS__[asset]
-    : undefined;
-  if (embedded) return embedded;
   return `https://raw.githubusercontent.com/spreadwell/butter-editor/${release.version}/assets/whats-new/${release.version}/${asset}`;
 }
 

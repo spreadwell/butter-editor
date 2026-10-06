@@ -77,6 +77,11 @@ import {
   type NativeSearchAction,
   type NativeSearchCommandRecord,
 } from "./util/native-search-commands";
+import {
+  patchNativeListCommands,
+  type NativeListCommandRecord,
+} from "./util/native-list-commands";
+import { toggleTaskOnCurrentLine } from "./editor/list-operations";
 import { ButterSettingTab } from "./ui/settings-tab";
 import { setPresetColorsProvider } from "./ui/toolbar";
 import { installWordCountBridge } from "./ui/wordcount-bridge";
@@ -1041,13 +1046,13 @@ export interface ButterSettings {
    *  refreshLicenseStatus so the License tab can surface a
    *  "this device was deactivated from elsewhere" message instead
    *  of dropping to a generic unlicensed flow. Cleared on the next
-   *  successful activation (or by Reset license state). */
+   *  successful activation. */
   wasDeactivated: boolean;
 
   /** Sticky flag set when /session returns `license_invalid` AND
    *  the customer had previously been validated (`everValidated`).
    *  Distinguishes refund/chargeback/revoked from a normal trial
-   *  expiry. Cleared on next successful activation or Reset. */
+   *  expiry. Cleared on next successful activation. */
   wasInvalidated: boolean;
 
   /** The last error.kind from a /session failure, stored alongside
@@ -1075,8 +1080,8 @@ export const StatusState = { statusBarHideTimer: null as number | null };
 export function refreshButterMobileBodyClass(): void {
   const active = activeDocument.activeElement;
   const inButter =
-    active instanceof Element &&
-    active.closest(".butter-editor-view") !== null;
+    (active instanceof Element && active.closest(".butter-editor-view") !== null)
+    || activeDocument.querySelector(".butter-mobile-toolbar-visible") !== null;
   activeDocument.body.classList.toggle("butter-mobile-active", inButter);
 }
 
@@ -1234,6 +1239,7 @@ export default class ButterEditorPlugin extends Plugin {
   private settingTab: ButterSettingTab | null = null;
   private nativeFormattingCommandRestorers: Array<() => void> = [];
   private nativeSearchCommandRestorers: Array<() => void> = [];
+  private nativeListCommandRestorers: Array<() => void> = [];
   private restoreHotkeyManagerFormattingBridge: (() => void) | null = null;
   private handledFormattingHotkeyEvents = new WeakSet<object>();
 
@@ -2071,6 +2077,7 @@ export default class ButterEditorPlugin extends Plugin {
     this.registerMenus();
     this.registerNewFileHook();
     this.registerNativeFormattingCommandBridge();
+    this.registerNativeListCommandBridge();
     this.registerNativeSearchCommandBridge();
     this.registerHotkeyManagerFormattingBridge();
     this.registerPolishCommands();
@@ -2601,6 +2608,7 @@ export default class ButterEditorPlugin extends Plugin {
         const result = originalAddCommand.call(commandManager, command);
         this.refreshNativeFormattingCommandBridge();
         this.refreshNativeSearchCommandBridge();
+        this.refreshNativeListCommandBridge();
         return result;
       };
       commandManager.addCommand = wrappedAddCommand;
@@ -2633,6 +2641,65 @@ export default class ButterEditorPlugin extends Plugin {
       (markName) => this.canToggleButterMark(markName),
       (markName) => this.toggleButterMark(markName),
     );
+  }
+
+  private canToggleButterChecklist(): boolean | null {
+    const active = this.resolveButterEditor();
+    if (!active) return null;
+    if (!active.view.isEditable()) return false;
+    const focused = activeDocument.activeElement;
+    if (focused?.closest(".metadata-container, .inline-title, .view-header-title")) return false;
+    const { $from } = active.pm.state.selection;
+    for (let depth = $from.depth; depth > 0; depth--) {
+      const name = $from.node(depth).type.name;
+      if (name === "table_cell" || name === "table_header") return false;
+    }
+    return $from.parent.type.name === "paragraph";
+  }
+
+  private toggleButterChecklist(cycle: boolean): boolean {
+    if (this.canToggleButterChecklist() !== true) return false;
+    const active = this.resolveButterEditor();
+    if (!active) return false;
+    const handled = toggleTaskOnCurrentLine(
+      active.pm.state,
+      active.pm.dispatch.bind(active.pm),
+      cycle,
+    );
+    if (handled) {
+      active.view.editor?.refresh();
+      active.pm.focus();
+    }
+    return handled;
+  }
+
+  /** Native checklist commands must target Butter's current PM editor even
+   * when Obsidian's activeEditor still refers to a previous Markdown view. */
+  private registerNativeListCommandBridge(): void {
+    this.refreshNativeListCommandBridge();
+    this.app.workspace.onLayoutReady(() => this.refreshNativeListCommandBridge());
+    for (const delayMs of [0, 100, 500, 1500, 3000]) {
+      const timer = window.setTimeout(() => this.refreshNativeListCommandBridge(), delayMs);
+      this.register(() => window.clearTimeout(timer));
+    }
+    this.register(() => this.restoreNativeListCommandBridge());
+  }
+
+  private refreshNativeListCommandBridge(): void {
+    this.restoreNativeListCommandBridge();
+    const commands = this.app.commands?.commands as
+      | Record<string, NativeListCommandRecord | undefined>
+      | undefined;
+    this.nativeListCommandRestorers = patchNativeListCommands(
+      commands,
+      () => this.canToggleButterChecklist(),
+      (cycle) => this.toggleButterChecklist(cycle),
+    );
+  }
+
+  private restoreNativeListCommandBridge(): void {
+    for (const restore of this.nativeListCommandRestorers) restore();
+    this.nativeListCommandRestorers = [];
   }
 
   private restoreNativeFormattingCommandBridge() {
@@ -2874,23 +2941,6 @@ export default class ButterEditorPlugin extends Plugin {
     this.settings.whatsNewDismissedVersion = this.settings.whatsNewReleaseVersion;
     await this.saveSettings();
     this.settingTab?.refreshSettingsUi();
-  }
-
-  /** Dev Tools hook: make the current release's seven-day card eligible. */
-  public async showWhatsNewSettingsCardForDevelopment(): Promise<void> {
-    this.settings.whatsNewReleaseVersion = LATEST_WHATS_NEW_RELEASE.version;
-    this.settings.whatsNewFirstSeenAt = Date.now();
-    this.settings.whatsNewDismissedVersion = "";
-    await this.saveSettings();
-    this.settingTab?.refreshSettingsUi();
-  }
-
-  /** Dev Tools hook: replay the upgrade page and restore its settings card. */
-  public async replayWhatsNewUpgradeForDevelopment(): Promise<void> {
-    await this.showWhatsNewSettingsCardForDevelopment();
-    this.settings.whatsNewAutoOpenedVersion = LATEST_WHATS_NEW_RELEASE.version;
-    await this.saveSettings();
-    this.openWhatsNewFromSettings(LATEST_WHATS_NEW_RELEASE.version);
   }
 
   public async setWhatsNewAutoOpen(enabled: boolean): Promise<void> {
@@ -3468,13 +3518,6 @@ export default class ButterEditorPlugin extends Plugin {
       ...this.settings.acknowledgedFeatureAnnouncements,
       id,
     ];
-    await this.saveSettings();
-  }
-
-  /** Dev-tools hook for replaying one-time coachmarks and discovery badges. */
-  public async resetFeatureDiscoveryState(): Promise<void> {
-    this.settings.acknowledgedFeatureAnnouncements = [];
-    this.settings.visitedFeatureDiscoveries = [];
     await this.saveSettings();
   }
 

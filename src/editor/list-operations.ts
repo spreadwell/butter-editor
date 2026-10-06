@@ -8,9 +8,6 @@
  *     so a nested list_item swaps with its sibling rather than
  *     jumping out of the list.
  *
- *   Mod+Enter  (inside a list_item)
- *     Insert a new list_item at the same depth after the current one.
- *
  *   Mod+L
  *     Toggle the GFM task state of the current list line
  *     (empty → `[ ]` → `[x]` → empty).
@@ -26,8 +23,9 @@ import type { Node as PMNode } from "prosemirror-model";
 import { Fragment } from "prosemirror-model";
 import { keymap } from "prosemirror-keymap";
 import { TextSelection } from "prosemirror-state";
+import { StepMap } from "prosemirror-transform";
 import { getMultiBlockSelection } from "./multi-block-select";
-import { shiftListItemDepths } from "./list-depth";
+import { shiftListItemDepths, shiftTextSelectedListItemDepths } from "./list-depth";
 
 // ═══════════════════════════════════════════
 //  Move block up/down
@@ -133,9 +131,9 @@ export function toggleTaskOnCurrentLine(
 
   if (!listItemNode) {
     // Caret is in a bare paragraph - convert to a task list_item.
-    if (!dispatch) return true;
     const para = $from.node($from.depth);
     if (para.type.name !== "paragraph") return false;
+    if (!dispatch) return true;
     const paraPos = $from.before($from.depth);
     const item = schema.nodes.list_item.create(
       {
@@ -148,8 +146,11 @@ export function toggleTaskOnCurrentLine(
       para,
     );
     const tr = state.tr.replaceWith(paraPos, paraPos + para.nodeSize, item);
-    const newCaret = Math.min(paraPos + 2, tr.doc.content.size);
-    tr.setSelection(TextSelection.near(tr.doc.resolve(newCaret)));
+    tr.setSelection(state.selection.map(tr.doc, new StepMap([
+      paraPos, 0, 1,
+      paraPos + para.nodeSize, 0, 1,
+    ])));
+    if (state.storedMarks !== null) tr.setStoredMarks(state.storedMarks);
     dispatch(tr.scrollIntoView());
     return true;
   }
@@ -184,6 +185,7 @@ export function toggleTaskOnCurrentLine(
   }
 
   const tr = state.tr.setNodeMarkup(listItemPos, undefined, nextAttrs);
+  if (state.storedMarks !== null) tr.setStoredMarks(state.storedMarks);
   dispatch(tr.scrollIntoView());
   return true;
 }
@@ -203,13 +205,39 @@ export function toggleTaskOnCurrentLine(
  * keydown listener that fires even when PM doesn't have focus). Runs
  * the same depth-shift the Tab / Shift-Tab keymap entries do - covers
  * multi-block selection, NodeSelection on a list_item, or cursor in a
- * list_item. Returns true if the doc changed.
+ * list_item. Returns true when handled, including a range whose indent is
+ * blocked so Tab keeps focus in the editor.
  */
 export function shiftSelectedListItemDepth(
   view: EditorView,
   delta: 1 | -1,
 ): boolean {
   return changeListItemDepth(delta)(view.state, view.dispatch.bind(view), view);
+}
+
+function listItemsInTextRange(state: EditorState): number[] {
+  const { from, to, $from, $to } = state.selection;
+  // Table navigation and code editing own selections inside those blocks.
+  for (const endpoint of [$from, $to]) {
+    for (let depth = endpoint.depth; depth > 0; depth--) {
+      if (endpoint.node(depth).type.spec.tableRole || endpoint.node(depth).type.spec.code) return [];
+    }
+  }
+  const positions = new Set<number>();
+  state.doc.nodesBetween(from, to, (node, pos) => {
+    if (node.type.spec.tableRole || node.type.spec.code) return false;
+    if (!node.isTextblock) return;
+    const contentStart = pos + 1;
+    if (to <= contentStart || from > contentStart + node.content.size) return;
+    const $pos = state.doc.resolve(contentStart);
+    for (let depth = $pos.depth; depth > 0; depth--) {
+      if ($pos.node(depth).type.name === "list_item") {
+        positions.add($pos.before(depth));
+        break;
+      }
+    }
+  });
+  return [...positions];
 }
 
 export function changeListItemDepth(delta: 1 | -1): Command {
@@ -240,6 +268,13 @@ export function changeListItemDepth(delta: 1 | -1): Command {
         delta,
         true,
       );
+    }
+
+    if (sel instanceof TextSelection && !sel.empty) {
+      const positions = listItemsInTextRange(state);
+      if (positions.length === 0) return false;
+      shiftTextSelectedListItemDepths(state, dispatch, positions, delta);
+      return true;
     }
 
     // Cursor-inside-list_item path - find the list_item ancestor.

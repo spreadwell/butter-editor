@@ -6,8 +6,48 @@ import {
   type Transaction,
 } from "prosemirror-state";
 import { flatListLayoutFor } from "../core/list-layout";
+import { StepMap } from "prosemirror-transform";
+import { shiftListItemDepths } from "./list-depth";
+import { joinForward } from "prosemirror-commands";
+import { normalizeFlatListChildrenForPresentation } from "../core/doc-normalize";
 
 export type FlatListKind = "bullet" | "ordered" | "task";
+
+/** Keep the list attributes implied by a structural edit in its Undo event.
+ * Saving otherwise clamps orphan depths or loose runs outside history, so
+ * Undo can restore the removed parent without restoring its descendants. */
+export function withFlatListNormalization(command: Command): Command {
+  return (state, dispatch, view) => command(state, dispatch && ((tr) => {
+    const normalizeChildren = (parent: PMNode, start: number): void => {
+      const normalized = normalizeFlatListChildrenForPresentation(parent, state.schema);
+      if (!normalized) return;
+      let pos = start;
+      for (let index = 0; index < parent.childCount; index++) {
+        const child = parent.child(index);
+        const target = normalized.child(index);
+        if (child.type.name === "list_item") {
+          let changed = false;
+          for (const name of ["depth", "start", "tight"]) {
+            if (child.attrs[name] !== target.attrs[name]) {
+              tr.setNodeAttribute(pos, name, target.attrs[name]);
+              changed = true;
+            }
+          }
+          if (changed) tr.setNodeAttribute(pos, "sourceRange", null);
+        }
+        pos += child.nodeSize;
+      }
+    };
+    const edited = tr.doc;
+    normalizeChildren(edited, 0);
+    edited.descendants((node, pos) => {
+      if (!node.isLeaf) normalizeChildren(node, pos + 1);
+    });
+    dispatch(tr);
+  }), view);
+}
+
+export const joinForwardWithFlatListNormalization = withFlatListNormalization(joinForward);
 
 /**
  * Join a newly converted ordered item to the ordered run immediately after it.
@@ -170,15 +210,7 @@ function removeCurrentListFormatting(
 
   const replacement: PMNode[] = [];
   current.node.forEach((child) => replacement.push(child));
-  const first = replacement[0];
   const selection = state.selection;
-  const preserveTextSelection =
-    selection instanceof TextSelection &&
-    selection.$anchor.sameParent(selection.$head) &&
-    selection.$anchor.depth === current.depth + 1 &&
-    selection.$anchor.parent === first;
-  const anchorOffset = preserveTextSelection ? selection.$anchor.parentOffset : 0;
-  const headOffset = preserveTextSelection ? selection.$head.parentOffset : anchorOffset;
   const tr = state.tr.replaceWith(
     current.pos,
     current.pos + current.node.nodeSize,
@@ -191,16 +223,12 @@ function removeCurrentListFormatting(
       tr.setNodeMarkup(mapped, undefined, descendant.attrs);
     }
   }
-  if (first?.type.inlineContent) {
-    const start = current.pos + 1;
-    tr.setSelection(
-      TextSelection.create(
-        tr.doc,
-        start + Math.min(anchorOffset, first.content.size),
-        start + Math.min(headOffset, first.content.size),
-      ),
-    );
-  }
+  // Only the item's opening/closing tokens disappear. Map through those
+  // boundaries so caret/ranges in every retained child keep their place.
+  tr.setSelection(selection.map(tr.doc, new StepMap([
+    current.pos, 1, 0,
+    current.pos + current.node.nodeSize - 1, 1, 0,
+  ])));
   tr.setStoredMarks(marks);
   dispatch(tr.scrollIntoView());
   return true;
@@ -287,17 +315,12 @@ export const backspaceAtStartOfFlatListItem: Command = (state, dispatch) => {
   if (!current) return false;
   const { $from } = selection;
   if ($from.depth !== current.depth + 1 || $from.parentOffset !== 0) return false;
+  // A continuation paragraph starts inside the item, rather than at its marker.
+  // Let ordinary Backspace join it to the preceding paragraph.
+  if ($from.index(current.depth) !== 0) return false;
   const depth = Number(current.node.attrs.depth) || 0;
   if (depth > 0) {
-    if (!dispatch) return true;
-    dispatch(
-      state.tr.setNodeMarkup(current.pos, undefined, {
-        ...current.node.attrs,
-        depth: depth - 1,
-        sourceRange: null,
-      }).scrollIntoView(),
-    );
-    return true;
+    return shiftListItemDepths(state, dispatch, [current.pos], -1, false);
   }
   return removeCurrentListFormatting(state, dispatch, current);
 };

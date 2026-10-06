@@ -4031,7 +4031,7 @@ body.butter-mobile-suppress-native-toolbar .mobile-toolbar:not(.butter-mobile-ba
    active class only clears on caret-leaves-cell - which doesn't
    fire on a simple keyboard dismiss.) */
 body.butter-mobile-active.butter-mobile-table-active
-  .butter-mobile-table-toolbar.butter-mobile-bar {
+  .butter-mobile-table-toolbar.butter-mobile-bar:not(.is-hidden) {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
@@ -4142,7 +4142,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar .mobile-toolbar-option.butter-
    bar isn't included - drawer can only open from main bar; if the
    user was in prefer-main + cell when they tapped `+`, the table
    bar stays correctly hidden via the prefer-main rule above.) */
-body.butter-mobile-drawer-open .butter-mobile-toolbar.butter-mobile-bar {
+body.butter-mobile-drawer-open .butter-mobile-toolbar.butter-mobile-bar.butter-mobile-toolbar-owner {
   opacity: 1 !important;
   pointer-events: auto !important;
   transform: translateY(0) !important;
@@ -4154,7 +4154,7 @@ body.butter-mobile-drawer-open .butter-mobile-toolbar.butter-mobile-bar {
   padding-bottom: 0 !important;
 }
 body.butter-mobile-drawer-returning-keyboard
-  .butter-mobile-toolbar.butter-mobile-bar {
+  .butter-mobile-toolbar.butter-mobile-bar.butter-mobile-toolbar-owner {
   opacity: 1 !important;
   pointer-events: auto !important;
   transform: translateY(0) !important;
@@ -4237,7 +4237,7 @@ body.butter-mobile-prefer-main .butter-mobile-table-toolbar.butter-mobile-bar {
   transform: translateY(100%) !important;
 }
 body.butter-mobile-active.butter-mobile-prefer-main
-  .butter-mobile-toolbar.butter-mobile-bar {
+  .butter-mobile-toolbar.butter-mobile-bar.butter-mobile-toolbar-owner {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);

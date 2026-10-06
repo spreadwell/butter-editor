@@ -758,15 +758,9 @@ export function calloutPlugin(md: MarkdownIt) {
       }
       if (closeIdx < 0) continue;
 
-      // Find the first inline token inside THIS blockquote's own
-      // body — but bail if we encounter a nested `blockquote_open`
-      // first. Without that bail, an outer `> > [!note]` shape would
-      // match the inner `[!note]` against the OUTER blockquote and
-      // silently consume the wrapping `>` layer (`top[N]: orig=
-      // blockquote re=obsidian_callout` drift in the edit-sim
-      // harness). The inner blockquote_open will get its own
-      // iteration of the outer loop and convert correctly on its
-      // own terms.
+      // Match only this blockquote's first inline token. A nested
+      // blockquote owns its callout marker and is converted separately,
+      // so the outer quote retains its wrapping layer.
       let firstInlineIdx = -1;
       for (let j = i + 1; j < closeIdx; j++) {
         if (tokens[j].type === "blockquote_open") break;

@@ -604,6 +604,20 @@ function buildHandlers(): Record<string, TokenHandler> {
     try {
       for (let index = 0; index < t.children.length; index++) {
         const c = t.children[index];
+        // HTML breaks already supply the line ending. A physical newline
+        // beside one is source layout, not an additional visual break.
+        if (c.type === "softbreak") {
+          let before = index - 1;
+          let after = index + 1;
+          const isBoundary = (token: Token) => token.nesting !== 0
+            || (token.type === "text" && token.content === "");
+          while (before >= 0 && isBoundary(t.children[before])) before--;
+          while (after < t.children.length && isBoundary(t.children[after])) after++;
+          const previous = t.children[before];
+          const next = t.children[after];
+          if ((previous?.type === "text" && /<br\s*\/?\s*>\s*$/i.test(previous.content))
+            || (next?.type === "text" && /^\s*<br\s*\/?\s*>/i.test(next.content))) continue;
+        }
         s.nextInlineTokenType = t.children[index + 1]?.type ?? null;
         const fn = handlers[c.type];
         if (fn) fn(s, c);
@@ -1039,7 +1053,7 @@ export function parseWithSourceMap(markdown: string): SourceMapResult | null {
         : { ok: false as const, index: 0, reason: "missing block source range" };
       if (!validation.ok) {
         console.warn(
-          "[butter-pmx] parse left unmodeled source outside block ranges",
+          "[Butter Editor] parse left unmodeled source outside block ranges",
           {
             inputBytes: markdown.length,
             childCount: result.doc.childCount,
@@ -1065,7 +1079,7 @@ export function parseWithSourceMap(markdown: string): SourceMapResult | null {
     // shows name + message, which is rarely enough to debug.
     const errObj = err instanceof Error ? err : new Error(String(err));
     console.error(
-      "[butter-pmx] parseWithSourceMap threw - falling back to raw_block. Input length:",
+      "[Butter Editor] parseWithSourceMap threw - falling back to raw_block. Input length:",
       markdown.length,
     );
     console.error(errObj);

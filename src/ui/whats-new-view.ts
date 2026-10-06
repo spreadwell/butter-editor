@@ -127,6 +127,7 @@ export class ButterWhatsNewView extends ItemView {
     demos: WhatsNewRelease["demos"],
     entries: readonly string[] = [],
   ): void {
+    if (demos.length === 0 && entries.length === 0) return;
     const section = parent.createEl("section", { cls: "butter-whats-new-release-section" });
     const heading = section.createEl("h2", { cls: "butter-whats-new-section-title" });
     const icon = heading.createSpan({ cls: "butter-whats-new-section-icon" });

@@ -552,6 +552,7 @@ export function tableToolbarPlugin(
   return new PMPlugin({
     key: toolbarKey,
     view(editorView) {
+      let previousEditable = editorView.editable;
       const { dom, inner } = buildShell();
       dom.classList.add("is-hidden");
       setAncestorState(dom, false);
@@ -798,47 +799,54 @@ export function tableToolbarPlugin(
         return true;
       };
 
+      const syncMobileTableState = () => {
+        if (!isMobile) return;
+        const visible = activeDocument.querySelector(".butter-mobile-table-toolbar:not(.is-hidden)") !== null;
+        activeDocument.body.classList.toggle("butter-mobile-table-active", visible);
+        if (!visible) activeDocument.body.classList.remove("butter-mobile-prefer-main");
+      };
       const refresh = () => {
         if (isMobile) dom.dataset.mobileStyle = getMobileStyle();
         const ctx = findTableContext(editorView.state);
-        if (!ctx) {
+        const main = getMainToolbarDom();
+        const ownsMobileToolbar = main?.classList.contains("butter-mobile-toolbar-owner")
+          && (main.classList.contains("butter-mobile-toolbar-visible")
+            || activeDocument.body.classList.contains("butter-mobile-drawer-open"));
+        if (!ctx || (isMobile && (!ownsMobileToolbar || !editorView.editable))) {
           dom.classList.add("is-hidden");
           setAncestorState(dom, false);
-          if (isMobile) {
-            // Caret left the table - clear both the active flag
-            // AND the user's manual prefer-main override so the
-            // next cell-entry swaps fresh.
-            activeDocument.body.classList.remove("butter-mobile-table-active");
-            activeDocument.body.classList.remove("butter-mobile-prefer-main");
-          }
+          syncMobileTableState();
           return;
         }
         if (!ensureMounted()) {
           dom.classList.add("is-hidden");
           setAncestorState(dom, false);
-          if (isMobile) {
-            activeDocument.body.classList.remove("butter-mobile-table-active");
-            activeDocument.body.classList.remove("butter-mobile-prefer-main");
-          }
+          syncMobileTableState();
           return;
         }
         dom.classList.remove("is-hidden");
         setAncestorState(dom, true);
-        if (isMobile) activeDocument.body.classList.add("butter-mobile-table-active");
+        syncMobileTableState();
       };
 
       refresh();
+      const visibilityObserver = isMobile ? new MutationObserver(refresh) : null;
+      const mainToolbar = getMainToolbarDom();
+      if (mainToolbar) visibilityObserver?.observe(mainToolbar, { attributes: true, attributeFilter: ["class"] });
 
       return {
         update: (v, prevState) => {
           if (
+            v.editable === previousEditable &&
             v.state.selection.eq(prevState.selection) &&
             v.state.doc.eq(prevState.doc)
           )
             return;
+          previousEditable = v.editable;
           refresh();
         },
         destroy: () => {
+          visibilityObserver?.disconnect();
           // Tear down any open color-picker popover BEFORE removing
           // the host so its document mousedown/mousemove listeners
           // get unbound. Otherwise they leak past view close and fire
@@ -847,10 +855,7 @@ export function tableToolbarPlugin(
           cleanupMobileToolbarOverflowIndicators(dom);
           setAncestorState(dom, false);
           dom.remove();
-          if (isMobile) {
-            activeDocument.body.classList.remove("butter-mobile-table-active");
-            activeDocument.body.classList.remove("butter-mobile-prefer-main");
-          }
+          syncMobileTableState();
         },
       };
     },

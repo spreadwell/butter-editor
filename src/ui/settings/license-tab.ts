@@ -512,10 +512,7 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
    *  live from the Worker (1.7.0+) and includes every device the
    *  customer has activated. While the fetch is in flight, render
    *  pulsing skeleton rows. On network failure or pre-1.7.0 Worker,
-   *  fall back to showing just the current device.
-   *
-   *  Reset license state + Copy diagnostic info live below the
-   *  device list as plain rows. */
+   *  fall back to showing just the current device. */
   export function renderDevicesSection(this: ButterSettingTab, root: HTMLElement) {
     const section = this.createSettingGroup(root, tx("Devices"));
     const phase = this.computeLicensePhase();
@@ -602,11 +599,7 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
     });
   }
 
-/** Copy-diagnostic row parked at the bottom of the Devices
-   *  section. Real customer feature - gives them a one-block payload
-   *  to paste into support tickets. (Reset license state used to
-   *  live here too; it's now in the Dev section since normal users
-   *  shouldn't need it - Deactivate covers the sign-out path.) */
+/** Copy license diagnostics for customer support. */
   export function renderDeviceUtilities(this: ButterSettingTab, section: HTMLElement) {
     new Setting(section)
       .setName(tx("Copy diagnostic info"))
@@ -634,14 +627,6 @@ export function renderRecoveryRow(this: ButterSettingTab, parent: HTMLElement) {
         }),
       );
   }
-
-// Section 4: Diagnostics
-
-  /** Diagnostic helpers for license-state troubleshooting. Force-state
-   *  buttons write coherent local settings shapes; refresh exercises
-   *  the real session endpoint. Reset clears license state and
-   *  regenerates deviceId. */
-
 
   /** Returns the trial's progress in days/hours plus a derived
    *  daysUsed counter for the 7-segment strip. All zero-valued when

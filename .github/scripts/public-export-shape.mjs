@@ -372,14 +372,27 @@ function exactStringRecord(value) {
   return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
 }
 
+export function publicDependencyOverrideErrors(overrides) {
+  const record = exactStringRecord(overrides);
+  if (
+    !record
+    || JSON.stringify(Object.keys(record)) !== JSON.stringify(["moment"])
+    || record.moment !== "2.31.0"
+  ) return ["dependency overrides must contain only moment pinned to 2.31.0"];
+  return [];
+}
+
 export function publicPackageMetadataErrors(packageJson, version) {
   const errors = [];
   if (!packageJson || typeof packageJson !== "object" || Array.isArray(packageJson)) {
     return ["package.json must contain one JSON object"];
   }
-  if (JSON.stringify(Object.keys(packageJson).sort()) !== JSON.stringify(PUBLIC_PACKAGE_KEYS)) {
+  const hasOverrides = Object.hasOwn(packageJson, "overrides");
+  const expectedKeys = hasOverrides ? [...PUBLIC_PACKAGE_KEYS, "overrides"].sort() : PUBLIC_PACKAGE_KEYS;
+  if (JSON.stringify(Object.keys(packageJson).sort()) !== JSON.stringify(expectedKeys)) {
     errors.push("package.json fields must match the fixed public allowlist exactly");
   }
+  if (hasOverrides) errors.push(...publicDependencyOverrideErrors(packageJson.overrides));
   if (
     packageJson.name !== "butter-editor"
     || packageJson.version !== version
@@ -634,6 +647,7 @@ export function createPublicExport({
       Object.entries(privatePackage.devDependencies ?? {})
       .filter(([name]) => PUBLIC_DEV_DEPENDENCIES.has(name)),
     ),
+    ...(Object.hasOwn(privatePackage, "overrides") ? { overrides: privatePackage.overrides } : {}),
   };
   assertSafePublicPackageMetadata(packageJson, version);
   writeJson(packagePath, packageJson);

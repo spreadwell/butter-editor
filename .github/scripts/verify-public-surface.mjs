@@ -966,7 +966,10 @@ function inspectPackageMetadata(packageJson, packageLock, version, findings) {
   for (const message of publicPackageMetadataErrors(packageJson, version)) {
     findings.push(makeFinding("package-metadata", "package.json", 1, message));
   }
-  if (JSON.stringify(Object.keys(packageJson).sort()) !== JSON.stringify(PUBLIC_PACKAGE_KEYS)) {
+  const expectedKeys = Object.hasOwn(packageJson, "overrides")
+    ? [...PUBLIC_PACKAGE_KEYS, "overrides"].sort()
+    : PUBLIC_PACKAGE_KEYS;
+  if (JSON.stringify(Object.keys(packageJson).sort()) !== JSON.stringify(expectedKeys)) {
     findings.push(makeFinding(
       "package-metadata",
       "package.json",

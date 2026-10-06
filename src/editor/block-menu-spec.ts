@@ -46,11 +46,13 @@ import { clearSourceRange } from "../core/source-range";
 import { tx, txKnown, type MessageKey } from "../i18n";
 import { markTurnIntoMotion } from "./block-animator";
 import { attachMenuSurfaceMotion } from "../ui/surface-motion";
+import { convertTextSelection, hasTextSelection, selectionTarget } from "./selection-conversion";
 export { MERGE_MENU_ITEMS, type MergeMenuItem } from "./block-merge";
 
 // ── Spec types ─────────────────────────────────────────────────
 
 export interface BlockSubItem {
+  disabled?: boolean;
   /** Stable id used for cross-block intersection. */
   id: string;
   title: string;
@@ -576,6 +578,7 @@ function labelCase(s: string): string {
 // ── Spec builder ───────────────────────────────────────────────
 
 export interface BuildSpecArgs {
+  selectionScope?: boolean;
   view: EditorView;
   pos: number;
   node: PMNode;
@@ -601,7 +604,8 @@ export function buildSingleBlockMenuItems(
   const items: BlockMenuItem[] = [];
 
   // ── Turn into ────────────────────────────────────────────
-  const turnTargets = validTurnIntoTargets(node);
+  const textScope = args.selectionScope && hasTextSelection(view.state);
+  const turnTargets = textScope ? ALL_TURN_INTO_IDS : validTurnIntoTargets(node);
   if (turnTargets && turnTargets.length > 0) {
     const targetSet = new Set(turnTargets);
     const currentTurn = currentTurnIntoId(node);
@@ -609,7 +613,17 @@ export function buildSingleBlockMenuItems(
     for (const groupIds of TURN_INTO_GROUPS) {
       const sub: BlockSubItem[] = TURN_INTO_ITEMS.filter(
         (t) => groupIds.includes(t.id) && targetSet.has(t.id),
-      ).map((t) => ({
+      ).map((t): BlockSubItem => textScope ? {
+        id: t.id,
+        title: t.label,
+        icon: t.icon,
+        disabled: !selectionTarget(t.id) || !convertTextSelection(selectionTarget(t.id)!)(view.state),
+        sideEffect: (editor) => {
+          const target = selectionTarget(t.id);
+          if (target) convertTextSelection(target)(editor.state, editor.dispatch.bind(editor));
+          editor.focus();
+        },
+      } : ({
         id: t.id,
         title: t.label,
         icon: t.icon,
@@ -1130,6 +1144,7 @@ export function renderBlockMenuSubItems(
     for (const subItem of group) {
       menu.addItem((menuItem) => {
         menuItem.setTitle(txKnown(subItem.title));
+        menuItem.setDisabled(subItem.disabled ?? false);
         if (subItem.icon) menuItem.setIcon(subItem.icon);
         if (subItem.isCurrent) menuItem.setChecked(true);
         menuItem.onClick((activation) => runItem(subItem, activation));

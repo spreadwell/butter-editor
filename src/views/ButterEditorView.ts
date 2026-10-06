@@ -67,6 +67,7 @@ import {
   listOperationsPlugin,
   toggleTaskOnCurrentLine,
 } from "../editor/list-operations";
+import { listSaveHistoryPlugin } from "../editor/list-save-history";
 import { searchPlugin } from "../editor/search-plugin";
 import { codeHighlightPlugin } from "../editor/code-highlight";
 import { imageView } from "../editor/image-view";
@@ -140,6 +141,7 @@ import { footnotePresentationPlugin } from "../editor/footnote-presentation";
 export const VIEW_TYPE_BUTTER = "butter-editor";
 export const VIEW_TYPE_BUTTER_LOCKED = "butter-locked-file";
 import type ButterEditorPlugin from "../main";
+import { closeMobileInsertDrawer } from "../ui/insert-drawer";
 import { cycleView, modeIcon, refreshButterMobileBodyClass, StatusState } from "../main";
 import type { ButterSettings } from "../main";
 
@@ -281,6 +283,7 @@ export class ButterEditorView extends TextFileView {
    *  re-applies the editable state to PM. Drag-handles' tap-to-
    *  focus path calls this to flip the lock open. */
   public mobileSetEditable: ((editable: boolean) => void) | null = null;
+  private mobileToolbarCleanup: (() => void) | null = null;
 
   /** Explicit edit intent (editor tap/insert return) ends a prior dismissal. */
   public requestMobileEditing(): void {
@@ -519,6 +522,20 @@ export class ButterEditorView extends TextFileView {
   ): void {
     const VISIBLE_CLASS = "butter-mobile-toolbar-visible";
     const editorDocument = editorDom.ownerDocument;
+    const ownerWindow = editorDocument.defaultView ?? window;
+    let disposed = false;
+    const isActiveView = (): boolean => !disposed && !this.destroyed
+      && this.app.workspace.getActiveViewOfType(ButterEditorView) === this
+      && editorDocument.visibilityState !== "hidden";
+    const keyboardIsAlreadyVisible = (): boolean =>
+      Number.parseFloat(ownerWindow.getComputedStyle(editorDocument.documentElement)
+        .getPropertyValue("--keyboard-height")) > 0;
+    const closeOwnedDrawer = (): void => {
+      if (toolbarDom.classList.contains("butter-mobile-toolbar-owner")
+        && editorDocument.body.classList.contains("butter-mobile-drawer-open")) {
+        closeMobileInsertDrawer();
+      }
+    };
 
     const ensureToolbarMounted = (): void => {
       if (this.destroyed) return;
@@ -533,7 +550,7 @@ export class ButterEditorView extends TextFileView {
     // `e.hasPhysicalKeyboard` is set (hardware keyboard:
     // Obsidian's native toolbar stays visible in that case, so we
     // do too by leaving the flag at its prior state).
-    let hasKeyboardVisible = false;
+    let hasKeyboardVisible = keyboardIsAlreadyVisible();
 
     const focusIsInEditorOrToolbar = (): boolean => {
       const active = editorDocument.activeElement;
@@ -545,8 +562,13 @@ export class ButterEditorView extends TextFileView {
     };
 
     const updateState = () => {
+      if (disposed || this.destroyed) return;
       ensureToolbarMounted();
+      toolbarDom.classList.toggle("butter-mobile-toolbar-owner", isActiveView());
       const focused = focusIsInEditorOrToolbar();
+      const active = editorDocument.activeElement;
+      const otherInputFocused = active instanceof Element && !focused
+        && active.matches("input, textarea, [contenteditable=true]");
       const isAndroid = Boolean(
         (Platform as { isAndroidApp?: boolean }).isAndroidApp,
       );
@@ -556,6 +578,7 @@ export class ButterEditorView extends TextFileView {
       // accept either real editor focus or the native keyboard-visible signal.
       // Android still requires the native signal in addition to focus.
       const shouldShow =
+        isActiveView() && !otherInputFocused && !this.mobileKeyboardDismissalActive &&
         (focused || (isIos && hasKeyboardVisible)) &&
         (!isAndroid || hasKeyboardVisible);
       toolbarDom.classList.toggle(VISIBLE_CLASS, shouldShow);
@@ -565,8 +588,8 @@ export class ButterEditorView extends TextFileView {
 
     let pendingRaf = 0;
     const schedule = () => {
-      if (pendingRaf !== 0) return;
-      pendingRaf = window.requestAnimationFrame(() => {
+      if (disposed || this.destroyed || pendingRaf !== 0) return;
+      pendingRaf = ownerWindow.requestAnimationFrame(() => {
         pendingRaf = 0;
         updateState();
       });
@@ -582,12 +605,17 @@ export class ButterEditorView extends TextFileView {
       window as unknown as HTMLElement,
       "keyboardWillShow" as keyof HTMLElementEventMap,
       () => {
+        if (!isActiveView()) {
+          hasKeyboardVisible = false;
+          schedule();
+          return;
+        }
         if (this.mobileKeyboardDismissalActive) {
           hasKeyboardVisible = false;
           setEditable(false);
           this.pmView?.dom.blur();
-          const active = activeDocument.activeElement;
-          if (active instanceof HTMLElement) active.blur();
+          const active = editorDocument.activeElement;
+          if (active instanceof HTMLElement && focusIsInEditorOrToolbar()) active.blur();
           suppressNativeMobileToolbar();
           schedule();
           return;
@@ -604,6 +632,7 @@ export class ButterEditorView extends TextFileView {
     // `editorDom.contentEditable = "false"` gets reverted on the next
     // PM update; this doesn't.
     const setEditable = (editable: boolean) => {
+      if (disposed || this.destroyed) return;
       if (this.mobileEditable === editable) return;
       this.mobileEditable = editable;
       if (this.pmView) {
@@ -611,14 +640,30 @@ export class ButterEditorView extends TextFileView {
       }
     };
     this.mobileSetEditable = setEditable;
-    // Start locked when mobile (assume kb-down at view-open). The
-    // first tap will flip it open (see drag-handles' mobile pointerup).
-    setEditable(false);
+    // Restored views can mount after keyboardWillShow has already fired.
+    const reconcile = () => {
+      if (!isActiveView()) {
+        closeOwnedDrawer();
+        hasKeyboardVisible = false;
+        setEditable(false);
+      } else if (!this.mobileKeyboardDismissalActive) {
+        hasKeyboardVisible = keyboardIsAlreadyVisible();
+        if (hasKeyboardVisible || focusIsInEditorOrToolbar()) setEditable(true);
+      }
+      updateState();
+    };
+    setEditable(isActiveView() && (hasKeyboardVisible || focusIsInEditorOrToolbar()));
 
     this.registerDomEvent(
       window as unknown as HTMLElement,
       "keyboardWillHide" as keyof HTMLElementEventMap,
       (ev: Event) => {
+        if (!isActiveView()) {
+          hasKeyboardVisible = false;
+          setEditable(false);
+          schedule();
+          return;
+        }
         const anyEv = ev as unknown as { hasPhysicalKeyboard?: boolean };
         if (
           !anyEv.hasPhysicalKeyboard &&
@@ -678,6 +723,19 @@ export class ButterEditorView extends TextFileView {
     });
     this.registerDomEvent(window, "focusin", schedule);
     this.registerDomEvent(window, "focusout", schedule);
+    this.registerDomEvent(editorDocument, "visibilitychange", reconcile);
+    this.registerEvent(this.app.workspace.on("active-leaf-change", reconcile));
+    this.mobileToolbarCleanup = () => {
+      closeOwnedDrawer();
+      disposed = true;
+      if (pendingRaf) ownerWindow.cancelAnimationFrame(pendingRaf);
+      pendingRaf = 0;
+      this.mobileSetEditable = null;
+      toolbarDom.classList.remove(VISIBLE_CLASS);
+      toolbarDom.classList.remove("butter-mobile-toolbar-owner");
+      refreshButterMobileBodyClass();
+    };
+    this.register(this.mobileToolbarCleanup);
 
     updateState();
 
@@ -2541,6 +2599,7 @@ export class ButterEditorView extends TextFileView {
       }),
       selectionOverlayPlugin(),
       listOperationsPlugin(),
+      listSaveHistoryPlugin(),
       codeHighlightPlugin(this.app),
       searchPlugin({
         getMainToolbarDom: () => this.toolbarDom,
@@ -2819,6 +2878,8 @@ export class ButterEditorView extends TextFileView {
   }
 
   async onClose() {
+    this.mobileToolbarCleanup?.();
+    this.mobileToolbarCleanup = null;
     this.clearMobileKeyboardDismissal();
     // Tear down the license banner. registerEvent handles the
     // workspace listener cleanup automatically.
@@ -3202,9 +3263,10 @@ export class ButterEditorView extends TextFileView {
   /**
    * Make durable save-time normalization visible in the one live ProseMirror
    * state before bytes are written. Presentation-only empty blocks and marked
-   * edge whitespace remain in the target. One bounding PM replacement keeps
-   * reconciliation linear; the explicit structural selection projection
-   * prevents that replacement from swallowing a cursor in a stable block.
+   * edge whitespace remain in the target. Attribute-only normalization uses
+   * empty-map steps so it cannot consume the user's earlier Undo mappings.
+   * Content changes use a bounding replacement with structural selection
+   * projection to retain a cursor in a stable block.
    * ProseMirror remains the sole state and DOM reconciler.
    */
   private reconcileLiveDocForSave(target: PMNode): PMNode {
@@ -3212,35 +3274,79 @@ export class ButterEditorView extends TextFileView {
     const live = this.pmView.state.doc;
     if (live.eq(target)) return live;
 
-    const start = live.content.findDiffStart(target.content);
-    const rawEnd = live.content.findDiffEnd(target.content);
-    if (start === null || rawEnd === null) {
-      throw new Error("save normalization changed semantics without a PM diff");
-    }
-
-    // findDiffEnd is measured backward from each differently-sized Fragment.
-    // When the common prefix/suffix overlap (notably a trailing block delete),
-    // shift both endpoints by the overlap before slicing the target.
-    let liveEnd = rawEnd.a;
-    let targetEnd = rawEnd.b;
-    const overlap = start - Math.min(liveEnd, targetEnd);
-    if (overlap > 0) {
-      liveEnd += overlap;
-      targetEnd += overlap;
-    }
     const originalSelection = this.pmView.state.selection;
     const storedMarks = this.pmView.state.storedMarks;
-    const tr = this.pmView.state.tr.replace(
-      start,
-      liveEnd,
-      target.slice(start, targetEnd),
-    );
-    tr.setSelection(this.presentationSelection(
-      live,
-      tr.doc,
-      originalSelection,
-      tr.mapping,
-    ));
+    const tr = this.pmView.state.tr;
+    const attributes: Array<{
+      position: number | null;
+      name: string;
+      value: unknown;
+    }> = [];
+    const collectAttributes = (
+      before: PMNode,
+      after: PMNode,
+      position: number | null,
+    ): boolean => {
+      if (before === after) return true;
+      if (
+        before.type !== after.type ||
+        before.childCount !== after.childCount ||
+        before.marks.length !== after.marks.length ||
+        !before.marks.every((mark, index) => mark.eq(after.marks[index]))
+      ) return false;
+      // Text nodes cannot be the target of an attribute step.
+      if (before.isText) return before.eq(after);
+      if (!before.sameMarkup(after)) {
+        for (const name of Object.keys(after.attrs)) {
+          const value: unknown = after.attrs[name];
+          if (!before.hasMarkup(
+            before.type,
+            { ...before.attrs, [name]: value },
+            before.marks,
+          )) {
+            attributes.push({ position, name, value });
+          }
+        }
+      }
+      let childPosition = position === null ? 0 : position + 1;
+      for (let index = 0; index < before.childCount; index++) {
+        const child = before.child(index);
+        if (!collectAttributes(child, after.child(index), childPosition)) {
+          return false;
+        }
+        childPosition += child.nodeSize;
+      }
+      return true;
+    };
+    if (collectAttributes(live, target, null)) {
+      for (const { position, name, value } of attributes) {
+        if (position === null) tr.setDocAttribute(name, value);
+        else tr.setNodeAttribute(position, name, value);
+      }
+      tr.setSelection(originalSelection.map(tr.doc, tr.mapping));
+    } else {
+      const start = live.content.findDiffStart(target.content);
+      const rawEnd = live.content.findDiffEnd(target.content);
+      if (start === null || rawEnd === null) {
+        throw new Error("save normalization changed semantics without a PM diff");
+      }
+      // Overlapping common prefix/suffix endpoints need shifting before
+      // slicing, notably when normalization deletes a trailing block.
+      let liveEnd = rawEnd.a;
+      let targetEnd = rawEnd.b;
+      const overlap = start - Math.min(liveEnd, targetEnd);
+      if (overlap > 0) {
+        liveEnd += overlap;
+        targetEnd += overlap;
+      }
+      tr.replace(start, liveEnd, target.slice(start, targetEnd));
+      tr.setSelection(this.presentationSelection(
+        live,
+        tr.doc,
+        originalSelection,
+        tr.mapping,
+      ));
+    }
     // Adding a replace step clears Transaction.storedMarks. Preserve both an
     // active mark set and the meaningful empty set used to keep formatting
     // toggled off at a cursor inside marked text.

@@ -61,6 +61,7 @@ const RETURNING_KEYBOARD_MS = 900;
 export type DrawerMode = "insert" | "turn-into" | "block-actions";
 
 export interface DrawerBlockContext {
+  selectionScope?: boolean;
   pos: number;
   node: PMNode;
   blockDom?: HTMLElement;
@@ -479,6 +480,7 @@ function renderTurnIntoView(
     node: blockCtx.node,
     app,
     blockDom: blockCtx.blockDom,
+    selectionScope: blockCtx.selectionScope,
   });
   const turnInto = items.find((i) => i.id === "turn-into");
   if (!turnInto?.submenu) {
@@ -718,6 +720,7 @@ function renderBlockSubTile(
   const tile = activeWindow.createEl("button");
   tile.className = "butter-mobile-insert-drawer-tile clickable-icon";
   tile.setAttribute("aria-label", txKnown(sub.title));
+  tile.disabled = sub.disabled ?? false;
   if (sub.isCurrent) tile.dataset.current = "true";
   const iconEl = activeWindow.createSpan();
   iconEl.className = "butter-mobile-insert-drawer-tile-icon";

@@ -821,6 +821,14 @@ export function validateTrustedPackageForInstall(packageBytes, lockBytes) {
   const packageLock = parseTrustedJson(lockBytes, "Trusted package-lock.json");
   const packageName = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/u;
   const registrySpecifier = /^(?:(?:\^|~)?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?|latest)$/u;
+  if (Object.hasOwn(packageJson, "overrides")) {
+    const overrides = packageJson.overrides;
+    if (
+      !overrides || typeof overrides !== "object" || Array.isArray(overrides)
+      || JSON.stringify(Object.keys(overrides)) !== JSON.stringify(["moment"])
+      || overrides.moment !== "2.31.0"
+    ) throw new Error("Trusted package dependency overrides must contain only moment pinned to 2.31.0");
+  }
   for (const field of ["dependencies", "devDependencies"]) {
     const record = packageJson[field] ?? {};
     if (!record || typeof record !== "object" || Array.isArray(record)) {

@@ -22,7 +22,6 @@ import {
   deleteSelection,
   joinBackward,
   selectNodeBackward,
-  joinForward,
   selectNodeForward,
   selectAll,
   toggleMark,
@@ -49,7 +48,11 @@ import type { EditorView } from "prosemirror-view";
 import { Fragment, type Schema } from "prosemirror-model";
 import type { Command } from "prosemirror-state";
 import { enterMovesDown } from "./table-editing";
-import { backspaceAtStartOfFlatListItem } from "./flat-list-editing";
+import {
+  backspaceAtStartOfFlatListItem,
+  joinForwardWithFlatListNormalization,
+  withFlatListNormalization,
+} from "./flat-list-editing";
 import { buildInlineMathInputRule } from "./inline-math-input-rule";
 import {
   allMarkdownShortcutSettings,
@@ -83,6 +86,7 @@ import {
   BUTTON_REGISTRY,
   MAIN_TOOLBAR_BUTTON_DEFS,
   applyToolbarColor,
+  canExecuteConversion,
   execBlockCmd,
   execHistoryCmd,
   execInsertCmd,
@@ -167,7 +171,11 @@ const handleEnterInTaskList: Command = (state, dispatch) => {
 
   // Empty nested task - let the generic flat-list Enter handler
   // outdent it one level, matching Obsidian Live Preview.
-  if (liNode.firstChild && liNode.firstChild.textContent.length === 0) {
+  if (
+    liNode.childCount === 1 &&
+    liNode.firstChild?.type.name === "paragraph" &&
+    liNode.firstChild.content.size === 0
+  ) {
     const depth = typeof liNode.attrs.depth === "number" ? liNode.attrs.depth : 0;
     if (depth > 0) return false;
 
@@ -186,7 +194,7 @@ const handleEnterInTaskList: Command = (state, dispatch) => {
 
   // Non-empty task - only handle end-of-item Enter here; mid-content
   // Enter falls through to the default split chain.
-  if ($from.pos !== paraEnd) return false;
+  if (liNode.childCount !== 1 || $from.pos !== paraEnd) return false;
 
   // Build the new sibling task item directly after the current one,
   // with checked=false (fresh task) and matching kind/depth/tight so
@@ -216,9 +224,9 @@ const handleEnterInTaskList: Command = (state, dispatch) => {
 
 const handleEnterInFlatListItem: Command = (state, dispatch) => {
   const { selection } = state;
-  if (!(selection instanceof TextSelection) || !selection.empty) return false;
+  if (!(selection instanceof TextSelection)) return false;
 
-  const { $from } = selection;
+  let { $from } = selection;
   let liDepth = -1;
   for (let d = $from.depth; d > 0; d--) {
     if ($from.node(d).type.name === "list_item") {
@@ -228,12 +236,44 @@ const handleEnterInFlatListItem: Command = (state, dispatch) => {
   }
   if (liDepth < 0) return false;
 
-  const liNode = $from.node(liDepth);
   const marks = continuationMarks(state);
+  const tr = state.tr;
+  if (!selection.empty) {
+    const { $to } = selection;
+    // Only direct paragraph endpoints in one flat-list container belong to
+    // this command. Code, table, quote and cross-container ranges keep their
+    // standard Enter handling. Mixed kinds and visual depths are safe here:
+    // deleting their selected boundaries leaves the prefix item's identity.
+    if (
+      $from.depth !== liDepth + 1 ||
+      $to.depth !== liDepth + 1 ||
+      $from.parent.type.name !== "paragraph" ||
+      $to.parent.type.name !== "paragraph" ||
+      $to.node(liDepth).type.name !== "list_item" ||
+      $from.node(liDepth - 1) !== $to.node(liDepth - 1)
+    ) return false;
+    const container = $from.node(liDepth - 1);
+    for (let index = $from.index(liDepth - 1); index <= $to.index(liDepth - 1); index++) {
+      if (container.child(index).type.name !== "list_item") return false;
+    }
+    // Delete and split on the same transaction so one Undo restores the
+    // complete selection, including its original direction. Do not apply
+    // empty-item exit/outdent after a deliberate nonempty selection.
+    tr.deleteSelection();
+    $from = tr.selection.$from;
+    if (
+      !tr.selection.empty ||
+      $from.depth !== liDepth + 1 ||
+      $from.node(liDepth).type.name !== "list_item"
+    ) return false;
+  }
+
+  const liNode = $from.node(liDepth);
   const liPos = $from.before(liDepth);
   const liEnd = liPos + liNode.nodeSize;
 
   if (
+    selection.empty &&
     liNode.childCount === 1 &&
     liNode.firstChild?.type.name === "paragraph" &&
     liNode.firstChild.content.size === 0
@@ -241,7 +281,7 @@ const handleEnterInFlatListItem: Command = (state, dispatch) => {
     const depth = typeof liNode.attrs.depth === "number" ? liNode.attrs.depth : 0;
     if (!dispatch) return true;
     if (depth > 0) {
-      const tr = state.tr.setNodeMarkup(liPos, undefined, {
+      tr.setNodeMarkup(liPos, undefined, {
         ...liNode.attrs,
         depth: depth - 1,
         sourceRange: null,
@@ -251,13 +291,17 @@ const handleEnterInFlatListItem: Command = (state, dispatch) => {
       return true;
     }
     const para = state.schema.nodes.paragraph.create();
-    const tr = state.tr.replaceWith(liPos, liEnd, para);
+    tr.replaceWith(liPos, liEnd, para);
     tr.setSelection(TextSelection.near(tr.doc.resolve(liPos + 1)));
     dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
     return true;
   }
 
-  if ($from.depth !== liDepth + 1 || !$from.parent.type.inlineContent) {
+  if (
+    $from.depth !== liDepth + 1 ||
+    !$from.parent.type.inlineContent ||
+    $from.parent.type.spec.code
+  ) {
     return false;
   }
 
@@ -291,7 +335,7 @@ const handleEnterInFlatListItem: Command = (state, dispatch) => {
   );
   const rightItem = liNode.type.create(rightAttrs, Fragment.fromArray(rightChildren));
 
-  const tr = state.tr.replaceWith(
+  tr.replaceWith(
     liPos,
     liEnd,
     Fragment.fromArray([leftItem, rightItem]),
@@ -490,6 +534,7 @@ export function buildKeymap(
   options: ButterKeymapOptions = {},
 ) {
   const keys: Record<string, Command> = {};
+  const deleteSelectionPreservingLists = withFlatListNormalization(deleteSelection);
   const codeFenceShortcut: Command = (state, dispatch, view) =>
     options.markdownShortcuts?.().codeBlocks === false
       ? false
@@ -519,21 +564,21 @@ export function buildKeymap(
   // Backspace/Delete
   keys["Backspace"] = chainCommands(
     handleBackspaceInEmptyCalloutBody,
-    deleteSelection,
+    deleteSelectionPreservingLists,
     backspaceAtStartOfFlatListItem,
     joinBackward,
     selectNodeBackward,
   );
   keys["Mod-Backspace"] = chainCommands(
     handleBackspaceInEmptyCalloutBody,
-    deleteSelection,
+    deleteSelectionPreservingLists,
     backspaceAtStartOfFlatListItem,
     joinBackward,
     selectNodeBackward,
   );
   keys["Delete"] = chainCommands(
-    deleteSelection,
-    joinForward,
+    deleteSelectionPreservingLists,
+    joinForwardWithFlatListNormalization,
     selectNodeForward,
   );
   keys["Mod-Delete"] = keys["Delete"];
@@ -1263,6 +1308,7 @@ function canonicalBlockMenuContext(
       node: block.node,
       app: host.app,
       blockDom: view.nodeDOM(block.pos) as HTMLElement | undefined,
+      selectionScope: !blockOverride,
     }),
   };
 }
@@ -1497,6 +1543,7 @@ export function populateGeneralContextMenu(
       ? "list_item"
       : definition.nodeName;
     const enabled = (): boolean => {
+      if (!canExecuteConversion(definition, view.state)) return false;
       if (definition.markName) return Boolean(mark);
       if (nodeName) return Boolean(schema.nodes[nodeName]);
       return true;

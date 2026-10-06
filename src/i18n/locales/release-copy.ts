@@ -1,5 +1,13 @@
 // Release-discovery copy, grouped here so every supported locale stays in lockstep.
 export const recentDe = {
+  "List editing and link fixes": "Listenbearbeitung und Linkkorrekturen",
+  "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 behebt Probleme mit Linkvorschlägen, der Listenbearbeitung und wiederhergestellten mobilen Symbolleisten.",
+  "Replace selected text with Enter while keeping the surrounding list structure intact.": "Ersetzen Sie ausgewählten Text mit Enter, ohne die umgebende Listenstruktur zu verändern.",
+  "Indent or outdent selected list items together with Tab or Shift+Tab.": "Rücken Sie ausgewählte Listeneinträge mit Tab oder Shift+Tab gemeinsam ein oder aus.",
+  "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.": "Linkvorschläge erscheinen nicht mehr doppelt und schließen sich bei Escape, einem Klick außerhalb oder beim Verlassen des Editors.",
+  "Convert selected lines into a list without losing text, including lines separated by soft breaks.": "Wandeln Sie ausgewählte Zeilen in eine Liste um, ohne Text zu verlieren, auch bei weichen Zeilenumbrüchen.",
+  "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.": "Backspace und Delete erhalten Fortsetzungsabsätze und die Listenverschachtelung. Rückgängig funktioniert auch nach dem Speichern.",
+  "Toolbar buttons become available again when you resume editing a restored note on mobile.": "Schaltflächen der Symbolleiste sind wieder verfügbar, wenn Sie eine wiederhergestellte Notiz auf einem Mobilgerät weiterbearbeiten.",
   "Send bug reports and feature requests from Help & feedback in settings.": "Senden Sie Fehlerberichte und Funktionswünsche über Hilfe & Feedback in den Einstellungen.",
   "Convert selected text to a bullet list without losing its content or selection.": "Wandeln Sie ausgewählten Text in eine Aufzählung um, ohne Inhalt oder Auswahl zu verlieren.",
   "Use <br> tags for explicit line breaks in your notes.": "Verwenden Sie <br>-Tags für explizite Zeilenumbrüche in Ihren Notizen.",
@@ -100,6 +108,14 @@ export const recentDe = {
 } as const;
 
 export const recentEs = {
+  "List editing and link fixes": "Correcciones en listas y enlaces",
+  "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 corrige las sugerencias de enlaces, la edición de listas y las barras de herramientas móviles restauradas.",
+  "Replace selected text with Enter while keeping the surrounding list structure intact.": "Reemplaza el texto seleccionado con Enter sin alterar la estructura de la lista que lo rodea.",
+  "Indent or outdent selected list items together with Tab or Shift+Tab.": "Aplica o reduce la sangría de los elementos de lista seleccionados a la vez con Tab o Shift+Tab.",
+  "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.": "Las sugerencias de enlaces ya no aparecen duplicadas y se cierran al pulsar Escape, hacer clic fuera o salir del editor.",
+  "Convert selected lines into a list without losing text, including lines separated by soft breaks.": "Convierte las líneas seleccionadas en una lista sin perder texto, incluidas las separadas por saltos de línea suaves.",
+  "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.": "Backspace y Delete conservan los párrafos de continuación y los niveles de las listas. Deshacer sigue funcionando después de guardar.",
+  "Toolbar buttons become available again when you resume editing a restored note on mobile.": "Los botones de la barra de herramientas vuelven a estar disponibles al reanudar la edición de una nota restaurada en el móvil.",
   "Send bug reports and feature requests from Help & feedback in settings.": "Envíe informes de errores y solicitudes de funciones desde Ayuda y comentarios en los ajustes.",
   "Convert selected text to a bullet list without losing its content or selection.": "Convierta el texto seleccionado en una lista con viñetas sin perder el contenido ni la selección.",
   "Use <br> tags for explicit line breaks in your notes.": "Use etiquetas <br> para insertar saltos de línea explícitos en sus notas.",
@@ -200,6 +216,14 @@ export const recentEs = {
 } as const;
 
 export const recentFr = {
+  "List editing and link fixes": "Corrections des listes et des liens",
+  "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 corrige les suggestions de liens, l’édition des listes et les barres d’outils mobiles restaurées.",
+  "Replace selected text with Enter while keeping the surrounding list structure intact.": "Remplacez le texte sélectionné avec la touche Entrée tout en préservant la structure de la liste qui l’entoure.",
+  "Indent or outdent selected list items together with Tab or Shift+Tab.": "Augmentez ou réduisez le retrait des éléments de liste sélectionnés ensemble avec Tab ou Shift+Tab.",
+  "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.": "Les suggestions de liens ne s’affichent plus en double et se ferment avec Échap, un clic à l’extérieur ou lorsque vous quittez l’éditeur.",
+  "Convert selected lines into a list without losing text, including lines separated by soft breaks.": "Convertissez les lignes sélectionnées en liste sans perdre de texte, y compris celles séparées par des sauts de ligne simples.",
+  "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.": "Retour arrière et Suppr préservent les paragraphes de continuation et l’imbrication des listes. Annuler reste disponible après l’enregistrement.",
+  "Toolbar buttons become available again when you resume editing a restored note on mobile.": "Les boutons de la barre d’outils redeviennent disponibles lorsque vous reprenez l’édition d’une note restaurée sur mobile.",
   "Send bug reports and feature requests from Help & feedback in settings.": "Envoyez des rapports de bugs et des demandes de fonctionnalités depuis Aide et commentaires dans les paramètres.",
   "Convert selected text to a bullet list without losing its content or selection.": "Convertissez le texte sélectionné en liste à puces sans perdre son contenu ni la sélection.",
   "Use <br> tags for explicit line breaks in your notes.": "Utilisez des balises <br> pour insérer des sauts de ligne explicites dans vos notes.",
@@ -300,6 +324,14 @@ export const recentFr = {
 } as const;
 
 export const recentJa = {
+  "List editing and link fixes": "リスト編集とリンクの修正",
+  "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 では、リンク候補、リスト編集、モバイルでノートを復元した際のツールバーの問題を修正しました。",
+  "Replace selected text with Enter while keeping the surrounding list structure intact.": "周囲のリスト構造を保ったまま、Enter で選択したテキストを改行に置き換えられます。",
+  "Indent or outdent selected list items together with Tab or Shift+Tab.": "Tab または Shift+Tab で、選択したリスト項目のインデントをまとめて増減できます。",
+  "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.": "リンク候補が重複して表示されなくなり、Escape、外側のクリック、またはエディターからの移動で閉じるようになりました。",
+  "Convert selected lines into a list without losing text, including lines separated by soft breaks.": "ソフト改行で区切られた行も含め、選択した行をテキストを失わずにリストへ変換できます。",
+  "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.": "Backspace と Delete でリスト項目内の続きの段落や階層が保たれ、保存後も元に戻す操作が使えます。",
+  "Toolbar buttons become available again when you resume editing a restored note on mobile.": "モバイルで復元したノートの編集を再開すると、ツールバーのボタンが再び使えるようになります。",
   "Send bug reports and feature requests from Help & feedback in settings.": "設定の「ヘルプとフィードバック」から、不具合の報告や機能のリクエストを送信できます。",
   "Convert selected text to a bullet list without losing its content or selection.": "内容や選択範囲を失わずに、選択したテキストを箇条書きに変換できます。",
   "Use <br> tags for explicit line breaks in your notes.": "ノート内で <br> タグを使い、明示的に改行できます。",
@@ -400,6 +432,14 @@ export const recentJa = {
 } as const;
 
 export const recentKo = {
+  "List editing and link fixes": "목록 편집 및 링크 수정",
+  "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1은 링크 제안, 목록 편집, 모바일에서 노트를 복원한 뒤의 도구 모음 문제를 수정합니다.",
+  "Replace selected text with Enter while keeping the surrounding list structure intact.": "주변 목록 구조를 유지하면서 Enter로 선택한 텍스트를 줄바꿈으로 바꿀 수 있습니다.",
+  "Indent or outdent selected list items together with Tab or Shift+Tab.": "Tab 또는 Shift+Tab으로 선택한 목록 항목을 한꺼번에 들여쓰거나 내어쓸 수 있습니다.",
+  "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.": "링크 제안이 중복으로 표시되지 않으며, Escape를 누르거나 바깥을 클릭하거나 편집기를 벗어나면 닫힙니다.",
+  "Convert selected lines into a list without losing text, including lines separated by soft breaks.": "소프트 줄바꿈으로 구분된 줄도 포함하여, 선택한 줄을 텍스트 손실 없이 목록으로 변환할 수 있습니다.",
+  "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.": "Backspace와 Delete가 이어지는 문단과 목록 계층을 보존하며, 저장한 뒤에도 실행 취소가 유지됩니다.",
+  "Toolbar buttons become available again when you resume editing a restored note on mobile.": "모바일에서 복원된 노트의 편집을 다시 시작하면 도구 모음 버튼을 다시 사용할 수 있습니다.",
   "Send bug reports and feature requests from Help & feedback in settings.": "설정의 도움말 및 피드백에서 버그 보고와 기능 요청을 보내세요.",
   "Convert selected text to a bullet list without losing its content or selection.": "내용이나 선택 영역을 잃지 않고 선택한 텍스트를 글머리 기호 목록으로 변환하세요.",
   "Use <br> tags for explicit line breaks in your notes.": "노트에서 <br> 태그로 명시적인 줄바꿈을 추가하세요.",
@@ -500,6 +540,14 @@ export const recentKo = {
 } as const;
 
 export const recentPt = {
+  "List editing and link fixes": "Correções na edição de listas e nas ligações",
+  "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 corrige as sugestões de ligações, a edição de listas e as barras de ferramentas móveis restauradas.",
+  "Replace selected text with Enter while keeping the surrounding list structure intact.": "Substitua o texto selecionado com Enter, mantendo intacta a estrutura da lista à sua volta.",
+  "Indent or outdent selected list items together with Tab or Shift+Tab.": "Avance ou recue a indentação dos itens de lista selecionados em conjunto com Tab ou Shift+Tab.",
+  "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.": "As sugestões de ligações deixam de aparecer em duplicado e fecham ao premir Escape, clicar fora ou sair do editor.",
+  "Convert selected lines into a list without losing text, including lines separated by soft breaks.": "Converta as linhas selecionadas numa lista sem perder texto, incluindo as separadas por quebras de linha simples.",
+  "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.": "Backspace e Delete preservam os parágrafos de continuação e os níveis das listas. Anular continua a funcionar depois de guardar.",
+  "Toolbar buttons become available again when you resume editing a restored note on mobile.": "Os botões da barra de ferramentas voltam a estar disponíveis ao retomar a edição de uma nota restaurada no telemóvel.",
   "Send bug reports and feature requests from Help & feedback in settings.": "Envie relatórios de erros e pedidos de funcionalidades através de Ajuda e comentários nas definições.",
   "Convert selected text to a bullet list without losing its content or selection.": "Converta o texto selecionado numa lista com marcas sem perder o conteúdo nem a seleção.",
   "Use <br> tags for explicit line breaks in your notes.": "Utilize etiquetas <br> para inserir quebras de linha explícitas nas suas notas.",
@@ -600,6 +648,14 @@ export const recentPt = {
 } as const;
 
 export const recentPtBR = {
+  "List editing and link fixes": "Correções na edição de listas e nos links",
+  "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 corrige as sugestões de links, a edição de listas e as barras de ferramentas móveis restauradas.",
+  "Replace selected text with Enter while keeping the surrounding list structure intact.": "Substitua o texto selecionado com Enter, mantendo intacta a estrutura da lista ao redor.",
+  "Indent or outdent selected list items together with Tab or Shift+Tab.": "Aumente ou diminua o recuo dos itens de lista selecionados em conjunto com Tab ou Shift+Tab.",
+  "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.": "As sugestões de links não aparecem mais duplicadas e fecham ao pressionar Escape, clicar fora ou sair do editor.",
+  "Convert selected lines into a list without losing text, including lines separated by soft breaks.": "Converta as linhas selecionadas em uma lista sem perder texto, incluindo as separadas por quebras de linha simples.",
+  "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.": "Backspace e Delete preservam os parágrafos de continuação e os níveis das listas. Desfazer continua funcionando depois de salvar.",
+  "Toolbar buttons become available again when you resume editing a restored note on mobile.": "Os botões da barra de ferramentas voltam a ficar disponíveis ao retomar a edição de uma nota restaurada no celular.",
   "Send bug reports and feature requests from Help & feedback in settings.": "Envie relatos de erros e solicitações de recursos pela seção Ajuda e feedback nas configurações.",
   "Convert selected text to a bullet list without losing its content or selection.": "Converta o texto selecionado em uma lista com marcadores sem perder o conteúdo nem a seleção.",
   "Use <br> tags for explicit line breaks in your notes.": "Use tags <br> para inserir quebras de linha explícitas nas suas notas.",
@@ -700,6 +756,14 @@ export const recentPtBR = {
 } as const;
 
 export const recentRu = {
+  "List editing and link fixes": "Исправления списков и ссылок",
+  "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 исправляет подсказки ссылок, редактирование списков и работу панелей инструментов после восстановления заметок на мобильных устройствах.",
+  "Replace selected text with Enter while keeping the surrounding list structure intact.": "Заменяйте выделенный текст переносом строки с помощью Enter, сохраняя структуру окружающего списка.",
+  "Indent or outdent selected list items together with Tab or Shift+Tab.": "Увеличивайте или уменьшайте отступы выделенных пунктов списка вместе с помощью Tab или Shift+Tab.",
+  "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.": "Подсказки ссылок больше не дублируются и закрываются при нажатии Escape, щелчке снаружи или выходе из редактора.",
+  "Convert selected lines into a list without losing text, including lines separated by soft breaks.": "Преобразуйте выделенные строки в список без потери текста, в том числе строки с мягкими переносами.",
+  "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.": "Backspace и Delete сохраняют абзацы продолжения и вложенность списков. Отмена работает и после сохранения.",
+  "Toolbar buttons become available again when you resume editing a restored note on mobile.": "Кнопки панели инструментов снова доступны, когда вы продолжаете редактировать восстановленную заметку на мобильном устройстве.",
   "Send bug reports and feature requests from Help & feedback in settings.": "Отправляйте сообщения об ошибках и запросы функций через раздел помощи и обратной связи в настройках.",
   "Convert selected text to a bullet list without losing its content or selection.": "Преобразуйте выделенный текст в маркированный список, сохраняя его содержимое и выделение.",
   "Use <br> tags for explicit line breaks in your notes.": "Используйте теги <br> для явных переносов строк в заметках.",
@@ -800,6 +864,14 @@ export const recentRu = {
 } as const;
 
 export const recentZhCN = {
+  "List editing and link fixes": "列表编辑与链接修复",
+  "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 修复了链接建议、列表编辑以及移动端恢复笔记后的工具栏问题。",
+  "Replace selected text with Enter while keeping the surrounding list structure intact.": "按 Enter 替换选中的文本，同时保持周围的列表结构。",
+  "Indent or outdent selected list items together with Tab or Shift+Tab.": "使用 Tab 或 Shift+Tab，一起增加或减少所选列表项的缩进。",
+  "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.": "链接建议不再重复显示，并会在按下 Escape、点击外部或离开编辑器时关闭。",
+  "Convert selected lines into a list without losing text, including lines separated by soft breaks.": "将选中的行转换为列表而不丢失文本，包括由软换行分隔的行。",
+  "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.": "Backspace 和 Delete 会保留列表项中的后续段落与层级，保存后仍可撤销。",
+  "Toolbar buttons become available again when you resume editing a restored note on mobile.": "在移动端继续编辑恢复的笔记时，工具栏按钮会恢复可用状态。",
   "Send bug reports and feature requests from Help & feedback in settings.": "通过设置中的帮助与反馈发送错误报告和功能请求。",
   "Convert selected text to a bullet list without losing its content or selection.": "将选中文本转换为无序列表，同时保留内容和选区。",
   "Use <br> tags for explicit line breaks in your notes.": "在笔记中使用 <br> 标签显式换行。",
@@ -900,6 +972,14 @@ export const recentZhCN = {
 } as const;
 
 export const recentZhTW = {
+  "List editing and link fixes": "清單編輯與連結修正",
+  "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 修正了連結建議、清單編輯，以及行動裝置上還原筆記後的工具列問題。",
+  "Replace selected text with Enter while keeping the surrounding list structure intact.": "按 Enter 取代選取的文字，同時保留周圍的清單結構。",
+  "Indent or outdent selected list items together with Tab or Shift+Tab.": "使用 Tab 或 Shift+Tab，一起增加或減少所選清單項目的縮排。",
+  "Link suggestions no longer appear twice and close when you press Escape, click outside, or leave the editor.": "連結建議不再重複顯示，並會在按下 Escape、點擊外部或離開編輯器時關閉。",
+  "Convert selected lines into a list without losing text, including lines separated by soft breaks.": "將選取的行轉換為清單而不遺失文字，包括由軟換行分隔的行。",
+  "Backspace and Delete preserve continuation paragraphs, list nesting, and Undo after saving.": "Backspace 和 Delete 會保留清單項目中的後續段落與階層，儲存後仍可復原。",
+  "Toolbar buttons become available again when you resume editing a restored note on mobile.": "在行動裝置上繼續編輯還原的筆記時，工具列按鈕會恢復可用狀態。",
   "Send bug reports and feature requests from Help & feedback in settings.": "透過設定中的說明與回饋傳送錯誤報告和功能請求。",
   "Convert selected text to a bullet list without losing its content or selection.": "將選取的文字轉換為項目符號清單，同時保留內容和選取範圍。",
   "Use <br> tags for explicit line breaks in your notes.": "在筆記中使用 <br> 標籤明確換行。",

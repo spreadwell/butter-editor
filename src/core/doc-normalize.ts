@@ -562,7 +562,7 @@ function normalizeContainerEmptyParagraphs(
  * temporarily sits between list rows. Only list attrs are transferred back;
  * presentation children and their reference identities are retained.
  */
-function normalizeFlatListChildrenForPresentation(
+export function normalizeFlatListChildrenForPresentation(
   parent: PMNode,
   schema: Schema,
 ): PMNode | null {

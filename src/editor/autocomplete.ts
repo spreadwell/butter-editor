@@ -33,6 +33,8 @@ export function autocompletePlugin(app: App, schema: Schema) {
   let selectedIndex = 0;
   let items: SuggestItem[] = [];
   let unbindReposition: (() => void) | null = null;
+  let pendingOpen: number | null = null;
+  let destroyed = false;
 
   // ── Query extraction ──
 
@@ -313,6 +315,10 @@ export function autocompletePlugin(app: App, schema: Schema) {
   // ── Open / close / update ──
 
   function open(view: EditorView, newMode: Mode) {
+    cancelPendingOpen();
+    // Keyboard triggers and the state-based input fallback can both observe
+    // the same opener. Keep one owned surface so close/destroy removes it.
+    if (destroyed || isOpen || !view.hasFocus()) return;
     mode = newMode;
     isOpen = true;
     selectedIndex = 0;
@@ -324,6 +330,7 @@ export function autocompletePlugin(app: App, schema: Schema) {
   }
 
   function close() {
+    cancelPendingOpen();
     isOpen = false;
     mode = null;
     startPos = -1;
@@ -334,6 +341,22 @@ export function autocompletePlugin(app: App, schema: Schema) {
       popover.remove();
       popover = null;
     }
+  }
+
+  function cancelPendingOpen() {
+    if (pendingOpen !== null) window.clearTimeout(pendingOpen);
+    pendingOpen = null;
+  }
+
+  function scheduleOpen(view: EditorView, newMode: Mode, start: number) {
+    cancelPendingOpen();
+    startPos = start;
+    pendingOpen = window.setTimeout(() => {
+      pendingOpen = null;
+      if (destroyed || isOpen || !view.hasFocus()) return;
+      startPos = start;
+      open(view, newMode);
+    }, 0);
   }
 
   function update(view: EditorView) {
@@ -383,7 +406,19 @@ export function autocompletePlugin(app: App, schema: Schema) {
   return new Plugin({
     key: new PluginKey("butter-autocomplete"),
     props: {
+      handleDOMEvents: {
+        blur: () => {
+          close();
+          return false;
+        },
+      },
       handleKeyDown(view, event) {
+        if (destroyed) return false;
+        if (event.key === "Escape" && pendingOpen !== null) {
+          event.preventDefault();
+          close();
+          return true;
+        }
         // ── Active popover key handling ──
         if (isOpen) {
           if (event.key === "ArrowDown") {
@@ -430,10 +465,10 @@ export function autocompletePlugin(app: App, schema: Schema) {
             if (charBefore === "[") {
               const bangBefore = from > 1 &&
                 view.state.doc.textBetween(from - 2, from - 1) === "!";
-              startPos = bangBefore ? from - 2 : from - 1;
-              window.setTimeout(
-                () => open(view, bangBefore ? "embed" : "wikilink"),
-                0,
+              scheduleOpen(
+                view,
+                bangBefore ? "embed" : "wikilink",
+                bangBefore ? from - 2 : from - 1,
               );
             }
           }
@@ -444,17 +479,31 @@ export function autocompletePlugin(app: App, schema: Schema) {
           const { from } = view.state.selection;
           const atStart = from === view.state.selection.$from.start();
           if (atStart || (from > 0 && /\s/.test(view.state.doc.textBetween(from - 1, from)))) {
-            startPos = from;
-            window.setTimeout(() => open(view, "tag"), 0);
+            scheduleOpen(view, "tag", from);
           }
         }
 
         return false;
       },
     },
-    view() {
+    view(view) {
+      // PM recreates plugin views when its plugin list is reconfigured.
+      destroyed = false;
+      const ownerDocument = view.dom.ownerDocument;
+      const ownerWindow = ownerDocument.defaultView;
+      const onPointerDown = (event: PointerEvent) => {
+        const target = event.target as Node | null;
+        if (target && !view.dom.contains(target) && !popover?.contains(target)) close();
+      };
+      const onVisibilityChange = () => {
+        if (ownerDocument.visibilityState === "hidden") close();
+      };
+      ownerDocument.addEventListener("pointerdown", onPointerDown, true);
+      ownerDocument.addEventListener("visibilitychange", onVisibilityChange);
+      ownerWindow?.addEventListener("blur", close);
       return {
         update: (view, previousState) => {
+          if (destroyed) return;
           // Soft keyboards, IME commits, and accessibility input may insert
           // printable text without keydown. Open from canonical PM state so
           // every input method receives the same completion behavior.
@@ -469,7 +518,11 @@ export function autocompletePlugin(app: App, schema: Schema) {
           if (isOpen) update(view);
         },
         destroy: () => {
+          destroyed = true;
           close();
+          ownerDocument.removeEventListener("pointerdown", onPointerDown, true);
+          ownerDocument.removeEventListener("visibilitychange", onVisibilityChange);
+          ownerWindow?.removeEventListener("blur", close);
         },
       };
     },

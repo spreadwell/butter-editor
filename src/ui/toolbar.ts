@@ -37,9 +37,6 @@ import {
   isObsidianCommandAvailable,
   type CommandLayoutItem,
 } from "./command-actions";
-import {
-  insertCallout,
-} from "./slash-menu";
 import { openUnifiedLinkEditor } from "./link-editor";
 import { tx, txKnown, tv, type MessageKey } from "../i18n";
 import {
@@ -67,6 +64,7 @@ import {
   toggleFlatListKind,
 } from "../editor/flat-list-editing";
 import { getMultiBlockSelection } from "../editor/multi-block-select";
+import { convertTextSelection, hasTextSelection, selectionTarget, type SelectionTarget } from "../editor/selection-conversion";
 import { saveBlobAsAttachment } from "../editor/paste-drop";
 import {
   clearFormatting,
@@ -298,7 +296,22 @@ export function execHistoryCmd(btn: BtnDef, view: EditorView) {
   cmd(view.state, view.dispatch.bind(view));
 }
 
+export function canExecuteConversion(btn: BtnDef, state: EditorState): boolean {
+  if (!hasTextSelection(state)) return true;
+  let target: SelectionTarget | null = null;
+  if (btn.kind === "heading") target = btn.headingLevel ? `h${btn.headingLevel}` : "paragraph";
+  else if (btn.kind === "block" || btn.kind === "list") target = selectionTarget(btn.nodeName ?? "");
+  else if (btn.id.startsWith("callout-")) target = "obsidian_callout";
+  else return true;
+  return target !== null && convertTextSelection(target)(state);
+}
+
 export function execBlockCmd(btn: BtnDef, schema: Schema, view: EditorView) {
+  if (hasTextSelection(view.state)) {
+    const target = selectionTarget(btn.nodeName ?? "");
+    if (target) convertTextSelection(target)(view.state, view.dispatch.bind(view));
+    return;
+  }
   const nodeType = schema.nodes[btn.nodeName!];
   if (!nodeType) return;
 
@@ -314,6 +327,11 @@ export function execBlockCmd(btn: BtnDef, schema: Schema, view: EditorView) {
 }
 
 export function execListCmd(btn: BtnDef, schema: Schema, view: EditorView) {
+  if (hasTextSelection(view.state) && getMultiBlockSelection(view.state).positions.length === 0) {
+    const target = selectionTarget(btn.nodeName ?? "");
+    if (target) convertTextSelection(target)(view.state, view.dispatch.bind(view));
+    return;
+  }
   const kind: "bullet" | "ordered" | "task" =
     btn.nodeName === "ordered_list" ? "ordered" :
     btn.nodeName === "task_list" ? "task" : "bullet";
@@ -365,7 +383,12 @@ export function execInsertCmd(
       (file) => void insertPickedAttachment(app, schema, view, file, getSourcePath(), "video"),
     ).open();
   } else if (btn.id.startsWith("callout-")) {
-    insertCallout(view, schema, btn.id.slice("callout-".length));
+    const type = btn.id.slice("callout-".length);
+    if (hasTextSelection(view.state)) {
+      convertTextSelection("obsidian_callout", type)(view.state, view.dispatch.bind(view));
+    } else {
+      wrapIn(schema.nodes.obsidian_callout, { calloutType: type })(view.state, view.dispatch.bind(view));
+    }
   } else if (btn.id === "insert-base-inline") {
     // Convert the current block to a `code_block` with language=base.
     // Obsidian renders inline `base` fences as a live data view; the
@@ -632,6 +655,10 @@ export function insertTable(schema: Schema, view: EditorView, rows: number, cols
 }
 
 export function setHeading(schema: Schema, view: EditorView, level: number) {
+  if (hasTextSelection(view.state)) {
+    convertTextSelection(level === 0 ? "paragraph" : `h${level}`)(view.state, view.dispatch.bind(view));
+    return;
+  }
   if (level === 0) {
     runCommand(view, setBlockType(schema.nodes.paragraph));
   } else {
@@ -2912,8 +2939,9 @@ function updateActiveStates(
 
     let active = false;
     for (const el of els ?? []) {
-      el.classList.toggle("is-disabled", !editorEditable);
-      (el as HTMLButtonElement).disabled = !editorEditable;
+      const enabled = editorEditable && canExecuteConversion(btn, state);
+      el.classList.toggle("is-disabled", !enabled);
+      (el as HTMLButtonElement).disabled = !enabled;
     }
     if (btn.kind === "mark" && btn.markName) {
       const mt = schema.marks[btn.markName];
@@ -3304,17 +3332,20 @@ export function createToolbar(
     key: toolbarPluginKey,
     view(editorView) {
       editorViewRef = editorView;
+      let previousEditable = editorView.editable;
       updateActiveStates(app, buttonMap, submenuMap, submenuChildMap, commandMap, schema, editorView);
       refreshRovingTabindex(dom);
 
       return {
         update(view, prevState) {
           if (
+            view.editable === previousEditable &&
             view.state.selection.eq(prevState.selection) &&
             view.state.storedMarks === prevState.storedMarks &&
             view.state.doc.eq(prevState.doc)
           )
             return;
+          previousEditable = view.editable;
           updateActiveStates(app, buttonMap, submenuMap, submenuChildMap, commandMap, schema, view);
           refreshRovingTabindex(dom);
         },
