@@ -1,5 +1,13 @@
 // Release-discovery copy, grouped here so every supported locale stays in lockstep.
 export const recentDe = {
+  "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "Fügen Sie Feedback bei Bedarf aktuelle Speicherfehler bei – mit Vorschau, ohne Notizinhalte oder Dateipfade.",
+  "More reliable saves and optional underline": "Zuverlässigeres Speichern und optionale Unterstreichung",
+  "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 behebt weitere Probleme beim alltäglichen Speichern, bietet Wiederherstellungskopien und native HTML-Vorschauen und ergänzt optionale Bedienelemente zum Unterstreichen.",
+  "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.": "Öffnen Sie unterstützte Wiederherstellungsschnappschüsse als separate Notizen, oder kopieren Sie ihren Text oder das unveränderte JSON.",
+  "Preview supported standalone HTML blocks with Obsidian's native rendering.": "Zeigen Sie unterstützte eigenständige HTML-Blöcke mit der nativen Darstellung von Obsidian in der Vorschau an.",
+  "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.": "Aktivieren Sie „Erweiterte Formatierung“, um „Unterstrichen“ in der Symbolleiste, im Kontextmenü oder in der Befehlspalette zu verwenden.",
+  "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.": "Bearbeitungsfälle mit wörtlichem Text, Code, Tags und Formatierungen behoben, die das Speichern unterbrechen konnten.",
+  "Fixed editing around embeds in quotes and callouts that could prevent a note from saving.": "Probleme beim Bearbeiten rund um Einbettungen in Zitaten und Hinweisblöcken behoben, die das Speichern einer Notiz verhindern konnten.",
   "List editing and link fixes": "Listenbearbeitung und Linkkorrekturen",
   "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 behebt Probleme mit Linkvorschlägen, der Listenbearbeitung und wiederhergestellten mobilen Symbolleisten.",
   "Replace selected text with Enter while keeping the surrounding list structure intact.": "Ersetzen Sie ausgewählten Text mit Enter, ohne die umgebende Listenstruktur zu verändern.",
@@ -108,6 +116,14 @@ export const recentDe = {
 } as const;
 
 export const recentEs = {
+  "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "Incluye opcionalmente detalles de fallos de guardado recientes en tus comentarios, con una vista previa y sin contenido de notas ni rutas de archivos.",
+  "More reliable saves and optional underline": "Guardado más fiable y subrayado opcional",
+  "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 resuelve más problemas de guardado cotidianos, añade copias de recuperación y vistas previas nativas de HTML, y ofrece controles opcionales de subrayado.",
+  "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.": "Abre las instantáneas de recuperación compatibles como notas independientes, o copia su texto o su JSON exacto.",
+  "Preview supported standalone HTML blocks with Obsidian's native rendering.": "Previsualiza los bloques HTML independientes compatibles mediante el renderizado nativo de Obsidian.",
+  "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.": "Activa «Formato enriquecido» para usar «Subrayado» en la barra de herramientas, el menú contextual o la paleta de comandos.",
+  "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.": "Corregidos casos de edición de texto literal, código, etiquetas y formato que podían interrumpir el guardado.",
+  "Fixed editing around embeds in quotes and callouts that could prevent a note from saving.": "Corregidos problemas al editar alrededor de elementos incrustados en citas y destacados que podían impedir guardar una nota.",
   "List editing and link fixes": "Correcciones en listas y enlaces",
   "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 corrige las sugerencias de enlaces, la edición de listas y las barras de herramientas móviles restauradas.",
   "Replace selected text with Enter while keeping the surrounding list structure intact.": "Reemplaza el texto seleccionado con Enter sin alterar la estructura de la lista que lo rodea.",
@@ -216,6 +232,14 @@ export const recentEs = {
 } as const;
 
 export const recentFr = {
+  "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "Joignez, si vous le souhaitez, les détails des échecs récents d’enregistrement à vos commentaires, avec un aperçu et sans contenu de note ni chemin de fichier.",
+  "More reliable saves and optional underline": "Enregistrement plus fiable et soulignement facultatif",
+  "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 corrige davantage de problèmes d'enregistrement au quotidien, ajoute des copies de récupération et des aperçus HTML natifs, et propose des commandes de soulignement facultatives.",
+  "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.": "Ouvrez les instantanés de récupération pris en charge dans des notes distinctes, ou copiez leur texte ou leur JSON exact.",
+  "Preview supported standalone HTML blocks with Obsidian's native rendering.": "Prévisualisez les blocs HTML autonomes pris en charge avec le rendu natif d'Obsidian.",
+  "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.": "Activez « Mise en forme enrichie » pour utiliser « Souligné » dans la barre d'outils, le menu contextuel ou la palette de commandes.",
+  "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.": "Correction de cas d'édition impliquant du texte littéral, du code, des tags et de la mise en forme qui pouvaient interrompre l'enregistrement.",
+  "Fixed editing around embeds in quotes and callouts that could prevent a note from saving.": "Correction de problèmes d'édition autour des contenus intégrés dans les citations et les blocs de mise en avant qui pouvaient empêcher l'enregistrement d'une note.",
   "List editing and link fixes": "Corrections des listes et des liens",
   "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 corrige les suggestions de liens, l’édition des listes et les barres d’outils mobiles restaurées.",
   "Replace selected text with Enter while keeping the surrounding list structure intact.": "Remplacez le texte sélectionné avec la touche Entrée tout en préservant la structure de la liste qui l’entoure.",
@@ -324,6 +348,14 @@ export const recentFr = {
 } as const;
 
 export const recentJa = {
+  "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "最近の保存失敗の詳細を、プレビューで確認してから任意でフィードバックに添付できます。ノートの内容やファイルパスは含まれません。",
+  "More reliable saves and optional underline": "より確実な保存と任意で使える下線機能",
+  "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 では、日常的な保存操作の問題をさらに修正し、復元用コピーとネイティブ HTML プレビューを追加しました。下線の操作も任意で利用できます。",
+  "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.": "対応している復元用スナップショットを別のノートとして開くか、そのテキストまたは元のままの JSON をコピーできます。",
+  "Preview supported standalone HTML blocks with Obsidian's native rendering.": "対応している独立した HTML ブロックを、Obsidian のネイティブな描画機能でプレビューできます。",
+  "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.": "「リッチな書式設定」を有効にすると、ツールバー、コンテキストメニュー、コマンドパレットで「下線」を使えます。",
+  "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.": "リテラルテキスト、コード、タグ、書式に関する編集で、保存が中断される場合がある問題を修正しました。",
+  "Fixed editing around embeds in quotes and callouts that could prevent a note from saving.": "引用やコールアウト内の埋め込みの前後を編集すると、ノートを保存できなくなる場合がある問題を修正しました。",
   "List editing and link fixes": "リスト編集とリンクの修正",
   "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 では、リンク候補、リスト編集、モバイルでノートを復元した際のツールバーの問題を修正しました。",
   "Replace selected text with Enter while keeping the surrounding list structure intact.": "周囲のリスト構造を保ったまま、Enter で選択したテキストを改行に置き換えられます。",
@@ -432,6 +464,14 @@ export const recentJa = {
 } as const;
 
 export const recentKo = {
+  "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "최근 저장 실패 세부 정보를 미리 확인한 뒤 선택적으로 피드백에 포함할 수 있습니다. 노트 내용이나 파일 경로는 포함되지 않습니다.",
+  "More reliable saves and optional underline": "더 안정적인 저장과 선택적으로 사용할 수 있는 밑줄",
+  "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2는 일상적인 저장 작업에서 발생하는 문제를 추가로 수정하고, 복구 사본과 기본 HTML 미리보기를 추가하며, 밑줄 기능을 선택적으로 사용할 수 있게 합니다.",
+  "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.": "지원되는 복구 스냅샷을 별도의 노트로 열거나, 해당 텍스트 또는 원본 그대로의 JSON을 복사할 수 있습니다.",
+  "Preview supported standalone HTML blocks with Obsidian's native rendering.": "지원되는 독립형 HTML 블록을 Obsidian의 기본 렌더링으로 미리 볼 수 있습니다.",
+  "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.": "‘서식 확장’을 켜면 툴바, 상황에 맞는 메뉴 또는 명령 팔레트에서 ‘밑줄’을 사용할 수 있습니다.",
+  "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.": "리터럴 텍스트, 코드, 태그 및 서식 관련 편집 시 저장이 중단될 수 있던 문제를 수정했습니다.",
+  "Fixed editing around embeds in quotes and callouts that could prevent a note from saving.": "인용과 콜아웃 안의 임베드 주변을 편집할 때 노트가 저장되지 않을 수 있던 문제를 수정했습니다.",
   "List editing and link fixes": "목록 편집 및 링크 수정",
   "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1은 링크 제안, 목록 편집, 모바일에서 노트를 복원한 뒤의 도구 모음 문제를 수정합니다.",
   "Replace selected text with Enter while keeping the surrounding list structure intact.": "주변 목록 구조를 유지하면서 Enter로 선택한 텍스트를 줄바꿈으로 바꿀 수 있습니다.",
@@ -540,6 +580,14 @@ export const recentKo = {
 } as const;
 
 export const recentPt = {
+  "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "Inclua opcionalmente detalhes de falhas de gravação recentes nos comentários, com uma pré-visualização e sem conteúdo de notas nem caminhos de ficheiros.",
+  "More reliable saves and optional underline": "Maior fiabilidade ao guardar e sublinhado opcional",
+  "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 corrige mais problemas comuns ao guardar, acrescenta cópias de recuperação e pré-visualizações HTML nativas e disponibiliza controlos opcionais de sublinhado.",
+  "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.": "Abra os instantâneos de recuperação suportados como notas separadas, ou copie o respetivo texto ou JSON exato.",
+  "Preview supported standalone HTML blocks with Obsidian's native rendering.": "Pré-visualize os blocos HTML independentes suportados com a renderização nativa do Obsidian.",
+  "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.": "Ative «Formatação avançada» para usar «Sublinhado» na barra de ferramentas, no menu de contexto ou na paleta de comandos.",
+  "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.": "Corrigidos casos de edição com texto literal, código, etiquetas e formatação que podiam interromper a operação de guardar.",
+  "Fixed editing around embeds in quotes and callouts that could prevent a note from saving.": "Corrigidos problemas ao editar junto a conteúdos incorporados em citações e blocos de destaque que podiam impedir que uma nota fosse guardada.",
   "List editing and link fixes": "Correções na edição de listas e nas ligações",
   "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 corrige as sugestões de ligações, a edição de listas e as barras de ferramentas móveis restauradas.",
   "Replace selected text with Enter while keeping the surrounding list structure intact.": "Substitua o texto selecionado com Enter, mantendo intacta a estrutura da lista à sua volta.",
@@ -648,6 +696,14 @@ export const recentPt = {
 } as const;
 
 export const recentPtBR = {
+  "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "Inclua opcionalmente detalhes de falhas de salvamento recentes no feedback, com uma prévia e sem conteúdo de notas ou caminhos de arquivos.",
+  "More reliable saves and optional underline": "Salvamento mais confiável e sublinhado opcional",
+  "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 corrige mais problemas comuns ao salvar, adiciona cópias de recuperação e pré-visualizações nativas de HTML e oferece controles opcionais de sublinhado.",
+  "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.": "Abra os instantâneos de recuperação compatíveis como notas separadas, ou copie o texto ou o JSON exato deles.",
+  "Preview supported standalone HTML blocks with Obsidian's native rendering.": "Veja uma prévia dos blocos HTML independentes compatíveis usando a renderização nativa do Obsidian.",
+  "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.": "Ative “Formatação avançada” para usar “Sublinhado” na barra de ferramentas, no menu de contexto ou na paleta de comandos.",
+  "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.": "Corrigidos casos de edição com texto literal, código, tags e formatação que podiam interromper o salvamento.",
+  "Fixed editing around embeds in quotes and callouts that could prevent a note from saving.": "Corrigidos problemas ao editar ao redor de conteúdos incorporados em citações e blocos de destaque que podiam impedir o salvamento de uma nota.",
   "List editing and link fixes": "Correções na edição de listas e nos links",
   "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 corrige as sugestões de links, a edição de listas e as barras de ferramentas móveis restauradas.",
   "Replace selected text with Enter while keeping the surrounding list structure intact.": "Substitua o texto selecionado com Enter, mantendo intacta a estrutura da lista ao redor.",
@@ -756,6 +812,14 @@ export const recentPtBR = {
 } as const;
 
 export const recentRu = {
+  "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "При желании включите в отзыв сведения о недавних сбоях сохранения, предварительно просмотрев их. Содержимое заметок и пути к файлам не включаются.",
+  "More reliable saves and optional underline": "Более надёжное сохранение и подчёркивание по желанию",
+  "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 устраняет ещё больше повседневных проблем с сохранением, добавляет копии для восстановления и нативный предпросмотр HTML, а также позволяет включить команды подчёркивания.",
+  "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.": "Открывайте поддерживаемые снимки восстановления как отдельные заметки или копируйте их текст либо точный JSON.",
+  "Preview supported standalone HTML blocks with Obsidian's native rendering.": "Используйте нативный рендеринг Obsidian для предпросмотра поддерживаемых отдельных HTML-блоков.",
+  "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.": "Включите «Расширенное форматирование», чтобы использовать «Подчёркивание» на панели инструментов, в контекстном меню или палитре команд.",
+  "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.": "Исправлены случаи редактирования буквально отображаемого текста, кода, тегов и форматирования, которые могли прерывать сохранение.",
+  "Fixed editing around embeds in quotes and callouts that could prevent a note from saving.": "Исправлены проблемы при редактировании рядом со встроенным содержимым в цитатах и выносных блоках, которые могли мешать сохранению заметки.",
   "List editing and link fixes": "Исправления списков и ссылок",
   "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 исправляет подсказки ссылок, редактирование списков и работу панелей инструментов после восстановления заметок на мобильных устройствах.",
   "Replace selected text with Enter while keeping the surrounding list structure intact.": "Заменяйте выделенный текст переносом строки с помощью Enter, сохраняя структуру окружающего списка.",
@@ -864,6 +928,14 @@ export const recentRu = {
 } as const;
 
 export const recentZhCN = {
+  "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "可选择在反馈中附上近期保存失败详情，发送前可预览，不包含笔记内容或文件路径。",
+  "More reliable saves and optional underline": "更可靠的保存与可选的下划线功能",
+  "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 修复了更多日常保存问题，新增恢复副本和原生 HTML 预览，并提供可选的下划线操作。",
+  "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.": "将受支持的恢复快照作为独立笔记打开，或复制其中的文本或原样 JSON。",
+  "Preview supported standalone HTML blocks with Obsidian's native rendering.": "使用 Obsidian 的原生渲染预览受支持的独立 HTML 块。",
+  "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.": "启用“丰富格式”，即可在工具栏、上下文菜单或命令面板中使用“下划线”。",
+  "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.": "修复了涉及字面文本、代码、标签和格式的编辑操作可能中断保存的问题。",
+  "Fixed editing around embeds in quotes and callouts that could prevent a note from saving.": "修复了在引用和标注内编辑嵌入内容周围的位置时，可能导致笔记无法保存的问题。",
   "List editing and link fixes": "列表编辑与链接修复",
   "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 修复了链接建议、列表编辑以及移动端恢复笔记后的工具栏问题。",
   "Replace selected text with Enter while keeping the surrounding list structure intact.": "按 Enter 替换选中的文本，同时保持周围的列表结构。",
@@ -972,6 +1044,14 @@ export const recentZhCN = {
 } as const;
 
 export const recentZhTW = {
+  "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "可選擇在意見回饋中附上近期儲存失敗詳情，傳送前可預覽，不包含筆記內容或檔案路徑。",
+  "More reliable saves and optional underline": "更可靠的儲存與可選的底線功能",
+  "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 修正了更多日常儲存問題，新增復原副本和原生 HTML 預覽，並提供可選的底線操作。",
+  "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.": "將支援的復原快照作為獨立筆記開啟，或複製其中的文字或原樣 JSON。",
+  "Preview supported standalone HTML blocks with Obsidian's native rendering.": "使用 Obsidian 的原生繪製功能預覽支援的獨立 HTML 區塊。",
+  "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.": "啟用「豐富格式」，即可在工具列、內容選單或命令面板中使用「底線」。",
+  "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.": "修正了涉及字面文字、程式碼、標籤和格式的編輯操作可能中斷儲存的問題。",
+  "Fixed editing around embeds in quotes and callouts that could prevent a note from saving.": "修正了在引述和標註塊內編輯嵌入內容周圍的位置時，可能導致筆記無法儲存的問題。",
   "List editing and link fixes": "清單編輯與連結修正",
   "Butter Editor 0.12.1 fixes link suggestions, list editing, and restored mobile toolbars.": "Butter Editor 0.12.1 修正了連結建議、清單編輯，以及行動裝置上還原筆記後的工具列問題。",
   "Replace selected text with Enter while keeping the surrounding list structure intact.": "按 Enter 取代選取的文字，同時保留周圍的清單結構。",

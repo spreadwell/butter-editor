@@ -13,6 +13,8 @@
  */
 import { App, Modal, Platform, setIcon } from "obsidian";
 import { closeMobileInsertDrawer } from "../ui/insert-drawer";
+import { bindEditorModalInteraction, isEditorModalInteraction } from "./modal-selection-ownership";
+import { captureDeferredUiOwnership } from "./deferred-ui-ownership";
 import {
   cleanupMobileToolbarOverflowIndicators,
   installMobileToolbarOverflowIndicators,
@@ -348,6 +350,7 @@ function runDeleteTable(view: EditorView) {
     deleteTable(view.state, view.dispatch);
     return;
   }
+  const ownership = captureDeferredUiOwnership(view);
   const modal = new (class extends Modal {
     onOpen() {
       this.titleEl.setText(tx("Delete this table?"));
@@ -363,12 +366,20 @@ function runDeleteTable(view: EditorView) {
         text: tx("Delete"),
       });
       del.addEventListener("click", () => {
+        if (!isEditorModalInteraction(view, this.modalEl) ||
+          !ownership.canMutate({ explicit: true })) return;
+        let accepted = false;
+        deleteTable(view.state, (tr) => {
+          view.dispatch(tr);
+          accepted = tr.docChanged && view.state.doc.eq(tr.doc);
+        });
+        if (!accepted) return;
         this.close();
-        deleteTable(view.state, view.dispatch);
         view.focus();
       });
     }
   })(resolved);
+  bindEditorModalInteraction(modal, view);
   modal.open();
 }
 

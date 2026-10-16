@@ -1,6 +1,7 @@
 import {
   TextFileView,
   Component,
+  MarkdownRenderer,
   setIcon,
   Menu,
   MenuItem,
@@ -25,8 +26,10 @@ import { materializeButterEditorExtensions } from "../integration/extensions";
 import { schema } from "../core/schema";
 import { parser } from "../core/parser";
 import { serializer } from "../core/serializer";
-import { normalize as normalizeSource } from "../core/normalize";
+import { splitButterFileSource } from "../core/file-shell";
+import { decodeNativeFileBytes, nativeFileBytesEqualText, nativeFileTextMatchesSource, nativeFileTextProjection } from "../core/native-file-source";
 import { recordError } from "../integration/debug";
+import { isUnverifiedRecoverySlots, newRecoveryId, type SaveRecoverySnapshot } from "../integration/save-recovery";
 import {
   buildKeymap,
   buildInputRules,
@@ -53,9 +56,11 @@ import { tableEditingPlugins } from "../editor/table-editing";
 import { tableToolbarPlugin } from "../editor/table-toolbar";
 import type { Node as PMNode } from "prosemirror-model";
 import {
-  preflightExactSave,
-  type SavePreflightResult,
-} from "../core/save-preflight";
+  preflightButterSave,
+  describeButterSaveFailure,
+  type ButterSavePolicy,
+  type ButterSaveResult,
+} from "../core/save-policy";
 import { normalizeDocForSave } from "../core/doc-normalize";
 import { checkboxPlugin } from "../editor/checkbox-plugin";
 import { commentOnlyParagraphPlugin } from "../editor/comment-only-paragraph";
@@ -70,28 +75,37 @@ import {
 import { listSaveHistoryPlugin } from "../editor/list-save-history";
 import { searchPlugin } from "../editor/search-plugin";
 import { codeHighlightPlugin } from "../editor/code-highlight";
+import { codeEditContainmentPlugin } from "../editor/code-edit-containment";
 import { imageView } from "../editor/image-view";
 import { PMEditorShim } from "../util/editor-shim";
 import {
   type SaveState,
+  type SaveStatusOwner,
 } from "../ui/save-status";
 import { dragHandlesPlugin } from "../editor/drag-handles";
 import {
   blockIdStamperPlugin,
   ensureBlockIds,
 } from "../editor/block-id-stamper";
+import { nativeBlockIdConservationPlugin } from "../editor/native-block-id-conservation";
+import { structuralSaveAdmissionPlugin } from "../editor/structural-save-admission";
+import { commentNavigationProvenancePlugin } from "../editor/comment-navigation-provenance";
+import { internalClipboardPlugin } from "../editor/internal-clipboard";
+import { linkOccurrenceProjectionPlugin } from "../editor/link-occurrence-projection";
 import { blockAnimatorPlugin } from "../editor/block-animator";
 import { clickToSpawnPlugin } from "../editor/click-to-spawn";
 import { inlineAtomEditPlugin } from "../editor/inline-atom-edit";
 import { autoSplitImagesPlugin } from "../editor/auto-split-images";
 import { tableRowColDragPlugin } from "../editor/table-row-col-drag";
 import { tableCellDragPlugin } from "../editor/table-cell-drag";
-import { normalizeTablesInDoc } from "../editor/table-normalize";
 import {
   rawBlockSafetyPlugin,
+  isWholeSourceFallback,
   RAW_BLOCK_SYNC_META,
 } from "../core/raw-block-safety";
 import { tx } from "../i18n";
+import { SOURCE_RELOAD_META, sourceGeneration, sourceGenerationPlugin } from "../editor/source-generation";
+import { opaqueDOMParserPlugin } from "../editor/opaque-dom-parser";
 import { SaveScheduler } from "../ui/save-scheduler";
 import { suppressNativeMobileToolbar } from "../ui/mobile-native-toolbar";
 import {
@@ -151,6 +165,10 @@ import type { ButterSettings } from "../main";
 let editorAccessibleLabelSequence = 0;
 
 type SourceLineEnding = "\n" | "\r\n" | "\r";
+type SaveRecoveryCapture = {
+  doc: PMNode; policy: ButterSavePolicy; id: string; generation: number;
+  notePath: string; baseline: string;
+};
 
 export interface TemporalPropertyInputSpec {
   inputType: "date" | "datetime-local" | "text";
@@ -219,17 +237,6 @@ export function resolveTemporalPropertyInput(
 function normalizeSourceLineEndings(value: string): string {
   return value.replace(/\r\n?|\n/g, "\n");
 }
-
-function detectSourceLineEnding(value: string): SourceLineEnding {
-  // Keep the established CRLF preference for mixed files, then recognize the
-  // CommonMark-valid bare-CR form before falling back to LF.
-  if (value.includes("\r\n")) return "\r\n";
-  if (value.includes("\r")) return "\r";
-  return "\n";
-}
-
-const FRONTMATTER_SOURCE_RE =
-  /^---(?:\r\n?|\n)([\s\S]*?)(?:\r\n?|\n)---(?:\r\n?|\n)*/;
 
 export class ButterEditorView extends TextFileView {
   private pmView: EditorView | null = null;
@@ -340,10 +347,35 @@ export class ButterEditorView extends TextFileView {
    * TextFileView remains the sole persistence/merge owner.
    */
   private acceptedViewData: string | null = null;
+  /** Immutable physical source paired with the native-loaded projection. */
+  private nativeSourceBinding: { file: TFile; path: string; source: string; projection: string } | null = null;
+  private nativeSourceBaseline: { file: TFile; path: string; request: number; value: string | null } | null = null;
+  private nativeSourceRequest = 0;
+  private nativeSourceProtocolRejected = false;
+  private nativeFileSourceReady = false;
+  private nativeFileOpenPending = 0;
+  private nativeSourceLoadQueue: Promise<void> = Promise.resolve();
+  private nativeSourceLoad: {
+    file: TFile; path: string; request: number; source: string; readLocalProjection: boolean;
+    baseline: string | null; rejected: boolean;
+  } | null = null;
   /** Serializes calls into the native TextFileView writer; it never writes. */
   private saveQueue: Promise<void> = Promise.resolve();
   private preparedSave: { doc: PMNode; text: string } | null = null;
-  private lastBlockedDoc: PMNode | null = null;
+  private nativeSaveAttempt: { file: TFile; editor: EditorView } | null = null;
+  private pendingNativeModify: { file: TFile; path: string } | null = null;
+  private reportedSaveErrors = new WeakMap<object, SaveStatusOwner>();
+  private recoveryId = newRecoveryId();
+  private recoveryNotePath: string | null = null;
+  private recoveryDoc: PMNode | null = null;
+  private recoveryGeneration = -1;
+  private recoveryWrite: Promise<string | null> | null = null;
+  private nativeClearSave: { clearedDoc: PMNode | null; clearedRecoveryId: string | null } | null = null;
+  /** A host-created empty projection is never a new input to the writer. */
+  private acknowledgedNativeClear: {
+    file: TFile; editor: EditorView; doc: PMNode; generation: number;
+  } | null = null;
+  private recoveryContext: string | null = null;
   /** DOM-event handlers we installed for the scheduler's flush
    *  triggers. Tracked so onClose() can tear them down. */
   private schedulerListeners: Array<() => void> = [];
@@ -1293,7 +1325,7 @@ export class ButterEditorView extends TextFileView {
     leaf: WorkspaceLeaf,
     private settings: ButterSettings,
     private plugin: ButterEditorPlugin,
-    private reportSaveResult?: (result: SaveState) => void,
+    private reportSaveResult?: (result: SaveState, owner: SaveStatusOwner) => void,
   ) {
     super(leaf);
   }
@@ -1308,9 +1340,13 @@ export class ButterEditorView extends TextFileView {
    *  selection still work) but blocks edits, matching the user-chosen
    *  "gentle gate" UX. */
   isEditable(): boolean {
-    if (!this.mobileEditable) return false;
+    if (!this.mobileEditable || !this.isNativeFileSourceReady()) return false;
     const s = this.plugin.licenseStatus;
     return s === "valid" || s === "trial";
+  }
+
+  private isNativeFileSourceReady(): boolean {
+    return this.nativeFileSourceReady && this.nativeFileOpenPending === 0 && !this.nativeSourceProtocolRejected;
   }
 
   getViewType(): string {
@@ -1383,40 +1419,12 @@ export class ButterEditorView extends TextFileView {
   // ── Frontmatter ──
 
   private stripFrontmatter(data: string): string {
-    // Capture byte-level file metadata for round-trip preservation.
-    //   - BOM: rare but legitimate (some foreign tooling produces it);
-    //     preserve rather than silently strip.
-    //   - Line endings: LF, CRLF, or bare CR. Recaptured on save per-file.
-    //   - Trailing newlines: 0, 1, 2+ - preserve verbatim.
-    this.originalHasBOM = data.charCodeAt(0) === 0xfeff;
-    if (this.originalHasBOM) data = data.slice(1);
-    this.lineEnding = detectSourceLineEnding(data);
-
-    // Eat ALL trailing newlines after the closing `---`, not just
-    // one. Many vaults store a blank line between frontmatter and
-    // the first heading. If we capture only one newline, the blank
-    // line gets parsed as part of the body, serialized away, and
-    // the reassembled save is missing it - which looks like a
-    // whole-file diff in git / Obsidian Sync on every save. By
-    // folding the separator newlines into the preserved frontmatter
-    // string, they're re-emitted byte-identically on save.
-    let body: string;
-    const match = data.match(FRONTMATTER_SOURCE_RE);
-    if (match) {
-      this.frontmatter = match[0];
-      body = data.slice(match[0].length);
-    } else {
-      this.frontmatter = "";
-      body = data;
-    }
-
-    // Count trailing newlines in the body (normalized LF). Used on
-    // save to emit exactly the same trailing-byte state.
-    const bodyNormalized = normalizeSourceLineEndings(body);
-    const m = bodyNormalized.match(/\n*$/);
-    this.originalTrailingNewlines = m ? m[0].length : 0;
-
-    return body;
+    const source = splitButterFileSource(data);
+    this.originalHasBOM = source.originalHasBOM;
+    this.lineEnding = source.lineEnding;
+    this.frontmatter = source.frontmatter;
+    this.originalTrailingNewlines = source.originalTrailingNewlines;
+    return source.body;
   }
 
   /** Apply a property mutation to Butter's owned file projection. */
@@ -1470,19 +1478,6 @@ export class ButterEditorView extends TextFileView {
     this.originalBody = body;
     this.originalDoc = doc;
     this.preserveSource = doc !== null;
-  }
-
-  /**
-   * True if `doc` contains any top-level `raw_block` child. Used by
-   * the save-path guard to detect the "parse failed, source is in a
-   * raw_block" state and protect it from being serialized out of
-   * existence.
-   */
-  private hasRawBlock(doc: PMNode): boolean {
-    for (let i = 0; i < doc.childCount; i++) {
-      if (doc.child(i).type.name === "raw_block") return true;
-    }
-    return false;
   }
 
   // ── Properties (unchanged from original) ──
@@ -1628,19 +1623,19 @@ export class ButterEditorView extends TextFileView {
       return;
     }
     this.propertiesEl.removeClass("butter-hidden");
-    const cache = this.app.metadataCache.getFileCache(this.file);
-    const fmRaw: unknown = cache?.frontmatter;
-    let fm = (fmRaw && typeof fmRaw === "object" && !Array.isArray(fmRaw)
-      ? fmRaw
-      : null) as Record<string, unknown> | null;
-    if (!fm && this.frontmatter) {
+    // The staged TextFileView shell owns property values. Native metadata may
+    // lag an accepted save or external reload and must not repopulate old values.
+    let fm: Record<string, unknown> | null = null;
+    if (this.frontmatter) {
       const sourceMatch = normalizeSourceLineEndings(this.frontmatter)
         .match(/^---\n([\s\S]*?)\n---(?:\n*)$/);
       if (sourceMatch) {
-        const parsed: unknown = parseYaml(sourceMatch[1]);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          fm = parsed as Record<string, unknown>;
-        }
+        try {
+          const parsed: unknown = parseYaml(sourceMatch[1]);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            fm = parsed as Record<string, unknown>;
+          }
+        } catch { /* Keep invalid YAML source intact; no editable widgets. */ }
       }
     }
     if (!fm && this.pendingPropertyDraft) fm = {};
@@ -1674,21 +1669,42 @@ export class ButterEditorView extends TextFileView {
     const properties = content.createDiv({ cls: "metadata-properties" });
     const file = this.file;
     const app = this.app;
+    const propertyPath = file.path;
+    const propertyView = this.pmView;
+    const propertyGeneration = propertyView ? sourceGeneration(propertyView.state) : null;
+    let reviewedFrontmatter = this.frontmatter;
+    let declinedPropertyEdit = false;
+    const mayMutateProperty = (requireControl = true): boolean => {
+      // Native property inputs own their keyboard independently of PM's mobile
+      // keyboard-down lock. Licensing and reviewed source identity still apply.
+      const licensed = this.plugin.licenseStatus === "valid" || this.plugin.licenseStatus === "trial";
+      const current = !this.destroyed && !(file as TFile & { deleted?: boolean }).deleted &&
+        this.file === file && file.path === propertyPath &&
+        (!requireControl || metaContainer.isConnected) &&
+        this.pmView === propertyView && this.frontmatter === reviewedFrontmatter &&
+        (!propertyView || (!propertyView.isDestroyed && sourceGeneration(propertyView.state) === propertyGeneration));
+      if (licensed && current && this.isNativeFileSourceReady()) return true;
+      if (!declinedPropertyEdit) {
+        declinedPropertyEdit = true;
+        new Notice(tx("Butter kept your content unchanged because this edit target changed or is read-only. Reopen the control to try again."));
+      }
+      return false;
+    };
     const processFrontMatter = (
       mutator: (frontmatter: Record<string, unknown>) => void,
     ): void => {
+      if (!mayMutateProperty()) return;
       void this.enqueueNativeFileOperation(async () => {
-        if (this.destroyed || this.file !== file) return;
+        if (!mayMutateProperty(false)) return;
         // Frontmatter and body are one file and therefore have one writer.
         // Mutate the staged TextFileView projection, then let the same native
         // writer persist both pieces. Body saves queued while this is in flight
         // run afterward with the updated frontmatter source.
         this.mutateFrontmatterSource(mutator);
+        reviewedFrontmatter = this.frontmatter;
         await this.performNativeSave(false);
       }).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        recordError("frontmatter", message);
-        new Notice(`${tx("Butter: save failed -")} ${message}`);
+        this.reportSaveFailure(error, "property save failed");
       });
     };
 
@@ -2359,6 +2375,7 @@ export class ButterEditorView extends TextFileView {
       (node) => serializer.serialize(schema.node("doc", null, [node])),
       getSourcePath,
       () => this.dismissMobileKeyboard(),
+      () => this.requestMobileEditing(),
     );
     toolbarDom.setAttribute("data-active-style", this.settings.toolbarActiveStyle);
     this.toolbarDom = toolbarDom;
@@ -2573,8 +2590,11 @@ export class ButterEditorView extends TextFileView {
     this.nodeViewManager = new NodeViewManager();
     const mgr = this.nodeViewManager;
     const extensionRuntime = materializeButterEditorExtensions();
+    let lastReferenceNoticeAt = 0;
+    let lastStructuralNoticeAt = 0;
 
     const plugins = [
+      codeEditContainmentPlugin(mgr.codeEditContainment),
       toolbarPlugin,
       autocompletePlugin(this.app, schema),
       slashMenuPlugin(this.app, schema),
@@ -2585,12 +2605,63 @@ export class ButterEditorView extends TextFileView {
         markdownShortcuts: () => this.settings.markdownShortcuts,
       }),
       linkEditorKeyboardPlugin(this.app, getSourcePath),
+      internalClipboardPlugin((candidate) => this.preflightCurrent(candidate)?.ok === true, () => {
+        if (Date.now() - lastStructuralNoticeAt < 2000) return;
+        lastStructuralNoticeAt = Date.now();
+        new Notice(tx("Butter kept this block unchanged because this conversion would lose content or block references."));
+      }),
       blockIdStamperPlugin(),
+      commentNavigationProvenancePlugin(() => {
+        if (Date.now() - lastStructuralNoticeAt < 2000) return;
+        lastStructuralNoticeAt = Date.now();
+        new Notice(tx("Butter kept this block unchanged because this conversion would lose content or block references."));
+      }, (candidate) => this.preflightCurrent(candidate)?.ok === true),
+      linkOccurrenceProjectionPlugin((candidate) => this.preflightCurrent(candidate)?.ok === true, () => {
+        if (Date.now() - lastStructuralNoticeAt < 2000) return;
+        lastStructuralNoticeAt = Date.now();
+        new Notice(tx("Butter kept this block unchanged because this conversion would lose content or block references."));
+      }),
+      nativeBlockIdConservationPlugin((event) => {
+        if (Date.now() - lastReferenceNoticeAt < 2000) return;
+        lastReferenceNoticeAt = Date.now();
+        new Notice(event === "callout-conversion"
+          ? tx("Butter kept this block unchanged because this conversion would lose content or block references.")
+          : tx("Block references kept separate. Remove an ID before combining these blocks."));
+      }),
+      structuralSaveAdmissionPlugin(
+        (candidate) => this.preflightCurrent(candidate)?.ok === true,
+        (reason) => {
+          if (Date.now() - lastStructuralNoticeAt < 2000) return;
+          lastStructuralNoticeAt = Date.now();
+          new Notice(reason === "code" || reason === "structure"
+            ? tx("Butter kept this block unchanged because this conversion would lose content or block references.")
+            : tx("This heading cannot preserve multiline content. Keep it as a paragraph or list."));
+        },
+      ),
       blockAnimatorPlugin(),
       commentOnlyParagraphPlugin(),
       checkboxPlugin(),
       listNumberingPlugin(),
-      footnotePresentationPlugin(),
+      footnotePresentationPlugin((content, container) => {
+        const component = new Component();
+        component.load();
+        let active = true;
+        const staging = container.ownerDocument.win.createDiv();
+        void Promise.resolve().then(() => {
+          if (active) return MarkdownRenderer.render(this.app, content, staging, getSourcePath(), component);
+        }).then(() => {
+          if (active) container.replaceChildren(...Array.from(staging.childNodes));
+        }).catch(() => {
+          if (active) recordError("render", "Could not render hidden inline footnote");
+        }).finally(() => {
+          if (!active) component.unload();
+        });
+        return () => {
+          active = false;
+          component.unload();
+          staging.replaceChildren();
+        };
+      }),
       headingFoldPlugin(),
       multiBlockSelectPlugin({
         app: this.app,
@@ -2652,17 +2723,18 @@ export class ButterEditorView extends TextFileView {
       tableRowColDragPlugin(),
       clickToSpawnPlugin(() => this.requestMobileEditing()),
       inlineAtomEditPlugin(this.app, {
+        validateAtomEdit: (candidate) => this.preflightCurrent(candidate)?.ok === true,
         canEdit: () => {
           const s = this.plugin.licenseStatus;
           return s === "valid" || s === "trial";
         },
       }),
       autoSplitImagesPlugin(schema, () => this.settings.splitFullWidthImages),
-      // Safety net: once a raw_block enters the doc (parse failure
-      // fallback), block any transaction that would remove it
-      // unless the transaction is flagged as a trusted sync. User
-      // gets a Notice explaining why the edit didn't stick.
+      // Diagnostic whole-source fallback stays locked until trusted sync;
+      // local native HTML artifacts support intentional occurrence edits.
       rawBlockSafetyPlugin((msg) => new Notice(msg, 6000)),
+      sourceGenerationPlugin(),
+      opaqueDOMParserPlugin(schema),
       keymap({ "Mod-z": undo, "Mod-Shift-z": redo, "Mod-y": redo }),
       history(),
       dropCursor(),
@@ -2684,11 +2756,8 @@ export class ButterEditorView extends TextFileView {
           serializer.serialize(schema.node("doc", null, [node])),
       }),
       trimDblClickSelectionPlugin(),
-      // Resolves em/strong overlap at transaction-end so the saved
-      // file stays pure markdown (no `<em>`/`<strong>` HTML fallback).
-      // Word-aligned overlap → smart-split via whitespace-eject (no
-      // formatting loss). Mid-word overlap → older mark yields in
-      // the overlap region (some pre-existing formatting trimmed).
+      // Reconcile atom mark restrictions while retaining every requested
+      // formatting range; the serializer owns interleaved mark encoding.
       overlapResolverPlugin(schema),
     ];
 
@@ -2792,11 +2861,12 @@ export class ButterEditorView extends TextFileView {
         footnote_ref: footnoteRefView(),
         footnote_def: footnoteDefView(this.app, getSourcePath, mgr),
         block_id: blockIdView(),
-        image: imageView(this.app, getSourcePath),
-        raw_block: rawBlockView(),
+        image: imageView(this.app, getSourcePath, (candidate) => this.preflightCurrent(candidate)?.ok === true),
+        raw_block: rawBlockView(this.app, getSourcePath, mgr),
       },
     });
     this.pmView = pmView;
+    mgr.codeEditContainment.attach(pmView);
 
     if (this.destroyed) {
       this.pmView.destroy();
@@ -2848,23 +2918,7 @@ export class ButterEditorView extends TextFileView {
     // triggering, so layering Obsidian's 2s debounce on top would
     // mean event flushes (blur, window-blur, etc.) don't actually
     // hit disk for 2 seconds. `save()` writes immediately.
-    this.saveScheduler = new SaveScheduler(async () => {
-      // Wrap the scheduler-driven save in async error capture. Without
-      // this, an async vault.modify rejection (disk full, file locked
-      // by sync clients, network drive drop, EACCES) silently escapes
-      // to the event loop as an unhandled promise rejection - the user
-      // sees nothing while their typing piles up unsaved.
-      try {
-        await this.save();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        recordError("save", `save failed: ${msg}`);
-        new Notice(`${tx("Butter: save failed -")} ${msg}`);
-        // SaveScheduler owns retry/pending state. Re-throw so flush(), file
-        // switching, and teardown cannot mistake a failed write for success.
-        throw err;
-      }
-    });
+    this.saveScheduler = new SaveScheduler(() => this.performScheduledSave());
     this.installSchedulerTriggers();
 
     // Replay any ephemeral state that arrived while the PM view was
@@ -2936,86 +2990,167 @@ export class ButterEditorView extends TextFileView {
     };
   }
 
-  /** Finalize a serializer body identically for both preflight paths. */
-  private finalizeSaveBody(serializedBody: string): string {
-    let body = normalizeSourceLineEndings(serializedBody);
-    const preserveTrailing = Boolean(
-      this.settings.preserveOriginalSource &&
-      this.preserveSource &&
-      this.originalDoc,
-    );
-    body = body.replace(/\n*$/, "") + "\n".repeat(
-      preserveTrailing ? this.originalTrailingNewlines : 1,
-    );
-    if (
-      this.settings.normalizeHeadingGap ||
-      this.settings.condenseBlankLines ||
-      this.settings.closeUnclosedFences
-    ) {
-      body = normalizeSource(body, {
-        headingGap: this.settings.normalizeHeadingGap,
-        condenseBlanks: this.settings.condenseBlankLines,
-        closeUnclosedFences: this.settings.closeUnclosedFences,
-      });
-    }
-    return body;
-  }
-
-  private assembleSaveText(body: string): string {
-    let text = normalizeSourceLineEndings(this.frontmatter + body);
-    if (this.lineEnding !== "\n") {
-      text = text.replace(/\n/g, this.lineEnding);
-    }
-    return this.originalHasBOM ? `\ufeff${text}` : text;
+  private savePolicy(): ButterSavePolicy {
+    return {
+      originalBody: this.originalBody,
+      originalDoc: this.originalDoc,
+      preserveOriginalSource: this.settings.preserveOriginalSource,
+      preserveSource: this.preserveSource,
+      originalTrailingNewlines: this.originalTrailingNewlines,
+      canonicalOptions: this.canonicalSaveOptions(),
+      normalizeHeadingGap: this.settings.normalizeHeadingGap,
+      condenseBlankLines: this.settings.condenseBlankLines,
+      closeUnclosedFences: this.settings.closeUnclosedFences,
+      frontmatter: this.frontmatter,
+      lineEnding: this.lineEnding,
+      originalHasBOM: this.originalHasBOM,
+    };
   }
 
   private preflightCurrent(
     rawDoc = this.pmView?.state.doc ?? null,
-  ): SavePreflightResult | null {
+  ): ButterSaveResult | null {
     if (!rawDoc) return null;
-    const tableNormalized = normalizeTablesInDoc(rawDoc, rawDoc.type.schema);
-    if (
-      this.originalDoc &&
-      this.hasRawBlock(this.originalDoc) &&
-      !this.hasRawBlock(tableNormalized)
-    ) {
-      return {
-        ok: false,
-        blocked: true,
-        attempts: [{
-          ok: false,
-          path: "source-preserving",
-          stage: "compare",
-          error: "loaded raw source artifact disappeared from the live document",
-        }],
-      };
-    }
-    const canPreserve = Boolean(
-      this.settings.preserveOriginalSource &&
-      this.preserveSource &&
-      this.originalDoc,
-    );
-    return preflightExactSave({
-      currentDoc: tableNormalized,
-      originalBody: this.originalBody,
-      originalDoc: this.originalDoc,
-      canonicalOptions: this.canonicalSaveOptions(),
-      primaryPath: canPreserve ? "source-preserving" : "canonical",
-      finalizeBody: (body) => this.finalizeSaveBody(body),
-    });
+    return preflightButterSave(rawDoc, this.savePolicy());
   }
 
-  private preflightFailureReason(result: Extract<SavePreflightResult, { ok: false }>): string {
-    return result.attempts
-      .map((attempt) => `${attempt.path}/${attempt.stage}: ${attempt.error}`)
-      .join(" | ");
+  private preflightFailureReason(result: Extract<ButterSaveResult, { ok: false }>): string {
+    return describeButterSaveFailure(result);
+  }
+
+  /** Returns false for exceptions already reported by an inner save boundary. */
+  private markSaveFailureReported(error: unknown, owner?: SaveStatusOwner): boolean {
+    if (error !== null && (typeof error === "object" || typeof error === "function")) {
+      const previous = this.reportedSaveErrors.get(error);
+      if (previous && (!owner || (previous.id === owner.id && previous.generation >= owner.generation))) return false;
+      this.reportedSaveErrors.set(error, owner ?? this.saveStatusOwner());
+    }
+    return true;
+  }
+
+  private saveStatusOwner(): SaveStatusOwner {
+    if (this.file) this.ensureRecoveryIdentity(this.file.path);
+    return { id: this.recoveryId, generation: this.editGeneration };
+  }
+
+  public hasSaveStatusSession(id: string): boolean {
+    return !this.destroyed && this.recoveryId === id;
+  }
+
+  private reportOwnedSaveResult(state: SaveState, owner = this.saveStatusOwner()): void {
+    if (state.kind === "clean") this.plugin.saveDiagnostics?.saved();
+    this.reportSaveResult?.(state, owner);
+  }
+
+  private reportSaveFailure(error: unknown, reason: string, owner?: SaveStatusOwner): void {
+    if (!this.markSaveFailureReported(error, owner)) return;
+    this.plugin.saveDiagnostics?.blocked(reason);
+    this.reportOwnedSaveResult({ kind: "blocked", reason }, owner);
+    recordError("save", reason);
+  }
+
+  private async performScheduledSave(): Promise<void> {
+    try {
+      await this.save();
+    } catch (error) {
+      this.reportSaveFailure(error, "scheduled save failed");
+      // SaveScheduler owns retry/pending state. Preserve rejection for an
+      // awaiting flush(), file switch or close after recovery completes.
+      throw error;
+    }
+  }
+
+  /** Retain the live model, never the candidate that failed verification. */
+  private retainUnsavedRecovery(doc: PMNode, reason: string): Promise<string | null> | null {
+    if (!this.file || !this.plugin.retainSaveRecovery) return null;
+    const capture = this.captureRecovery(doc);
+    return capture ? this.retainCapturedRecovery(capture, reason) : null;
+  }
+
+  private captureRecovery(doc: PMNode): SaveRecoveryCapture | null {
+    if (!this.file) return null;
+    this.ensureRecoveryIdentity(this.file.path);
+    return {
+      doc, policy: this.savePolicy(), id: this.recoveryId,
+      generation: this.editGeneration, notePath: this.file.path,
+      baseline: this.acceptedViewData ?? this.data ?? "",
+    };
+  }
+
+  private retainCapturedRecovery(capture: SaveRecoveryCapture, reason: string, allowFork = true): Promise<string | null> | null {
+    if (!this.plugin.retainSaveRecovery) return null;
+    const { doc, id: recoveryId, generation } = capture;
+    const current = recoveryId === this.recoveryId;
+    const { originalDoc: _originalDoc, ...policy } = capture.policy;
+    const context = JSON.stringify({ policy, baseline: capture.baseline, notePath: capture.notePath });
+    if (current && this.recoveryDoc === doc && this.recoveryGeneration === generation &&
+      this.recoveryContext === context && this.recoveryWrite) {
+      return this.recoveryWrite;
+    }
+    const snapshot: SaveRecoverySnapshot = {
+      version: 1,
+      id: recoveryId,
+      generation,
+      createdAt: Date.now(),
+      pluginVersion: this.plugin.manifest.version,
+      notePath: capture.notePath,
+      baseline: capture.baseline,
+      doc: doc.toJSON() as Record<string, unknown>,
+      policy,
+      reason,
+    };
+    if (current) {
+      this.recoveryDoc = doc;
+      this.recoveryGeneration = generation;
+      this.recoveryContext = context;
+    }
+    const write = this.plugin.retainSaveRecovery(snapshot).then(() => recoveryId).catch(async (error: unknown) => {
+      if (allowFork && isUnverifiedRecoverySlots(error)) {
+        // Preserve both unknown slots and the last verified older checkpoint.
+        // Ongoing edits may use a fresh occurrence; an older async capture
+        // must not claim the live projection or replace its recovery identity.
+        const ownsProjection = !this.destroyed && this.recoveryId === recoveryId &&
+          this.file?.path === capture.notePath && this.pmView?.state.doc === doc &&
+          this.editGeneration === generation && this.recoveryDoc === doc &&
+          this.recoveryGeneration === generation && this.recoveryContext === context;
+        let forkId = newRecoveryId();
+        if (ownsProjection) {
+          this.ensureRecoveryIdentity(capture.notePath, true);
+          forkId = this.recoveryId;
+        } else if (this.recoveryId === recoveryId && this.recoveryDoc === doc &&
+          this.recoveryGeneration === generation && this.recoveryContext === context) {
+          this.recoveryDoc = null;
+        }
+        // One bounded retry avoids a loop if storage remains unavailable.
+        return await this.retainCapturedRecovery({ ...capture, id: forkId }, reason, false);
+      }
+      if (this.recoveryId === recoveryId && this.recoveryDoc === doc && this.recoveryGeneration === generation &&
+        this.recoveryContext === context) {
+        this.recoveryDoc = null; // Allow the next retry to attempt storage again.
+      }
+      recordError("save", "Could not retain unsaved recovery snapshot");
+      new Notice(tx("Butter could not keep a recovery copy. Keep this note open and copy your unsaved work somewhere safe."), 12000);
+      return null;
+    });
+    if (current) this.recoveryWrite = write;
+    return write;
+  }
+
+  private ensureRecoveryIdentity(path: string, reset = false): void {
+    if (!reset && this.recoveryNotePath === path) return;
+    this.recoveryId = newRecoveryId();
+    this.recoveryNotePath = path;
+    this.recoveryDoc = null;
+    this.recoveryGeneration = -1;
+    this.recoveryWrite = null;
+    this.recoveryContext = null;
   }
 
   private exactViewData(doc: PMNode): string {
     return this.exactSaveCandidate(doc).text;
   }
 
-  private exactSaveCandidate(doc: PMNode): {
+  private exactSaveCandidate(doc: PMNode, owner?: SaveStatusOwner): {
     text: string;
     normalizedDoc: PMNode;
   } {
@@ -3024,19 +3159,16 @@ export class ButterEditorView extends TextFileView {
       const reason = preflight
         ? this.preflightFailureReason(preflight)
         : "editor is not available";
-      this.reportSaveResult?.({ kind: "blocked", reason });
+      this.plugin.saveDiagnostics?.blocked(reason, preflight?.attempts);
+      this.reportOwnedSaveResult({ kind: "blocked", reason }, owner);
+      void this.retainUnsavedRecovery(doc, reason);
       recordError("save", `Exact preflight blocked the write: ${reason}`);
-      if (this.lastBlockedDoc !== doc) {
-        this.lastBlockedDoc = doc;
-        new Notice(
-          `${tx("Butter: save failed -")} safety check blocked the write; your file was not changed.`,
-          12000,
-        );
-      }
-      throw new Error(`Butter exact-save preflight blocked: ${reason}`);
+      const error = new Error(`Butter exact-save preflight blocked: ${reason}`);
+      this.markSaveFailureReported(error, owner ?? this.saveStatusOwner());
+      throw error;
     }
     return {
-      text: this.assembleSaveText(preflight.candidate),
+      text: preflight.text,
       normalizedDoc: preflight.normalizedDoc,
     };
   }
@@ -3257,7 +3389,10 @@ export class ButterEditorView extends TextFileView {
         "save presentation normalization diverged from persisted semantics",
       );
     }
-    return presentationTarget;
+    // Prepare any new identity-bearing blocks before dispatch. The live
+    // stamper must not change an otherwise exact target after it is accepted;
+    // existing unique IDs and unchanged block references remain intact.
+    return ensureBlockIds(presentationTarget);
   }
 
   /**
@@ -3374,7 +3509,24 @@ export class ButterEditorView extends TextFileView {
    * super.save() writes the exact string that passed preflight.
    */
   override save(clear = false): Promise<void> {
-    return this.enqueueNativeFileOperation(() => this.performNativeSave(clear));
+    const closing = clear && this.file && this.pmView ? {
+      file: this.file, editor: this.pmView,
+      // A prior native clear's artificial projection is source-unready and
+      // cannot become recovery input for a second queued close.
+      capture: this.isNativeFileSourceReady() && this.editGeneration !== this.persistedGeneration
+        ? this.captureRecovery(this.pmView.state.doc) : null,
+    } : null;
+    return this.enqueueNativeFileOperation(async () => {
+      if (closing && (this.destroyed || this.file !== closing.file || this.pmView !== closing.editor)) {
+        const error = new Error("Closing save target changed before dispatch");
+        if (closing.capture) {
+          this.reportSaveFailure(error, "closing save target changed", closing.capture);
+          await this.retainCapturedRecovery(closing.capture, "closing save target changed");
+        }
+        throw error;
+      }
+      await this.performNativeSave(clear);
+    });
   }
 
   private enqueueNativeFileOperation(operation: () => Promise<void>): Promise<void> {
@@ -3383,26 +3535,401 @@ export class ButterEditorView extends TextFileView {
     return run;
   }
 
+  /**
+   * Obsidian's current TextFileView invokes this virtual load hook from its
+   * public onLoadFile and modify listener. It is absent from the published
+   * types, so support is checked at runtime and never emulated. The native
+   * implementation still owns cached reads, three-way merging and setData.
+   */
+  override async onLoadFile(file: TFile): Promise<void> {
+    const request = this.nativeSourceRequest;
+    this.nativeFileSourceReady = false;
+    this.nativeFileOpenPending++;
+    this.pmView?.setProps?.({ editable: () => this.isEditable() });
+    try {
+      await super.onLoadFile(file);
+      if (this.file === file && !this.destroyed && this.nativeSourceRequest === request) {
+        this.nativeSourceProtocolRejected = true;
+        throw new Error("Native file loading protocol was not invoked");
+      }
+    } finally {
+      this.nativeFileOpenPending--;
+      if (!this.destroyed) this.pmView?.setProps?.({ editable: () => this.isEditable() });
+    }
+  }
+
+  loadFileInternal(file: TFile, clear: boolean): Promise<void> {
+    const request = ++this.nativeSourceRequest;
+    const path = file.path;
+    const operation = async () => {
+      const native = TextFileView.prototype as TextFileView & {
+        loadFileInternal?: (file: TFile, clear: boolean) => Promise<void>;
+      };
+      if (typeof native.loadFileInternal !== "function") {
+        this.nativeSourceProtocolRejected = true;
+        throw new Error("Native file loading protocol is unavailable");
+      }
+      // The inspected native protocol publishes its actual incoming read to
+      // this own field before invoking setData/merging. Verify its shape;
+      // matching extra reads alone cannot certify a different middle read.
+      const nativeState = this as unknown as { lastSavedData?: unknown };
+      if (!Object.prototype.hasOwnProperty.call(this, "lastSavedData") ||
+        (nativeState.lastSavedData !== null && typeof nativeState.lastSavedData !== "string")) {
+        this.nativeSourceProtocolRejected = true;
+        throw new Error("Native file source baseline protocol is unavailable");
+      }
+      const current = () => this.file === file && file.path === path &&
+        request === this.nativeSourceRequest && !this.destroyed;
+      // A changed physical read cannot be paired with an older native read.
+      // Retry under the same native loader, bounded to avoid unending churn.
+      for (let retry = 0; retry < 3; retry++) {
+        const source = decodeNativeFileBytes(await this.app.vault.readBinary(file));
+        if (!current()) return;
+        const bound = this.nativeSourceBinding;
+        if (!clear && bound?.file === file && bound.path === path && bound.source === source &&
+          bound.projection === (this.acceptedViewData ?? this.data ?? "")) {
+          // A native own-write echo strips BOM from its text read. Its exact
+          // physical bytes already belong to this accepted save; do not turn
+          // that projection difference into an external reload/UI epoch.
+          return;
+        }
+        const load = {
+          file, path, request, source, readLocalProjection: false, rejected: false,
+          baseline: nativeState.lastSavedData as string | null,
+        };
+        this.nativeSourceLoad = load;
+        try { await native.loadFileInternal.call(this, file, clear); }
+        finally { if (this.nativeSourceLoad === load) this.nativeSourceLoad = null; }
+        if (!current()) return;
+        if (load.rejected || typeof nativeState.lastSavedData !== "string" ||
+          !nativeFileTextMatchesSource(source, nativeState.lastSavedData)) {
+          nativeState.lastSavedData = load.baseline;
+          continue;
+        }
+        const after = decodeNativeFileBytes(await this.app.vault.readBinary(file));
+        if (!current()) return;
+        if (after !== source) continue;
+        // A concurrent old native writer can restore its own prior baseline
+        // while the final raw read yields. Certify the actual native field again.
+        if (typeof nativeState.lastSavedData !== "string" ||
+          !nativeFileTextMatchesSource(source, nativeState.lastSavedData)) continue;
+        if (!load.readLocalProjection && !nativeFileTextMatchesSource(source, this.acceptedViewData ?? this.data ?? "")) continue;
+        this.bindNativeFileSource(file, path, source, this.acceptedViewData ?? this.data ?? "");
+        this.nativeSourceBaseline = { file, path, request, value: nativeState.lastSavedData };
+        this.nativeSourceProtocolRejected = false;
+        this.nativeFileSourceReady = true;
+        return;
+      }
+      throw new Error("Native file source changed during loading");
+    };
+    const run = this.nativeSourceLoadQueue.then(operation, operation);
+    this.nativeSourceLoadQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  /** The native listener dispatches here; own writes are already acknowledged separately. */
+  onModify(file: TFile): void {
+    if (file !== this.file || this.destroyed) return;
+    if (this.nativeSaveAttempt) {
+      this.pendingNativeModify = { file, path: file.path };
+      return;
+    }
+    void this.loadFileInternal(file, false).catch(() => {
+      recordError("external-reload", "Could not bind the physical file source");
+    });
+  }
+
+  private bindNativeFileSource(file: TFile, path: string, source: string, projection: string): void {
+    const previous = this.nativeSourceBinding;
+    this.nativeSourceBinding = { file, path, source, projection };
+    this.originalHasBOM = source.startsWith("\ufeff");
+    // BOM-only changes are invisible to Vault.read. They still invalidate a
+    // deferred property/code/toolbar edit that reviewed the old file source.
+    if (previous?.file === file && previous.path === path && previous.source !== source &&
+      nativeFileTextProjection(previous.source) === nativeFileTextProjection(source) && this.pmView) {
+      this.suppressChange = true;
+      try {
+        this.pmView.dispatch(this.pmView.state.tr.setMeta(SOURCE_RELOAD_META, true).setMeta("addToHistory", false));
+      } finally { this.suppressChange = false; }
+      this.renderProperties();
+    }
+  }
+
+  private async certifyNativeFileSource(file: TFile): Promise<number> {
+    if (!this.isNativeFileSourceReady()) throw new Error("Native file source protocol is not certified");
+    const request = this.nativeSourceRequest;
+    const path = file.path;
+    const accepted = this.acceptedViewData ?? this.data ?? "";
+    const binding = this.nativeSourceBinding;
+    const source = decodeNativeFileBytes(await this.app.vault.readBinary(file));
+    if (this.file !== file || file.path !== path || this.destroyed ||
+      this.nativeSourceRequest !== request || !this.isNativeFileSourceReady() ||
+      (this.acceptedViewData ?? this.data ?? "") !== accepted || this.nativeSourceBinding !== binding) {
+      throw new Error("Native file source ownership changed before saving");
+    }
+    if (binding?.file === file && binding.path === path && binding.projection === accepted) {
+      if (nativeFileTextProjection(binding.source) !== nativeFileTextProjection(source)) {
+        throw new Error("Native file source changed before saving");
+      }
+    } else if (!nativeFileTextMatchesSource(source, accepted)) {
+      throw new Error("Native file source is not paired with the loaded note");
+    }
+    this.bindNativeFileSource(file, path, source, accepted);
+    return request;
+  }
+
   private async performNativeSave(clear: boolean): Promise<void> {
+    if (!this.pmView || !this.file || this.destroyed) {
+      await this.performNativeSaveAttempt(clear);
+      return;
+    }
+    this.ensureRecoveryIdentity(this.file.path);
+    const attempt = { file: this.file, editor: this.pmView };
+    this.nativeSaveAttempt = attempt;
+    let succeeded = false;
+    try {
+      await this.performNativeSaveAttempt(clear);
+      succeeded = true;
+    } finally {
+      this.nativeSaveAttempt = null;
+      const pending = this.pendingNativeModify;
+      this.pendingNativeModify = null;
+      // Replay only after native acknowledgment and all recovery handling.
+      // A successful clear belongs to a closing view and must stay cleared.
+      if (pending && !(clear && succeeded) && !this.destroyed &&
+        this.file === attempt.file && this.file === pending.file &&
+        this.file.path === pending.path &&
+        this.pmView === attempt.editor) {
+        try { await this.loadFileInternal(pending.file, false); }
+        catch {
+          // Keep the delivered event retryable after a temporary read failure;
+          // do not busy-loop or make a rejected write look acknowledged.
+          if (!this.destroyed && this.file === pending.file && this.file.path === pending.path &&
+            this.pmView === attempt.editor) this.pendingNativeModify ??= pending;
+          recordError("external-reload", "Could not bind the deferred physical file source");
+        }
+      }
+    }
+  }
+
+  private async performNativeSaveAttempt(clear: boolean): Promise<void> {
     if (!this.pmView || !this.file || this.destroyed) {
       await super.save(clear);
       return;
     }
     const file = this.file;
-    const doc = this.pmView.state.doc;
+    const acknowledgedClear = this.acknowledgedNativeClear;
+    if (acknowledgedClear) {
+      if (acknowledgedClear.file === file && acknowledgedClear.editor === this.pmView &&
+        acknowledgedClear.doc === this.pmView.state.doc && acknowledgedClear.generation === this.editGeneration) return;
+      this.acknowledgedNativeClear = null;
+    }
+    this.ensureRecoveryIdentity(file.path);
+    // No writer is needed for a durable generation. In particular, unrelated
+    // physical changes cannot turn a host-cleared projection into recovery.
+    if (!clear && this.editGeneration === this.persistedGeneration) return;
+    const sourceEditor = this.pmView;
+    const sourceRequest = this.nativeSourceRequest;
+    const sourceOriginalDoc = this.originalDoc;
+    const sourceAccepted = this.acceptedViewData;
+    // Freeze all recovery fields together before storage can yield. A fresh
+    // clean public load is never pending input from the failed operation.
+    const capturePendingProjection = (): SaveRecoveryCapture | null => {
+      if (!this.file || !this.pmView || this.destroyed || this.editGeneration === this.persistedGeneration) return null;
+      return this.captureRecovery(this.pmView.state.doc);
+    };
+    const ownsSourceProjection = (request: number) => !this.destroyed && this.file === file &&
+      this.pmView === sourceEditor && this.originalDoc === sourceOriginalDoc && this.acceptedViewData === sourceAccepted &&
+      this.nativeSourceRequest === request && this.nativeFileOpenPending === 0;
+    const distinctRecovery = (captured: SaveRecoveryCapture, latest: SaveRecoveryCapture | null) => {
+      if (!latest || (latest.doc === captured.doc && latest.id === captured.id &&
+        latest.generation === captured.generation && latest.notePath === captured.notePath &&
+        latest.baseline === captured.baseline && latest.policy.originalDoc === captured.policy.originalDoc &&
+        JSON.stringify(latest.policy) === JSON.stringify(captured.policy))) return null;
+      // Two different complete models at the same counter are separate
+      // occurrences, including a transaction appended by another PM plugin.
+      return latest.id === captured.id && latest.generation === captured.generation
+        ? { ...latest, id: newRecoveryId() } : latest;
+    };
+    const beforeSourceRead = {
+      doc: this.pmView.state.doc, policy: this.savePolicy(), id: this.recoveryId,
+      generation: this.editGeneration, notePath: file.path,
+      baseline: this.acceptedViewData ?? this.data ?? "",
+    };
+    if (clear) {
+      const editorBefore = this.pmView;
+      const hostDataBefore = this.data;
+      const acceptedBefore = this.acceptedViewData;
+      const draftBefore = this.pendingPropertyDraft;
+      const keyFocusBefore = this.pendingPropertyKeyFocus;
+      const valueFocusBefore = this.pendingPropertyValueFocus;
+      // Closing must first acknowledge the complete current generation. An
+      // indefinitely pending source read cannot strand its newest checkpoint.
+      const acknowledgedId = await this.retainCapturedRecovery(beforeSourceRead, "native clear-save pending");
+      if (!acknowledgedId) {
+        const error = new Error("Closing recovery checkpoint was not acknowledged");
+        if (ownsSourceProjection(sourceRequest)) this.requestSave();
+        this.reportSaveFailure(error, "closing recovery checkpoint failed", beforeSourceRead);
+        throw error;
+      }
+      const { originalDoc: originalBefore, ...policyBefore } = beforeSourceRead.policy;
+      const { originalDoc: originalNow, ...policyNow } = this.savePolicy();
+      if (this.file !== file || file.path !== beforeSourceRead.notePath || this.pmView !== editorBefore || this.destroyed ||
+        this.pmView.state.doc !== beforeSourceRead.doc || this.editGeneration !== beforeSourceRead.generation ||
+        this.recoveryId !== acknowledgedId || this.acceptedViewData !== acceptedBefore || this.data !== hostDataBefore ||
+        this.pendingPropertyDraft !== draftBefore || this.pendingPropertyKeyFocus !== keyFocusBefore ||
+        this.pendingPropertyValueFocus !== valueFocusBefore || originalBefore !== originalNow ||
+        JSON.stringify(policyBefore) !== JSON.stringify(policyNow)) {
+        const latest = capturePendingProjection();
+        if (latest && ownsSourceProjection(sourceRequest)) this.requestSave();
+        const error = new Error("Editor changed before closing source verification");
+        this.reportSaveFailure(error, "save changed before native clear", beforeSourceRead);
+        if (latest) await this.retainCapturedRecovery(latest, "clear-save changed before source read");
+        throw error;
+      }
+      beforeSourceRead.id = acknowledgedId;
+    }
+    let certifiedSourceRequest: number;
+    try {
+      certifiedSourceRequest = await this.certifyNativeFileSource(file);
+      if (this.file !== file || file.path !== beforeSourceRead.notePath || this.pmView !== sourceEditor ||
+        this.destroyed || this.nativeSourceRequest !== certifiedSourceRequest || !this.isNativeFileSourceReady()) {
+        throw new Error("Native save target changed before preparation");
+      }
+    } catch (error) {
+      const latest = capturePendingProjection();
+      if (latest && ownsSourceProjection(sourceRequest)) this.requestSave();
+      this.reportSaveFailure(error, "native file source verification failed", beforeSourceRead);
+      if (this.file !== file || file.path !== beforeSourceRead.notePath ||
+        this.recoveryId !== beforeSourceRead.id || this.pmView !== sourceEditor || !this.pmView || this.destroyed) {
+        await this.retainCapturedRecovery(beforeSourceRead, "native file source verification failed");
+      }
+      if (latest) await this.retainCapturedRecovery(latest, "native file source verification failed");
+      throw error;
+    }
+    if (this.file !== file || !this.pmView || this.destroyed) {
+      throw new Error("Native save target changed before preparation");
+    }
+    this.ensureRecoveryIdentity(file.path);
+    const recoveryId = this.recoveryId;
+    const editor = this.pmView;
+    const state = editor.state;
+    const doc = state.doc;
     const generation = this.editGeneration;
-    // requestSave() and the immediate/ceiling scheduler deliberately share
-    // this adapter. Whichever reaches the native writer second must be a
-    // cheap no-op once the same edit generation is already durable.
-    if (!clear && generation === this.persistedGeneration) return;
-    const exact = this.exactSaveCandidate(doc);
-    const presentationTarget = this.presentationTargetForSave(
-      doc,
-      exact.normalizedDoc,
-    );
-    const saveDoc = this.reconcileLiveDocForSave(presentationTarget);
+    const owner: SaveStatusOwner = { id: recoveryId, generation };
+    const capture = {
+      doc, policy: this.savePolicy(), id: recoveryId, generation,
+      notePath: file.path, baseline: this.acceptedViewData ?? this.data ?? "",
+    };
+    const hostData = this.data;
+    const accepted = this.acceptedViewData;
+    const clearing = clear ? { clearedDoc: null as PMNode | null, clearedRecoveryId: null as string | null } : null;
+    const nativeSourceRequestAtWrite = certifiedSourceRequest;
+    const ownsFileProjection = () => !this.destroyed && this.file === file && file.path === capture.notePath &&
+      this.pmView === editor && this.nativeSourceRequest === nativeSourceRequestAtWrite && this.acceptedViewData === accepted;
+    const ownsClearFamily = () => clear && ownsFileProjection() &&
+      this.recoveryId === (clearing?.clearedRecoveryId ?? recoveryId) &&
+      (clearing?.clearedDoc !== null || this.data === hostData);
+    const ownsClosingProjection = () => ownsClearFamily() && this.editGeneration === generation &&
+      editor.state.doc === (clearing?.clearedDoc ?? saveDoc);
+    const ownsUnclearedProjection = () => clearing?.clearedDoc === null && ownsClosingProjection();
+    const hasNewerClearEdits = () => ownsClearFamily() && this.editGeneration > generation;
+    const captureFailureProjection = () => {
+      if (clear && (this.file !== file || this.pmView !== editor || this.originalDoc !== capture.policy.originalDoc ||
+        this.acceptedViewData !== accepted || this.editGeneration <= generation)) return null;
+      return capturePendingProjection();
+    };
+    const ownsRestoredProjection = () => ownsFileProjection() && this.recoveryId === recoveryId &&
+      this.editGeneration === generation && editor.state.doc === state.doc && this.data === hostData;
+    let propertyDraft = this.pendingPropertyDraft;
+    let propertyKeyFocus = this.pendingPropertyKeyFocus;
+    let propertyValueFocus = this.pendingPropertyValueFocus;
+    const restoreClearedProjection = () => {
+      if (!clear || this.file !== file || file.path !== capture.notePath || this.pmView !== editor || this.destroyed ||
+        this.nativeSourceRequest !== nativeSourceRequestAtWrite || this.nativeFileOpenPending !== 0 || this.acceptedViewData !== accepted ||
+        this.editGeneration !== generation || editor.state.doc !== clearing?.clearedDoc ||
+        this.recoveryId !== clearing?.clearedRecoveryId) return false;
+      this.suppressChange = true;
+      try { editor.updateState(state); }
+      finally { this.suppressChange = false; }
+      this.frontmatter = capture.policy.frontmatter ?? "";
+      this.originalBody = capture.policy.originalBody;
+      this.originalDoc = capture.policy.originalDoc;
+      this.originalTrailingNewlines = capture.policy.originalTrailingNewlines;
+      this.lineEnding = capture.policy.lineEnding ?? "\n";
+      this.originalHasBOM = Boolean(capture.policy.originalHasBOM);
+      this.preserveSource = capture.policy.preserveSource;
+      this.data = hostData;
+      this.acceptedViewData = accepted;
+      this.pendingPropertyDraft = propertyDraft;
+      this.pendingPropertyKeyFocus = propertyKeyFocus;
+      this.pendingPropertyValueFocus = propertyValueFocus;
+      this.recoveryId = recoveryId;
+      this.recoveryNotePath = file.path;
+      this.recoveryDoc = null;
+      this.recoveryGeneration = -1;
+      this.recoveryWrite = null;
+      this.recoveryContext = null;
+      this.renderProperties();
+      if (ownsRestoredProjection() && this.nativeFileOpenPending === 0) {
+        this.nativeFileSourceReady = nativeFileSourceReadyAtWrite;
+        editor.setProps?.({ editable: () => this.isEditable() });
+      }
+      return ownsRestoredProjection();
+    };
+    let exact: { text: string; normalizedDoc: PMNode };
+    let saveDoc: PMNode;
+    try {
+      exact = this.exactSaveCandidate(doc, owner);
+      const presentationTarget = this.presentationTargetForSave(doc, exact.normalizedDoc);
+      saveDoc = this.reconcileLiveDocForSave(presentationTarget);
+    } catch (error) {
+      // Properties can stage YAML and call save directly, without a preceding
+      // requestSave(). A rejected preflight must still leave that projection
+      // dirty for native reload/merge handling and the next retry.
+      const latest = distinctRecovery(capture, capturePendingProjection());
+      if (ownsSourceProjection(nativeSourceRequestAtWrite)) this.requestSave();
+      this.reportSaveFailure(error, "save preparation failed", owner);
+      await this.retainCapturedRecovery(capture, "save preparation failed");
+      if (latest) await this.retainCapturedRecovery(latest, "save preparation failed");
+      throw error;
+    }
     const candidate = exact.text;
+    if (clear) {
+      // TextFileView clears the editor and file shell before awaiting its
+      // writer. Preserve the complete prior projection before that boundary.
+      const acknowledgedId = await this.retainCapturedRecovery(capture, "native clear-save pending");
+      const { originalDoc: originalBefore, ...policyBefore } = capture.policy;
+      const { originalDoc: originalNow, ...policyNow } = this.savePolicy();
+      if (acknowledgedId !== capture.id || this.file !== file || file.path !== capture.notePath || this.pmView !== editor || this.destroyed ||
+        this.nativeSourceRequest !== nativeSourceRequestAtWrite || !this.isNativeFileSourceReady() || this.editGeneration !== generation ||
+        editor.state.doc !== saveDoc || this.acceptedViewData !== accepted || this.data !== hostData ||
+        originalBefore !== originalNow || JSON.stringify(policyBefore) !== JSON.stringify(policyNow)) {
+        const latest = capturePendingProjection();
+        if (latest && ownsSourceProjection(nativeSourceRequestAtWrite)) this.requestSave();
+        const error = new Error("Editor changed before native clear-save; retry required");
+        this.reportSaveFailure(error, "save changed before native clear", owner);
+        if (latest) await this.retainCapturedRecovery(latest, "clear-save changed before native write");
+        throw error;
+      }
+      propertyDraft = this.pendingPropertyDraft;
+      propertyKeyFocus = this.pendingPropertyKeyFocus;
+      propertyValueFocus = this.pendingPropertyValueFocus;
+    }
+    if (!clear && (!ownsFileProjection() || !this.isNativeFileSourceReady() || this.recoveryId !== recoveryId ||
+      this.editGeneration !== generation || editor.state.doc !== saveDoc || this.data !== hostData)) {
+      const error = new Error("Editor changed before the native writer");
+      const latest = capturePendingProjection();
+      if (latest && ownsSourceProjection(nativeSourceRequestAtWrite)) this.requestSave();
+      this.reportSaveFailure(error, "save changed before native write", owner);
+      await this.retainCapturedRecovery(capture, "save changed before native write");
+      if (latest) await this.retainCapturedRecovery(latest, "save changed before native write");
+      throw error;
+    }
+    const nativeBaselineAtWrite = (this as unknown as { lastSavedData: string | null }).lastSavedData;
+    const nativeFileSourceReadyAtWrite = this.nativeFileSourceReady;
     this.preparedSave = { doc: saveDoc, text: candidate };
+    this.nativeClearSave = clearing;
     try {
       await super.save(clear);
     } catch (error) {
@@ -3410,19 +3937,114 @@ export class ButterEditorView extends TextFileView {
       // the write then fails, re-arm that native flag immediately so an
       // external reload cannot mistake the unsaved PM projection for clean.
       // SaveScheduler separately retains the retry/error boundary.
-      if (!clear && this.file === file && !this.destroyed) this.requestSave();
+      const incoming = this.nativeSourceBaseline;
+      if (!this.destroyed && incoming && incoming.request !== nativeSourceRequestAtWrite && incoming.request === this.nativeSourceRequest &&
+        incoming.file === this.file && incoming.path === this.file?.path && this.isNativeFileSourceReady()) {
+        // Native save's inherited catch unconditionally restores its old
+        // baseline. A fully certified newer load owns that field now.
+        (this as unknown as { lastSavedData: string | null }).lastSavedData = incoming.value;
+      }
+      const latest = captureFailureProjection();
+      const restored = clear && restoreClearedProjection();
+      if (ownsSourceProjection(nativeSourceRequestAtWrite) &&
+        (!clear || (restored && ownsRestoredProjection()) || ownsUnclearedProjection() || hasNewerClearEdits())) this.requestSave();
+      this.reportSaveFailure(error, "native file write failed", owner);
+      if (clear) await this.retainCapturedRecovery(capture, "native clear-save write failed");
+      else if (this.file !== file || this.recoveryId !== recoveryId) {
+        // A forced file/session replacement no longer contains the model that
+        // reached the failed writer. Keep that old occurrence as well.
+        await this.retainCapturedRecovery(capture, "native file write failed");
+      }
+      if (latest) await this.retainCapturedRecovery(latest, "native file write failed");
       throw error;
     } finally {
       this.preparedSave = null;
+      this.nativeClearSave = null;
     }
-    if (clear || this.file !== file || this.data !== candidate) return;
+    try {
+      // A resolved native call can also mean an early return (deleted file,
+      // missing baseline, unchanged data). Certify actual accepted bytes.
+      const bytes = await this.app.vault.readBinary(file);
+      if (file.path !== capture.notePath || !nativeFileBytesEqualText(bytes, candidate)) {
+        throw new Error("Native save did not confirm the verified file bytes");
+      }
+    } catch (error) {
+      // An unacknowledged native candidate is not the merge baseline for a
+      // deferred external event. Preserve the original accepted source.
+      const nativeState = this as unknown as { lastSavedData?: unknown };
+      if (ownsSourceProjection(nativeSourceRequestAtWrite) &&
+        nativeState.lastSavedData === (clear && clearing?.clearedDoc ? null : candidate)) {
+        nativeState.lastSavedData = nativeBaselineAtWrite;
+      }
+      const latest = captureFailureProjection();
+      const newerProjection = this.file === file && this.pmView &&
+        (file.path !== capture.notePath || this.editGeneration !== generation || this.pmView.state.doc !== saveDoc);
+      // A later generation may already own this session's two journal slots.
+      // Preserve an unacknowledged earlier model in a separate occurrence.
+      const failedCapture = !clear && newerProjection
+        ? { ...capture, id: newRecoveryId() }
+        : capture;
+      const restored = restoreClearedProjection();
+      if (ownsSourceProjection(nativeSourceRequestAtWrite) &&
+        (!clear || (restored && ownsRestoredProjection()) || ownsUnclearedProjection() || hasNewerClearEdits())) this.requestSave();
+      this.reportSaveFailure(error, "native save acknowledgement failed", {
+        id: failedCapture.id, generation: failedCapture.generation,
+      });
+      await this.retainCapturedRecovery(failedCapture, "native save acknowledgement failed");
+      if (latest && (clear || latest.generation !== generation || latest.doc !== saveDoc || latest.id !== recoveryId)) {
+        await this.retainCapturedRecovery(latest, "native save acknowledgement failed");
+      }
+      throw error;
+    }
+    if (clear) {
+      // This token suppresses only this exact artificial projection. Incidental
+      // rename, recovery fork or begun reload cannot turn it into user input.
+      if (clearing?.clearedDoc && !this.destroyed && this.file === file && this.pmView === editor &&
+        editor.state.doc === clearing.clearedDoc && this.editGeneration === generation) {
+        this.acknowledgedNativeClear = { file, editor, doc: clearing.clearedDoc, generation };
+      }
+      if (ownsClearFamily()) {
+        this.nativeSourceBinding = {
+          file, path: capture.notePath, source: candidate, projection: this.acceptedViewData ?? this.data ?? "",
+        };
+        if (ownsClosingProjection()) this.persistedGeneration = generation;
+        else if (hasNewerClearEdits()) {
+          this.requestSave();
+          await this.retainUnsavedRecovery(editor.state.doc, "edits arrived during native clear-save");
+        }
+      }
+      try { await this.plugin.clearSavedRecovery?.(recoveryId, generation); }
+      catch { recordError("save", "Could not retire saved recovery snapshot"); }
+      if (ownsClosingProjection()) {
+        this.reportedSaveErrors = new WeakMap<object, SaveStatusOwner>();
+        this.reportOwnedSaveResult({ kind: "clean" }, owner);
+      }
+      return;
+    }
+    if (this.file !== file || this.data !== candidate) return;
+    this.nativeSourceBinding = { file, path: file.path, source: candidate, projection: candidate };
     this.acceptedViewData = candidate;
-    this.lastBlockedDoc = null;
-    this.reportSaveResult?.({ kind: "clean" });
+    this.reportedSaveErrors = new WeakMap<object, SaveStatusOwner>();
+    this.reportOwnedSaveResult({ kind: "clean" }, owner);
     if (this.editGeneration === generation) this.persistedGeneration = generation;
+    try {
+      await this.plugin.clearSavedRecovery?.(recoveryId, generation);
+      if (this.recoveryId === recoveryId && this.editGeneration === generation) {
+        this.recoveryDoc = null;
+        this.recoveryGeneration = -1;
+        this.recoveryWrite = null;
+        this.recoveryContext = null;
+      }
+    } catch {
+      // A stale recovery entry is safer than invalidating a successful save.
+      recordError("save", "Could not retire saved recovery snapshot");
+    }
   }
 
   getViewData(): string {
+    // Only the native loader may declare a three-way merged projection that
+    // intentionally differs from the stable physical incoming source.
+    if (this.nativeSourceLoad) this.nativeSourceLoad.readLocalProjection = true;
     if (!this.pmView) return this.acceptedViewData ?? this.data;
     if (this.preparedSave?.doc === this.pmView.state.doc) {
       return this.preparedSave.text;
@@ -3448,8 +4070,8 @@ export class ButterEditorView extends TextFileView {
    *     fire when Obsidian stays visible in the background).
    *   - `visibilitychange → hidden` - tab/window fully hidden.
    *     Still useful for minimized windows + mobile browsers.
-   *   - `beforeunload` - window is about to close. Best-effort
-   *     synchronous flush.
+   *   - `beforeunload` - window is about to close. Best-effort save
+   *     request; the browser cannot await its I/O completion.
    *
    * Removed: editor-scoped blur listener. The document-level
    * mousedown covers "focus left the editor" more reliably than
@@ -3458,6 +4080,14 @@ export class ButterEditorView extends TextFileView {
   private installSchedulerTriggers() {
     if (!this.pmView || !this.saveScheduler) return;
     const scheduler = this.saveScheduler;
+    const flushPending = () => {
+      if (!scheduler.hasPending()) return;
+      // DOM/window callbacks cannot await saves. The save callback reports
+      // and journals failures; keep that state while observing this promise.
+      void scheduler.flush().catch(() => {
+        recordError("save", "Event-triggered save remains pending");
+      });
+    };
 
     const onDocMouseDown = (event: MouseEvent) => {
       if (this.destroyed || !this.pmView) return;
@@ -3469,7 +4099,7 @@ export class ButterEditorView extends TextFileView {
       // Click landed elsewhere in Obsidian (file tree, tab bar,
       // sidebar, another note, etc.) - flush whatever's pending
       // so the bytes on disk match what the user was just writing.
-      if (scheduler.hasPending()) void scheduler.flush();
+      flushPending();
     };
     activeDocument.addEventListener("mousedown", onDocMouseDown, true);
     this.schedulerListeners.push(() =>
@@ -3477,7 +4107,7 @@ export class ButterEditorView extends TextFileView {
     );
 
     const onWindowBlur = () => {
-      if (scheduler.hasPending()) void scheduler.flush();
+      flushPending();
     };
     window.addEventListener("blur", onWindowBlur);
     this.schedulerListeners.push(() =>
@@ -3485,9 +4115,7 @@ export class ButterEditorView extends TextFileView {
     );
 
     const onVisibility = () => {
-      if (activeDocument.visibilityState === "hidden" && scheduler.hasPending()) {
-        void scheduler.flush();
-      }
+      if (activeDocument.visibilityState === "hidden") flushPending();
     };
     activeDocument.addEventListener("visibilitychange", onVisibility);
     this.schedulerListeners.push(() =>
@@ -3495,7 +4123,7 @@ export class ButterEditorView extends TextFileView {
     );
 
     const onBeforeUnload = () => {
-      if (scheduler.hasPending()) void scheduler.flush();
+      flushPending();
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     this.schedulerListeners.push(() =>
@@ -3512,7 +4140,7 @@ export class ButterEditorView extends TextFileView {
   private replaceLocalMarkdown(markdown: string): void {
     if (!this.pmView) return;
     const parsed = parser.parseWithSourceMap(markdown);
-    if (!parsed?.doc || this.hasRawBlock(parsed.doc)) {
+    if (!parsed?.doc || isWholeSourceFallback(parsed.doc)) {
       new Notice(
         `${tx("Butter: save failed -")} invalid plugin Markdown`,
         6000,
@@ -3529,6 +4157,29 @@ export class ButterEditorView extends TextFileView {
   }
 
   setViewData(data: string, clear: boolean) {
+    const load = this.nativeSourceLoad;
+    if (load && (this.file !== load.file || this.file.path !== load.path ||
+      load.request !== this.nativeSourceRequest || this.destroyed)) {
+      this.data = this.acceptedViewData ?? this.data;
+      return;
+    }
+    if (load) {
+      const nativeState = this as unknown as { lastSavedData?: unknown };
+      if (typeof nativeState.lastSavedData !== "string" ||
+        !nativeFileTextMatchesSource(load.source, nativeState.lastSavedData) ||
+        (!load.readLocalProjection && !nativeFileTextMatchesSource(load.source, data))) {
+        load.rejected = true;
+        this.data = this.acceptedViewData ?? this.data;
+        nativeState.lastSavedData = load.baseline;
+        return;
+      }
+    }
+    // Direct reload callers have no certified physical shell yet. The next
+    // native save pairs their accepted projection through readBinary first.
+    if (!load) {
+      this.nativeSourceBinding = null;
+      this.nativeSourceBaseline = null;
+    }
     const previousData = this.acceptedViewData;
     if (!clear && previousData !== null && data === previousData) {
       this.data = data;
@@ -3536,10 +4187,11 @@ export class ButterEditorView extends TextFileView {
     }
 
     if (clear) {
+      this.acknowledgedNativeClear = null;
+      this.ensureRecoveryIdentity(this.file?.path ?? "", true);
       this.saveScheduler?.cancel();
       this.editGeneration = 0;
       this.persistedGeneration = 0;
-      this.lastBlockedDoc = null;
       this.pendingPropertyDraft = false;
       this.pendingPropertyKeyFocus = null;
       this.pendingPropertyValueFocus = null;
@@ -3547,7 +4199,7 @@ export class ButterEditorView extends TextFileView {
     this.data = data;
     this.acceptedViewData = data;
     const body = this.stripFrontmatter(data);
-    this.renderProperties();
+    if (load) this.originalHasBOM = load.source.startsWith("\ufeff");
     if (this.inlineTitleEl && this.file) {
       this.inlineTitleEl.textContent = this.file.basename;
       if (clear) (this.leaf as unknown as { updateHeader?: () => void }).updateHeader?.();
@@ -3564,7 +4216,10 @@ export class ButterEditorView extends TextFileView {
         });
       }
     }
-    if (!this.pmView) return;
+    if (!this.pmView) {
+      this.renderProperties();
+      return;
+    }
 
     // External change (vault sync, git pull, another plugin edited
     // the file). Apply as a content replace transaction instead of
@@ -3639,6 +4294,7 @@ export class ButterEditorView extends TextFileView {
         // Trusted-sync marker - raw-block safety plugin allows this
         // transaction through because newDoc came from fresh file bytes.
         tr.setMeta(RAW_BLOCK_SYNC_META, true);
+        tr.setMeta(SOURCE_RELOAD_META, true);
         this.pmView.dispatch(tr);
       }
     } catch {
@@ -3653,6 +4309,10 @@ export class ButterEditorView extends TextFileView {
     } finally {
       this.suppressChange = false;
     }
+
+    // New property controls must capture the new source generation. A focused
+    // old control may defer rebuilding; its old generation then refuses writes.
+    this.renderProperties();
 
     // Run the entrance animation after PM has dispatched. The prep
     // class set above is holding the first 15 children at opacity:0
@@ -3755,6 +4415,14 @@ export class ButterEditorView extends TextFileView {
   }
 
   clear() {
+    if (this.nativeClearSave) {
+      // The emptied host projection has no editable physical source. Only an
+      // owned failed-clear restoration or a certified public load can reopen it.
+      this.nativeFileSourceReady = false;
+      this.pmView?.setProps?.({ editable: () => this.isEditable() });
+      this.ensureRecoveryIdentity(this.file?.path ?? "", true);
+      this.nativeClearSave.clearedRecoveryId = this.recoveryId;
+    }
     this.data = "";
     this.frontmatter = "";
     this.pendingPropertyDraft = false;
@@ -3773,14 +4441,17 @@ export class ButterEditorView extends TextFileView {
       const doc = ensureBlockIds(
         schema.node("doc", null, [schema.node("paragraph")]),
       );
-      this.pmView.updateState(
-        EditorState.create({
-          doc,
-          schema,
-          plugins: this.pmView.state.plugins,
-        }),
-      );
-      this.suppressChange = false;
+      try {
+        this.pmView.updateState(
+          EditorState.create({
+            doc,
+            schema,
+            plugins: this.pmView.state.plugins,
+          }),
+        );
+      } finally { this.suppressChange = false; }
+      if (this.nativeClearSave) this.nativeClearSave.clearedDoc = this.pmView.state.doc;
+      if (this.nativeClearSave) this.pmView.setProps?.({ editable: () => this.isEditable() });
     }
   }
 }

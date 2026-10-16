@@ -30,9 +30,10 @@
 
 import { Plugin } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import type { MarkType, Node as PMNode } from "prosemirror-model";
+import type { Node as PMNode } from "prosemirror-model";
 import { App, Platform } from "obsidian";
 import { SPECS, type AtomSpec, type AtomField } from "./inline-atom-specs";
+import { prepareAtomFieldEdit } from "./atom-field-edit";
 import { openRichContextMenu } from "../ui/link-context-menu";
 import { imageLayoutActions } from "./image-placement";
 import { suggestionScopeForEmbedSource } from "../ui/vault-file-scope";
@@ -46,6 +47,10 @@ import { sanitizeHref } from "../util/safe-url";
 import { tx, txKnown } from "../i18n";
 import {
   externalContextAtPoint,
+  findLinkMarkRange as findUnifiedLinkRange,
+  captureLinkEditorMutation,
+  applyLinkEditorValues,
+  removeLinkEditorOccurrence,
   openUnifiedLinkEditor,
   wikilinkContext,
 } from "../ui/link-editor";
@@ -146,10 +151,12 @@ function openGenericAtomContextMenu(
   spec: AtomSpec,
   event: MouseEvent | TouchEvent,
   anchor: HTMLElement,
+  validateAtomEdit: (candidate: PMNode) => boolean,
   primaryAction?: { label: string; icon: string; onClick: (values: Record<string, string>) => void },
 ): void {
   if (!spec.fields || !spec.toFields || !spec.fromFields) return;
   const initial = spec.toFields(node);
+  let initialControlValues = initial;
   const positioningEvent = normalizeEventForMenu(event);
   const isEmbed = spec.typeName === "obsidian_embed" ||
     spec.typeName === "obsidian_embed_inline";
@@ -168,17 +175,12 @@ function openGenericAtomContextMenu(
       : [];
 
   const commit = (values: Record<string, string>): boolean => {
-    // Cheap unchanged-skip so we don't dispatch a no-op tr.
-    let changed = false;
-    for (const k of Object.keys(values)) {
-      if ((initial[k] ?? "") !== values[k]) { changed = true; break; }
-    }
-    if (!changed) return false;
     const live = editorView.state.doc.nodeAt(pos);
-    if (!live || live.type.name !== spec.typeName) return false;
-    const next = spec.fromFields!(values, live);
-    if (!next) return false;
-    const tr = editorView.state.tr.replaceWith(pos, pos + live.nodeSize, next);
+    const edit = prepareAtomFieldEdit(spec, node, live, values, initialControlValues,
+      { doc: editorView.state.doc, pos, validate: validateAtomEdit });
+    if (edit.status === "invalid") return false;
+    if (edit.status === "unchanged") return true;
+    const tr = editorView.state.tr.replaceWith(pos, pos + live!.nodeSize, edit.node);
     editorView.dispatch(tr);
     return true;
   };
@@ -200,6 +202,7 @@ function openGenericAtomContextMenu(
       label: tx(f.label),
       icon: f.icon,
       initial: initial[f.name] ?? "",
+      multiline: f.multiline,
       placeholder:
         typeof f.placeholder === "function"
           ? f.placeholder(initial)
@@ -230,9 +233,11 @@ function openGenericAtomContextMenu(
       })),
     ],
     onCommit: (values) => {
-      commit(values);
+      if (!commit(values)) return false;
       editorView.focus();
+      return true;
     },
+    onFieldsReady: (values) => { initialControlValues = values; },
   });
 }
 
@@ -252,122 +257,16 @@ const ATOM_ICONS: Record<string, string> = {
 
 // ─── External link (link mark) helpers ───────────────────────────
 
-/** Find the contiguous range in the click's parent textblock that
- *  carries the same link-mark instance. Used by the external-link
- *  context menu so Edit / Clear operate on the entire link, not the
- *  one character under the cursor.
- *
- *  Walks the parent's children directly - character-by-character
- *  position walks are unreliable at text-node boundaries because
- *  PM's `ResolvedPos.marks()` returns different sets depending on
- *  whether you ask "marks active at this boundary" vs "marks of the
- *  next character", which differ at the start/end of a marked run
- *  and would leave one character behind on Clear. */
-function findLinkMarkRange(
-  view: EditorView,
-  pos: number,
-): { from: number; to: number; href: string; text: string } | null {
-  const linkType = view.state.schema.marks.link;
-  if (!linkType) return null;
-  const doc = view.state.doc;
-  if (pos < 0 || pos > doc.content.size) return null;
-  const $pos = doc.resolve(pos);
-  if (!$pos.parent.isTextblock) return null;
-
-  const parent = $pos.parent;
-  const parentStart = $pos.start();
-  const offset = $pos.parentOffset;
-
-  // Find the child whose range contains `offset`. Children are text
-  // / inline nodes; PM merges adjacent text nodes that share the
-  // same mark set, so a normal link is one text node. Boundary clicks
-  // (offset exactly on a child edge) prefer the child whose mark set
-  // has the link.
-  let foundIdx = -1;
-  let acc = 0;
-  for (let i = 0; i < parent.childCount; i++) {
-    const child = parent.child(i);
-    const start = acc;
-    const end = start + child.nodeSize;
-    const inside = offset > start && offset < end;
-    const onBoundary = offset === start || offset === end;
-    if (
-      (inside || onBoundary) &&
-      child.marks.some((m) => m.type === linkType)
-    ) {
-      foundIdx = i;
-      // Prefer non-boundary match if we already have one - but
-      // since we break on first hit, the iteration order resolves
-      // ambiguity by preferring the earlier child on a shared edge.
-      if (inside) break;
-    }
-    acc = end;
-  }
-  if (foundIdx < 0) return null;
-
-  const mark = parent
-    .child(foundIdx)
-    .marks.find((m) => m.type === linkType)!;
-
-  // Extend left + right through neighbor children that carry the
-  // same mark instance. Defensive - PM normally merges these.
-  let startIdx = foundIdx;
-  let endIdx = foundIdx;
-  while (
-    startIdx > 0 &&
-    parent
-      .child(startIdx - 1)
-      .marks.some((m) => m.type === linkType && m.eq(mark))
-  ) {
-    startIdx -= 1;
-  }
-  while (
-    endIdx < parent.childCount - 1 &&
-    parent
-      .child(endIdx + 1)
-      .marks.some((m) => m.type === linkType && m.eq(mark))
-  ) {
-    endIdx += 1;
-  }
-
-  // Compute the doc-absolute from/to from accumulated child sizes.
-  let from = parentStart;
-  let to = parentStart;
-  let cur = 0;
-  for (let i = 0; i < parent.childCount; i++) {
-    const c = parent.child(i);
-    if (i === startIdx) from = parentStart + cur;
-    if (i === endIdx) to = parentStart + cur + c.nodeSize;
-    cur += c.nodeSize;
-  }
-
-  return {
-    from,
-    to,
-    href: (mark.attrs as { href?: string }).href ?? "",
-    text: doc.textBetween(from, to),
-  };
-}
-
-type LinkMarkRange = NonNullable<ReturnType<typeof findLinkMarkRange>>;
+type LinkMarkRange = NonNullable<ReturnType<typeof findUnifiedLinkRange>>;
 
 function commitExternalLinkValues(
   view: EditorView,
-  linkType: MarkType,
   range: LinkMarkRange,
   values: Record<string, string>,
 ): boolean {
-  const newUrl = (values.url || "").trim();
-  if (!newUrl) return false;
-  const newText = values.text || newUrl;
-  if (newUrl === range.href && newText === range.text) return false;
-  const fresh = findLinkMarkRange(view, range.from);
-  if (!fresh) return false;
-  const replacement = view.state.schema.text(newText, [
-    linkType.create({ href: newUrl }),
-  ]);
-  view.dispatch(view.state.tr.replaceWith(fresh.from, fresh.to, replacement));
-  return true;
+  return applyLinkEditorValues(view, { kind: "external", from: range.from }, "web", {
+    target: values.url ?? range.href, text: values.text ?? range.text,
+  });
 }
 
 function showExternalLinkMenu(
@@ -384,11 +283,14 @@ function showExternalLinkMenu(
     top: point.clientY,
   });
   if (!posInfo) return;
-  const range = findLinkMarkRange(view, posInfo.pos);
+  const range = findUnifiedLinkRange(view, posInfo.pos);
   if (!range) return;
+  const context = { kind: "external" as const, from: range.from };
+  const canMutate = captureLinkEditorMutation(view, context);
 
   if (Platform.isMobile) {
     openMobileActionDrawer({
+      editorView: view,
       anchor,
       chrome: {
         icon: "link",
@@ -425,16 +327,12 @@ function showExternalLinkMenu(
           warning: true,
           separatorBefore: true,
           onClick: () => {
-            const fresh = findLinkMarkRange(view, range.from);
-            if (!fresh) return;
-            const tr = view.state.tr.removeMark(fresh.from, fresh.to, linkType);
-            view.dispatch(tr);
-            view.focus();
+            if (canMutate() && removeLinkEditorOccurrence(view, context)) view.focus();
           },
         },
       ],
       editLabel: tx("Edit..."),
-      onEditInDrawer: (menu) => openUnifiedLinkEditor({
+      onEditInDrawer: (menu) => { if (!canMutate()) return; openUnifiedLinkEditor({
         app,
         view,
         anchor,
@@ -442,17 +340,14 @@ function showExternalLinkMenu(
         context: { kind: "external", from: range.from },
         sourcePath: app.workspace.getActiveFile()?.path ?? "",
         autoFocus: true,
-      }),
+      }); },
     });
     return;
   }
 
-  // Commit the URL + Display-text edits as a single tr - replaces the
-  // marked range with new text + new mark when changed, no-ops when
-  // unchanged. Re-resolves the range against the live doc each call
-  // so a stale capture doesn't blow up.
+  // The reviewed occurrence stays owned across deferred menu activation.
   const commit = (values: Record<string, string>): boolean => {
-    return commitExternalLinkValues(view, linkType, range, values);
+    return canMutate() && commitExternalLinkValues(view, range, values);
   };
 
   openRichContextMenu({
@@ -513,17 +408,14 @@ function showExternalLinkMenu(
         separatorBefore: true,
         receivesValues: false,
         onClick: () => {
-          const fresh = findLinkMarkRange(view, range.from);
-          if (!fresh) return;
-          const tr = view.state.tr.removeMark(fresh.from, fresh.to, linkType);
-          view.dispatch(tr);
-          view.focus();
+          if (canMutate() && removeLinkEditorOccurrence(view, context)) view.focus();
         },
       },
     ],
     onCommit: (values) => {
-      commit(values);
-      view.focus();
+      const applied = commit(values);
+      if (applied) view.focus();
+      return applied;
     },
   });
 }
@@ -534,7 +426,7 @@ function showExternalLinkMenu(
 
 export function inlineAtomEditPlugin(
   app: App,
-  options: { canEdit?: () => boolean } = {},
+  options: { canEdit?: () => boolean; validateAtomEdit: (candidate: PMNode) => boolean },
 ): Plugin<void> {
   return new Plugin<void>({
     view(editorView) {
@@ -689,6 +581,7 @@ export function inlineAtomEditPlugin(
           spec,
           event,
           capturedAtomDOM as HTMLElement,
+          options.validateAtomEdit,
         );
       };
 
@@ -711,6 +604,7 @@ export function inlineAtomEditPlugin(
       // fallback.
       const buildMobileActions = (node: PMNode): MobileSheetAction[] => {
         const actions: MobileSheetAction[] = [];
+        const reviewedDoc = editorView.state.doc;
         if (node.type.name === "wikilink") {
           const target = (node.attrs.target as string) || "";
           if (target) {
@@ -736,26 +630,12 @@ export function inlineAtomEditPlugin(
             warning: true,
             separatorBefore: true,
             onClick: () => {
-              const posAttr = node.attrs.__pos as number | undefined;
-              const live = editorView.state.doc.nodeAt(posAttr ?? -1)
-                ?? editorView.state.doc.nodeAt(0);
-              void live;
+              if (editorView.isDestroyed || editorView.editable === false || editorView.state.doc !== reviewedDoc) return;
               // Re-resolve by scanning for the node by reference —
               // matches what openWikilinkContextMenu's Clear does.
               editorView.state.doc.descendants((n, p) => {
                 if (n === node) {
-                  const text =
-                    (n.attrs.alias as string) ||
-                    (n.attrs.target as string) ||
-                    "";
-                  if (!text) return false;
-                  const tr = editorView.state.tr.replaceWith(
-                    p,
-                    p + n.nodeSize,
-                    editorView.state.schema.text(text),
-                  );
-                  editorView.dispatch(tr);
-                  editorView.focus();
+                  if (removeLinkEditorOccurrence(editorView, wikilinkContext(p))) editorView.focus();
                   return false;
                 }
                 return true;
@@ -957,6 +837,7 @@ export function inlineAtomEditPlugin(
         if (node.type.name === "wikilink") {
           const capturedPos = pos;
           openMobileActionDrawer({
+            editorView,
             anchor: atomDOM as HTMLElement,
             chrome: {
               icon: "link",
@@ -991,6 +872,7 @@ export function inlineAtomEditPlugin(
             sub: atomHeaderSub(node, spec),
           },
           actions: buildMobileActions(node),
+          validateAtomEdit: options.validateAtomEdit,
         });
         return true;
       };

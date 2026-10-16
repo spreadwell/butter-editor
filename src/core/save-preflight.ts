@@ -1,5 +1,5 @@
 import type { Node as PMNode } from "prosemirror-model";
-import { docSemanticFingerprint } from "./doc-fingerprint";
+import { docSemanticFingerprint, semanticDifference, type SemanticDifference } from "./doc-fingerprint";
 import { normalizeDocForSave } from "./doc-normalize";
 import { parser } from "./parser";
 import { serializer, type CanonicalFormOptions } from "./serializer";
@@ -32,7 +32,7 @@ export interface SavePreflightInput {
    * Applies the complete file-shell policy to a serialized Markdown body.
    * The same function is called for every candidate path before validation.
    */
-  readonly finalizeBody: (serializedBody: string) => string;
+  readonly finalizeBody: (serializedBody: string, normalizedDoc: PMNode) => string;
 
   /**
    * Optional production normalization boundary. It is invoked exactly once,
@@ -75,6 +75,8 @@ export interface SavePreflightFailedAttempt {
   readonly candidate?: string;
   readonly expectedFingerprint?: string;
   readonly actualFingerprint?: string;
+  /** Content-free location; safe to include in diagnostics. */
+  readonly difference?: SemanticDifference;
 }
 
 export type SavePreflightAttempt =
@@ -229,7 +231,7 @@ export function preflightExactSave(
 
     let candidate: string;
     try {
-      candidate = input.finalizeBody(serializedBody);
+      candidate = input.finalizeBody(serializedBody, normalizedDoc);
       if (typeof candidate !== "string") {
         throw new TypeError("save finalizer returned a non-string candidate");
       }
@@ -294,6 +296,7 @@ export function preflightExactSave(
         candidate,
         expectedFingerprint,
         actualFingerprint,
+        difference: semanticDifference(expectedFingerprint, actualFingerprint) ?? undefined,
       });
       continue;
     }

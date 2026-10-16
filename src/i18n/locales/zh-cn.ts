@@ -1,9 +1,13 @@
 import { recentZhCN } from "./release-copy";
 import { feedbackZhCN } from "./feedback-copy";
+import { recoveryZhCN } from "./recovery-copy";
+import { saveDiagnosticsZhCN } from "./save-diagnostics-copy";
 
 export const zhCN = {
   ...recentZhCN,
   ...feedbackZhCN,
+  ...recoveryZhCN,
+  ...saveDiagnosticsZhCN,
   "Abstract callout": "摘要标注",
   "Activated": "已激活",
   "Advanced": "高级",
@@ -170,7 +174,7 @@ export const zhCN = {
   "Rich formatting": "丰富格式",
   "Write and format your notes without seeing Markdown syntax.": "无需看到 Markdown 语法即可撰写和设置笔记格式。",
   "Adds text color, custom highlights, underline, superscript, subscript, and keyboard text to the toolbar.": "在工具栏中添加文字颜色、自定义高亮、下划线、上标、下标和键盘文字。",
-  "Adds text color, custom highlights, underline, superscript, and subscript.": "添加文字颜色、自定义高亮、下划线、上标和下标。",
+  "Adds text color, custom highlights, and underline.": "添加文字颜色、自定义高亮和下划线。",
   "Uses HTML, which can make notes less portable and harder to read in source view.": "使用 HTML，可能会降低笔记的兼容性，并使源码视图更难阅读。",
   "You can change rich formatting anytime in settings.": "你可以随时在设置中更改丰富格式。",
   "Rich paste and file drop": "富文本粘贴和文件拖放",
@@ -403,7 +407,7 @@ export const zhCN = {
   "Preset colors": "预设颜色",
   "Mobile & Desktop": "移动端和桌面端",
   "Colours are off": "颜色已关闭",
-  "Turn on rich formatting in the general tab to customize preset colours.": "在“常规”选项卡中开启丰富格式，即可自定义预设颜色。",
+  "Turn on rich formatting in the Editor tab to customize preset colours.": "在“编辑器”选项卡中开启丰富格式，即可自定义预设颜色。",
   "{label} preset {number}": "{label} 预设 {number}",
   "Preset {number}": "预设 {number}",
   "Reset to defaults": "恢复默认设置",

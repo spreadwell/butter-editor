@@ -14,12 +14,13 @@
 import { App, FuzzySuggestModal, Modal, Notice, Platform, TFile, setIcon } from "obsidian";
 import {
   Plugin,
-  PluginKey,
   type EditorState,
 } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import type { Schema, MarkType, NodeType } from "prosemirror-model";
-import { toggleMark, setBlockType, wrapIn } from "prosemirror-commands";
+import { toggleMark, wrapIn } from "prosemirror-commands";
+import { toggleExternalLink } from "../editor/link-mark-policy";
+import { setHeadingBlockType, setParagraphBlockType, setLiteralCodeBlock } from "../editor/textblock-command";
 
 /** PM command shape - mirrors `Command` from prosemirror-state, which
  *  isn't exported by name from prosemirror-commands. */
@@ -39,6 +40,7 @@ import {
 } from "./command-actions";
 import { openUnifiedLinkEditor } from "./link-editor";
 import { tx, txKnown, tv, type MessageKey } from "../i18n";
+import { isFormattingMarkAllowed } from "./rich-formatting-actions";
 import {
   cleanupMobileToolbarOverflowIndicators,
   renderMobile,
@@ -64,8 +66,16 @@ import {
   toggleFlatListKind,
 } from "../editor/flat-list-editing";
 import { getMultiBlockSelection } from "../editor/multi-block-select";
+import { bindEditorModalInteraction, isEditorModalInteraction } from "../editor/modal-selection-ownership";
 import { convertTextSelection, hasTextSelection, selectionTarget, type SelectionTarget } from "../editor/selection-conversion";
-import { saveBlobAsAttachment } from "../editor/paste-drop";
+import { attachmentStillPresent, retainUninsertedAttachments, saveOwnedAttachment, type OwnedAttachment } from "../editor/owned-attachments";
+import { recordError } from "../integration/debug";
+import {
+  captureDeferredUiOwnership,
+  registerDeferredUiEditingIntent,
+  type DeferredUiOwnership,
+} from "../editor/deferred-ui-ownership";
+import { colorPreviewPlugin, showColorPreview, clearColorPreview } from "../editor/color-preview";
 import {
   clearFormatting,
 } from "../editor/formatting-actions";
@@ -102,6 +112,7 @@ const BUTTONS = {
   inline: [
     { id: "bold",          icon: "bold",          label: "Bold",          kbd: "Ctrl+B", kind: "mark" as const, markName: "strong" },
     { id: "italic",        icon: "italic",        label: "Italic",        kbd: "Ctrl+I", kind: "mark" as const, markName: "em" },
+    { id: "underline",     icon: "underline",     label: "Underline",     kind: "mark" as const, markName: "underline" },
     { id: "strikethrough", icon: "strikethrough",  label: "Strikethrough", kbd: "Ctrl+Shift+S", kind: "mark" as const, markName: "strikethrough" },
     { id: "code",          icon: "code-2",        label: "Inline code",   kbd: "Ctrl+E", kind: "mark" as const, markName: "code" },
     // `highlight` is a split button when HTML formatting is enabled:
@@ -319,9 +330,9 @@ export function execBlockCmd(btn: BtnDef, schema: Schema, view: EditorView) {
     wrapIn(nodeType)(view.state, view.dispatch.bind(view));
   } else if (btn.nodeName === "code_block") {
     if (isBlockActive(view.state, nodeType)) {
-      setBlockType(schema.nodes.paragraph)(view.state, view.dispatch.bind(view));
+      setParagraphBlockType(schema.nodes.paragraph)(view.state, view.dispatch.bind(view));
     } else {
-      setBlockType(nodeType)(view.state, view.dispatch.bind(view));
+      setLiteralCodeBlock(nodeType)(view.state, view.dispatch.bind(view));
     }
   }
 }
@@ -361,26 +372,39 @@ export function execInsertCmd(
   app: App,
   getSourcePath: () => string = () => "",
 ) {
+  const ownership = captureDeferredUiOwnership(view, getSourcePath);
+  const sourcePath = getSourcePath();
   if (btn.nodeName === "horizontal_rule") {
     view.dispatch(view.state.tr.replaceSelectionWith(schema.nodes.horizontal_rule.create()));
   } else if (btn.nodeName === "image") {
     new ImageInsertModal(
       app,
-      (file) => void insertPickedAttachment(app, schema, view, file, getSourcePath(), "image"),
-      (src) => {
-        view.dispatch(
-          view.state.tr.replaceSelectionWith(
-            schema.nodes.image.create({ src, alt: "" }),
-          ),
-        );
+      (file) => {
+        if (!ownership.canMutate({ explicit: true })) return false;
+        void insertPickedAttachment(app, schema, view, file, sourcePath, "image", ownership);
+        return true;
       },
+      (src) => {
+        if (!ownership.canMutate({ explicit: true })) return false;
+        const tr = view.state.tr.replaceSelectionWith(
+          schema.nodes.image.create({ src, alt: "" }),
+        );
+        view.dispatch(tr);
+        return tr.docChanged && view.state.doc.eq(tr.doc);
+      },
+      view,
     ).open();
   } else if (btn.nodeName === "video") {
     new AttachmentInsertModal(
       app,
       "Insert video",
       "video/*",
-      (file) => void insertPickedAttachment(app, schema, view, file, getSourcePath(), "video"),
+      (file) => {
+        if (!ownership.canMutate({ explicit: true })) return false;
+        void insertPickedAttachment(app, schema, view, file, sourcePath, "video", ownership);
+        return true;
+      },
+      view,
     ).open();
   } else if (btn.id.startsWith("callout-")) {
     const type = btn.id.slice("callout-".length);
@@ -395,7 +419,7 @@ export function execInsertCmd(
     // user types base spec inside (filters / views / formulas).
     const codeBlock = schema.nodes.code_block;
     if (codeBlock) {
-      setBlockType(codeBlock, { language: "base" })(
+      setLiteralCodeBlock(codeBlock, { language: "base" })(
         view.state,
         view.dispatch.bind(view),
       );
@@ -417,10 +441,11 @@ export function execInsertCmd(
       return;
     }
     const modal = new BaseFilePickerModal(app, baseFiles, (file) => {
+      if (!ownership.canMutate({ explicit: true })) return;
       const embed = embedType.create({ src: file.path });
       view.dispatch(view.state.tr.replaceSelectionWith(embed));
       window.setTimeout(() => view.focus(), 0);
-    });
+    }, view);
     modal.open();
   }
 }
@@ -432,9 +457,11 @@ class BaseFilePickerModal extends FuzzySuggestModal<TFile> {
     app: App,
     private files: TFile[],
     private onPick: (file: TFile) => void,
+    view: EditorView,
   ) {
     super(app);
     this.setPlaceholder(tx("Pick a .base file to embed..."));
+    bindEditorModalInteraction(this, view);
   }
   getItems(): TFile[] {
     return this.files;
@@ -452,10 +479,12 @@ class BaseFilePickerModal extends FuzzySuggestModal<TFile> {
 class ImageInsertModal extends Modal {
   constructor(
     app: App,
-    private readonly onFile: (file: File) => void,
-    private readonly onUrl: (src: string) => void,
+    private readonly onFile: (file: File) => boolean,
+    private readonly onUrl: (src: string) => boolean,
+    private readonly view: EditorView,
   ) {
     super(app);
+    bindEditorModalInteraction(this, view);
   }
 
   onOpen() {
@@ -474,8 +503,8 @@ class ImageInsertModal extends Modal {
       picker.addEventListener("change", () => {
         const file = picker.files?.[0];
         if (!file) return;
-        this.close();
-        this.onFile(file);
+        if (isEditorModalInteraction(this.view, this.modalEl) && this.onFile(file)) this.close();
+        picker.remove();
       }, { once: true });
       activeDocument.body.appendChild(picker);
       picker.click();
@@ -496,8 +525,8 @@ class ImageInsertModal extends Modal {
     const submit = () => {
       const value = input.value.trim();
       if (!value) return;
-      this.close();
-      this.onUrl(value);
+      if (!isEditorModalInteraction(this.view, this.modalEl)) return;
+      if (this.onUrl(value)) this.close();
     };
     okBtn.addEventListener("click", submit);
     cancelBtn.addEventListener("click", () => {
@@ -526,9 +555,11 @@ class AttachmentInsertModal extends Modal {
     app: App,
     private readonly title: MessageKey,
     private readonly accept: string,
-    private readonly onFile: (file: File) => void,
+    private readonly onFile: (file: File) => boolean,
+    private readonly view: EditorView,
   ) {
     super(app);
+    bindEditorModalInteraction(this, view);
   }
 
   onOpen() {
@@ -545,8 +576,8 @@ class AttachmentInsertModal extends Modal {
       picker.addEventListener("change", () => {
         const file = picker.files?.[0];
         if (!file) return;
-        this.close();
-        this.onFile(file);
+        if (isEditorModalInteraction(this.view, this.modalEl) && this.onFile(file)) this.close();
+        picker.remove();
       }, { once: true });
       activeDocument.body.appendChild(picker);
       picker.click();
@@ -566,11 +597,13 @@ export async function insertPickedAttachment(
   file: File,
   sourcePath: string,
   kind: "image" | "video" = "image",
+  ownership: DeferredUiOwnership = captureDeferredUiOwnership(view),
 ): Promise<void> {
-  let saved: TFile | null = null;
+  let saved: OwnedAttachment | null = null;
   let inserted = false;
   try {
-    saved = await saveBlobAsAttachment(
+    if (!ownership.canMutate()) return;
+    saved = await saveOwnedAttachment(
       app,
       file,
       file.name,
@@ -578,10 +611,8 @@ export async function insertPickedAttachment(
       true,
     );
     if (!saved) return;
-    if (view.isDestroyed) {
-      if (app.vault.getAbstractFileByPath(saved.path) === saved) {
-        await app.fileManager.trashFile(saved);
-      }
+    if (!ownership.canMutate() || saved.routing.isDisposed || !attachmentStillPresent(app, saved)) {
+      await retainUninsertedAttachments(app, [saved], "paste");
       return;
     }
 
@@ -589,6 +620,7 @@ export async function insertPickedAttachment(
     const { $from } = selection;
     const blockEmbed = schema.nodes.obsidian_embed;
     const inlineEmbed = schema.nodes.obsidian_embed_inline;
+    let transaction = view.state.tr;
     if (
       blockEmbed &&
       selection.empty &&
@@ -596,54 +628,52 @@ export async function insertPickedAttachment(
       $from.parent.type.name === "paragraph" &&
       $from.parent.content.size === 0
     ) {
-      view.dispatch(
-        view.state.tr.replaceWith(
+      transaction = transaction.replaceWith(
           $from.before(),
           $from.after(),
-          blockEmbed.create({ src: saved.path }),
-        ),
-      );
-      inserted = true;
+          blockEmbed.create({ src: saved.file.path }),
+        );
     } else if (inlineEmbed) {
-      view.dispatch(
-        view.state.tr.replaceSelectionWith(
-          inlineEmbed.create({ src: saved.path }),
-        ),
-      );
-      inserted = true;
+      transaction = transaction.replaceSelectionWith(
+          inlineEmbed.create({ src: saved.file.path }),
+        );
     } else if (kind === "image") {
-      view.dispatch(
-        view.state.tr.replaceSelectionWith(
-          schema.nodes.image.create({ src: saved.path, alt: "" }),
-        ),
-      );
-      inserted = true;
+      transaction = transaction.replaceSelectionWith(
+          schema.nodes.image.create({ src: saved.file.path, alt: "" }),
+        );
     } else {
       throw new Error("This editor schema cannot insert native attachment embeds.");
     }
+    const before = view.state.doc;
+    try {
+      view.dispatch(transaction);
+    } finally {
+      // A view update can throw after PM commits. Never remove a file already
+      // referenced by the committed document; a veto consumes no attachment.
+      inserted = view.state.doc !== before;
+    }
+    if (!inserted) {
+      await retainUninsertedAttachments(app, [saved], "paste");
+      return;
+    }
     view.focus();
   } catch (error) {
-    if (
-      saved &&
-      !inserted &&
-      app.vault.getAbstractFileByPath(saved.path) === saved
-    ) {
-      try {
-        await app.fileManager.trashFile(saved);
-      } catch {
-        // The original insertion error is the actionable failure. Attachment
-        // cleanup is best-effort and must not hide it behind a second notice.
-      }
-    }
     const message = error instanceof Error ? error.message : String(error);
+    if (saved) {
+      recordError("paste", `Picked attachment ${inserted ? "view update" : "insertion"} failed: ${message}`);
+      if (!inserted) await retainUninsertedAttachments(app, [saved], "paste");
+      // A retained file has its own recovery notice; a committed insertion
+      // must not be described as a failed save because its view update threw.
+      return;
+    }
     const prefix = kind === "video" ? tx("Failed to save video:") : tx("Failed to save image:");
     new Notice(`${prefix} ${message}`);
   }
 }
 
-export function insertTable(schema: Schema, view: EditorView, rows: number, cols: number) {
+export function insertTable(schema: Schema, view: EditorView, rows: number, cols: number): boolean {
   const { table, table_row, table_header, table_cell } = schema.nodes;
-  if (!table || !table_row || !table_cell) return;
+  if (!table || !table_row || !table_cell) return false;
   const headerType = table_header || table_cell;
   const makeRow = (cellType: NodeType) => table_row.create(null,
     Array.from({ length: cols }, () => cellType.createAndFill()!));
@@ -651,7 +681,9 @@ export function insertTable(schema: Schema, view: EditorView, rows: number, cols
     makeRow(headerType),
     ...Array.from({ length: rows - 1 }, () => makeRow(table_cell)),
   ]);
-  view.dispatch(view.state.tr.replaceSelectionWith(tableNode));
+  const tr = view.state.tr.replaceSelectionWith(tableNode);
+  view.dispatch(tr);
+  return tr.docChanged && view.state.doc.eq(tr.doc);
 }
 
 export function setHeading(schema: Schema, view: EditorView, level: number) {
@@ -660,9 +692,9 @@ export function setHeading(schema: Schema, view: EditorView, level: number) {
     return;
   }
   if (level === 0) {
-    runCommand(view, setBlockType(schema.nodes.paragraph));
+    runCommand(view, setParagraphBlockType(schema.nodes.paragraph));
   } else {
-    runCommand(view, setBlockType(schema.nodes.heading, { level }));
+    runCommand(view, setHeadingBlockType(schema.nodes.heading, { level }));
   }
 }
 
@@ -731,7 +763,7 @@ export function applyLink(
     const markType = schema.marks.link;
     if (!markType) return;
     if (hasSelection) {
-      runCommand(view, toggleMark(markType, { href: detected.target }));
+      runCommand(view, toggleExternalLink(markType, { href: detected.target }));
     } else {
       const visible = (displayText ?? "").trim() || detected.target;
       const node = schema.text(visible, [markType.create({ href: detected.target })]);
@@ -762,6 +794,7 @@ function createTablePicker(
   view: EditorView,
   onClose: () => void,
 ): HTMLElement {
+  const ownership = captureDeferredUiOwnership(view);
   const ROWS = 6;
   const COLS = 8;
   const picker = activeWindow.createDiv();
@@ -814,6 +847,7 @@ function createTablePicker(
       cell.addEventListener("mouseenter", () => { hoverR = r; hoverC = c; updateCells(); });
       cell.addEventListener("mousedown", (e) => {
         e.preventDefault();
+        if (!ownership.canMutate({ explicit: true })) return;
         insertTable(schema, view, r + 1, c + 1);
         view.focus();
         onClose();
@@ -839,6 +873,7 @@ function createTablePicker(
       return;
     e.preventDefault();
     if (key === "Enter" || key === " ") {
+      if (!ownership.canMutate({ explicit: true })) return;
       const r = kbdActive ? kbdR : 0;
       const c = kbdActive ? kbdC : 0;
       insertTable(schema, view, r + 1, c + 1);
@@ -1136,7 +1171,7 @@ function captureColorSnapshot(
   }
   const ranges: Array<{ from: number; to: number; attrs: Record<string, unknown> }> = [];
   view.state.doc.nodesBetween(from, to, (node, pos) => {
-    if (!node.isText) return;
+    if (!node.isInline) return;
     const mark = markType?.isInSet(node.marks);
     if (!mark) return;
     ranges.push({
@@ -1160,29 +1195,6 @@ function snapshotFirstColor(snapshot: ColorSnapshot, kind: ColorKind): string | 
   return null;
 }
 
-function restoreColorSnapshot(
-  schema: Schema,
-  view: EditorView,
-  kind: ColorKind,
-  snapshot: ColorSnapshot,
-  options: { addToHistory?: boolean; refocusEditor?: boolean } = {},
-): void {
-  const markType = schema.marks[colorMarkName(kind)];
-  if (!markType) return;
-  const tr = view.state.tr;
-  if (snapshot.empty) {
-    tr.setStoredMarks(snapshot.marks ? [...snapshot.marks] : null);
-  } else {
-    tr.removeMark(snapshot.from, snapshot.to, markType);
-    for (const range of snapshot.ranges) {
-      tr.addMark(range.from, range.to, markType.create(range.attrs));
-    }
-  }
-  if (options.addToHistory === false) tr.setMeta("addToHistory", false);
-  view.dispatch(tr);
-  if (options.refocusEditor ?? true) view.focus();
-}
-
 /** Apply a `font` mark with the given color (or clear when color is
  *  null) to the current selection. When the selection is empty, sets
  *  storedMarks so the color applies to the next-typed text. */
@@ -1196,14 +1208,27 @@ function applyTextColor(
   if (!markType) return;
   const { from, to, empty } = view.state.selection;
   const tr = view.state.tr;
+  const attrsFor = (attrs?: Readonly<Record<string, unknown>>) => ({
+    color: color ?? "",
+    face: attrs?.face ?? "",
+    size: attrs?.size ?? "",
+  });
+  const hasFont = (attrs: ReturnType<typeof attrsFor>) => Boolean(attrs.color || attrs.face || attrs.size);
   if (empty) {
     const marks = view.state.storedMarks ?? view.state.selection.$from.marks();
+    const attrs = attrsFor(markType.isInSet(marks)?.attrs);
     const filtered = marks.filter((m) => m.type !== markType);
-    if (color) filtered.push(markType.create({ color, face: "", size: "" }));
+    if (hasFont(attrs)) filtered.push(markType.create(attrs));
     tr.setStoredMarks(filtered);
   } else {
     tr.removeMark(from, to, markType);
-    if (color) tr.addMark(from, to, markType.create({ color, face: "", size: "" }));
+    // Color is one font field. Keep each original face/size interval, including
+    // inline atoms; clearing color must not silently erase unrelated styling.
+    view.state.doc.nodesBetween(from, to, (node, pos) => {
+      if (!node.isInline) return;
+      const attrs = attrsFor(markType.isInSet(node.marks)?.attrs);
+      if (hasFont(attrs)) tr.addMark(Math.max(from, pos), Math.min(to, pos + node.nodeSize), markType.create(attrs));
+    });
   }
   if (options.addToHistory === false) tr.setMeta("addToHistory", false);
   view.dispatch(tr);
@@ -1225,11 +1250,11 @@ function applyHighlightColor(
   if (empty) {
     const marks = view.state.storedMarks ?? view.state.selection.$from.marks();
     const filtered = marks.filter((m) => m.type !== markType);
-    if (color) filtered.push(markType.create({ color, html: true }));
+    if (color) filtered.push(markType.create({ color }));
     tr.setStoredMarks(filtered);
   } else {
     tr.removeMark(from, to, markType);
-    if (color) tr.addMark(from, to, markType.create({ color, html: true }));
+    if (color) tr.addMark(from, to, markType.create({ color }));
   }
   if (options.addToHistory === false) tr.setMeta("addToHistory", false);
   view.dispatch(tr);
@@ -1270,6 +1295,7 @@ function createColorPalette(
   const swatches = palettePresets(kind);
   const apply = kind === "text" ? applyTextColor : applyHighlightColor;
   const paletteSnapshot = captureColorSnapshot(schema, view, kind);
+  const ownership = captureDeferredUiOwnership(view);
   const currentColor = snapshotFirstColor(paletteSnapshot, kind);
   const selectedPreset = swatches.find((sw) => colorsEquivalent(currentColor, sw.value));
   const currentIsCustom = Boolean(currentColor && !selectedPreset);
@@ -1309,6 +1335,7 @@ function createColorPalette(
   appendCheck(defaultBtn);
   defaultBtn.addEventListener("mousedown", (e) => {
     e.preventDefault();
+    if (!ownership.canMutate({ explicit: true })) return;
     committed = true;
     apply(schema, view, null);
     onClose();
@@ -1351,6 +1378,7 @@ function createColorPalette(
     appendCheck(cell);
     cell.addEventListener("mousedown", (e) => {
       e.preventDefault();
+      if (!ownership.canMutate({ explicit: true })) return;
       committed = true;
       apply(schema, view, sw.value);
       onClose();
@@ -1364,6 +1392,7 @@ function createColorPalette(
   customBtn.addEventListener("mousedown", (e) => e.preventDefault());
   customBtn.addEventListener("click", (e) => {
     e.preventDefault();
+    if (!ownership.canMutate({ explicit: true })) return;
     if (customPicker) {
       customPicker.querySelector<HTMLInputElement>(".butter-color-hex-input")?.focus();
       return;
@@ -1376,6 +1405,7 @@ function createColorPalette(
       kind,
       apply,
       initialSnapshot: paletteSnapshot,
+      ownership,
       onCommit: () => {
         committed = true;
         onClose();
@@ -1401,6 +1431,7 @@ function createCustomColorPicker(args: {
   kind: ColorKind;
   apply?: typeof applyTextColor;
   initialSnapshot?: ColorSnapshot;
+  ownership?: DeferredUiOwnership;
   initialColor?: string | null;
   onPreviewColor?: (color: string) => void;
   onCommitColor?: (color: string) => void;
@@ -1422,6 +1453,8 @@ function createCustomColorPicker(args: {
     shouldRestoreOnCleanup,
   } = args;
   const editorMode = Boolean(schema && view && apply);
+  const ownership = args.ownership ?? (view ? captureDeferredUiOwnership(view) : null);
+  const previewToken = Symbol("custom-color-preview");
   const snapshot = editorMode && schema && view
     ? initialSnapshot ?? captureColorSnapshot(schema, view, kind)
     : null;
@@ -1565,7 +1598,7 @@ function createCustomColorPicker(args: {
     applyBtn.classList.toggle("is-disabled", !dirty);
   };
 
-  const updateUi = () => {
+  const updateUi = (preserveHexDraft = false) => {
     rgb = hsvToRgb(hsv);
     const hueRgb = hsvToRgb({ h: hsv.h, s: 1, v: 1 });
     const pickedColor = formatPickedColor(kind, rgb, alpha);
@@ -1575,7 +1608,9 @@ function createCustomColorPicker(args: {
     picker.style.setProperty("--butter-picker-h", `${(hsv.h / 360) * 100}%`);
     picker.style.setProperty("--butter-picker-alpha", `${alpha * 100}%`);
     previewFill.style.backgroundColor = pickedColor;
-    hexInput.value = rgbToHex(rgb);
+    // A valid shorthand is also an intermediate prefix while typing six
+    // digits. Updating the preview must not rewrite that browser-owned draft.
+    if (!preserveHexDraft) hexInput.value = rgbToHex(rgb);
     pickerValue.textContent = kind === "highlight"
       ? `${rgbToHex(rgb)} · ${Math.round(alpha * 100)}%`
       : rgbToHex(rgb);
@@ -1592,23 +1627,21 @@ function createCustomColorPicker(args: {
     hue.setAttribute("aria-valuenow", String(Math.round(hsv.h)));
   };
 
-  const previewColor = () => {
+  const previewColor = (explicit = true) => {
     const color = formatPickedColor(kind, rgb, alpha);
     if (editorMode && schema && view && apply) {
-      apply(schema, view, color, {
-        addToHistory: false,
-        refocusEditor: false,
-      });
+      if (!ownership?.canMutate({ explicit, quiet: !explicit })) return;
+      showColorPreview(view, previewToken, kind, color);
     } else {
       onPreviewColor?.(color);
     }
     setDirty(true);
   };
 
-  const setFromRgb = (next: RGBColor, previewEditor: boolean) => {
+  const setFromRgb = (next: RGBColor, previewEditor: boolean, preserveHexDraft = false) => {
     rgb = next;
     hsv = rgbToHsv(next);
-    updateUi();
+    updateUi(preserveHexDraft);
     if (previewEditor) previewColor();
   };
 
@@ -1690,7 +1723,7 @@ function createCustomColorPicker(args: {
     hexInput.classList.toggle("is-invalid", !next && hexInput.value.trim().length > 0);
     applyBtn.disabled = !next;
     applyBtn.classList.toggle("is-disabled", !next);
-    if (next) setFromRgb(next, true);
+    if (next) setFromRgb(next, true, true);
   });
 
   alphaSlider?.addEventListener("input", () => {
@@ -1699,17 +1732,16 @@ function createCustomColorPicker(args: {
     previewColor();
   });
 
-  const restore = (refocusEditor: boolean) => {
-    if (restoredOrCommitted) return;
-    restoredOrCommitted = true;
+  const restore = (refocusEditor: boolean, explicit = false): boolean => {
+    if (restoredOrCommitted) return true;
     if (editorMode && schema && view && snapshot) {
-      restoreColorSnapshot(schema, view, kind, snapshot, {
-        addToHistory: false,
-        refocusEditor,
-      });
+      clearColorPreview(view, previewToken);
+      if (refocusEditor && ownership?.canMutate({ explicit, quiet: true })) view.focus();
     } else {
       onRestoreColor?.();
     }
+    restoredOrCommitted = true;
+    return true;
   };
 
   const commit = () => {
@@ -1720,18 +1752,19 @@ function createCustomColorPicker(args: {
       hexInput.focus();
       return;
     }
+    // A refused confirmation retains the original draft and caret as well as
+    // the document. Canonicalize only after the captured target is admitted.
+    if (editorMode && !ownership?.canMutate({ explicit: true })) return;
     setFromRgb(typedRgb, false);
-    restoredOrCommitted = true;
     const color = formatPickedColor(kind, rgb, alpha);
     if (editorMode && schema && view && apply && snapshot) {
-      restoreColorSnapshot(schema, view, kind, snapshot, {
-        addToHistory: false,
-        refocusEditor: false,
-      });
+      clearColorPreview(view, previewToken);
       apply(schema, view, color);
+      ownership?.advance();
     } else {
       onCommitColor?.(color);
     }
+    restoredOrCommitted = true;
     onCommit();
   };
 
@@ -1746,22 +1779,20 @@ function createCustomColorPicker(args: {
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
-      restore(true);
-      onCommit();
+      if (restore(true, true)) onCommit();
     }
   });
 
   cancelBtn.addEventListener("mousedown", (e) => e.preventDefault());
   cancelBtn.addEventListener("click", () => {
-    restore(true);
-    onCommit();
+    if (restore(true, true)) onCommit();
   });
 
   applyBtn.addEventListener("mousedown", (e) => e.preventDefault());
   applyBtn.addEventListener("click", commit);
 
   updateUi();
-  previewColor();
+  previewColor(false);
   setDirty(false);
 
   return {
@@ -1844,7 +1875,7 @@ interface ColorTarget {
   initial: string | null;
   allowDefault: boolean;
   preview(color: string | null): void;
-  finalize(color: string | null, changed: boolean): void;
+  finalize(color: string | null, changed: boolean, explicit: boolean): boolean | void;
   openPresetSettings?: () => void;
   onMount(): void;
   onClose(): void;
@@ -1864,19 +1895,23 @@ export function openMobileColorSheet(
     | { openSettings?: (subtab?: "general" | "editor" | "drag-drop" | "toolbar" | "context-menu" | "advanced" | "license" | "support", section?: string) => void }
     | undefined;
   const snapshot = captureColorSnapshot(schema, view, kind);
+  const ownership = captureDeferredUiOwnership(view);
+  const previewToken = Symbol("mobile-color-preview");
   openColorDrawer({
     kind,
     initial: snapshotFirstColor(snapshot, kind),
     allowDefault: true,
-    preview: (color) =>
-      apply(schema, view, color, { addToHistory: false, refocusEditor: false }),
-    finalize: (color, changed) => {
-      // Collapse the live previews into a single history entry (or none).
-      restoreColorSnapshot(schema, view, kind, snapshot, {
-        addToHistory: false,
-        refocusEditor: false,
-      });
+    preview: (color) => {
+      if (!ownership.canMutate({ explicit: true })) return;
+      showColorPreview(view, previewToken, kind, color);
+    },
+    finalize: (color, changed, explicit) => {
+      clearColorPreview(view, previewToken);
+      if (!explicit) return true;
+      if (!ownership.canMutate({ explicit: true })) return false;
       if (changed) apply(schema, view, color, { refocusEditor: false });
+      ownership.advance();
+      return true;
     },
     openPresetSettings: () => plugin?.openSettings?.("toolbar", "preset-colors"),
     onMount: () => {
@@ -2403,22 +2438,25 @@ function openColorDrawer(target: ColorTarget): void {
   }
 
   function closeAndRefocus(): void {
+    if (!finalize(true)) return;
     const closeDelay = closeMobileInsertDrawer({ returningKeyboard: true });
     window.setTimeout(() => target.onClose(), closeDelay);
   }
 
   // Collapse the live previews into a single history entry (or none) when
   // the tray closes - there's no Cancel, so dismissing keeps the result.
-  function finalize(): void {
-    if (committed) return;
+  function finalize(explicit = false): boolean {
+    if (committed) return true;
+    if (target.finalize(selectedColor, !selectedColorMatchesInitial(), explicit) === false) return false;
     committed = true;
-    target.finalize(selectedColor, !selectedColorMatchesInitial());
+    return true;
   }
 
   preciseLink.addEventListener("click", () => showPage("precise"));
   backBtn.addEventListener("click", () => showPage("quick"));
   customBackBtn.addEventListener("click", () => showPage("quick"));
   customizePresetsBtn?.addEventListener("click", () => {
+    if (!finalize(true)) return;
     closeMobileInsertDrawer();
     target.openPresetSettings?.();
   });
@@ -2463,8 +2501,9 @@ function openColorDrawer(target: ColorTarget): void {
   };
   activeDocument.addEventListener("keydown", onKeyDown, true);
 
-  setMobileDrawerCleanup(() => {
+  setMobileDrawerCleanup((explicit = false) => {
     if (closed) return;
+    if (!finalize(explicit)) return false;
     closed = true;
     dismissGestures();
     activeDocument.removeEventListener("keydown", onKeyDown, true);
@@ -2472,7 +2511,6 @@ function openColorDrawer(target: ColorTarget): void {
     if (backHandlePromise) {
       backHandlePromise.then((h) => h.remove?.()).catch(() => {});
     }
-    finalize();
   });
 
   showPage("quick");
@@ -2603,11 +2641,6 @@ function isHtmlFormattingEnabled(ctx: RenderCtx): boolean {
   return plugin?.settings?.enableHtmlFormatting !== false;
 }
 
-/** Button ids that author inline HTML in the markdown source. Hidden
- *  from the rendered toolbar when the user turns off HTML formatting
- *  in settings. */
-const HTML_ONLY_BUTTON_IDS = new Set(["text-color"]);
-
 function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
   const def = BUTTON_REGISTRY.get(id);
   if (!def) return null;
@@ -2620,7 +2653,7 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
   if (renderNodeName && !ctx.schema.nodes[renderNodeName]) return null;
 
   const htmlOk = isHtmlFormattingEnabled(ctx);
-  if (HTML_ONLY_BUTTON_IDS.has(id) && !htmlOk) return null;
+  if (!isFormattingMarkAllowed(def.markName, htmlOk)) return null;
 
   const el = activeWindow.createEl("button");
   el.classList.add("butter-btn", "clickable-icon");
@@ -2643,6 +2676,8 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
     ctx.closePopover();
     const view = ctx.getView();
     if (!view || !view.editable) return;
+    const currentHtmlOk = isHtmlFormattingEnabled(ctx);
+    if (!isFormattingMarkAllowed(def.markName, currentHtmlOk)) return;
 
     if (def.id === "link" || def.id === "insert-link-md") {
       openToolbarLinkMenu(ctx.app, ctx.schema, view, el, ctx.getSourcePath());
@@ -2686,7 +2721,7 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
         ? isMarkActive(view.state, highlightMark)
         : false;
       execMarkCmd(def, ctx.schema, view);
-      if (!wasActive && htmlOk) {
+      if (!wasActive && currentHtmlOk) {
         const palette = createColorPalette(
           ctx.schema,
           view,
@@ -3152,8 +3187,6 @@ function installToolbarOverflowIndicators(
   };
 }
 
-const toolbarPluginKey = new PluginKey("butter-toolbar");
-
 export function createToolbar(
   app: App,
   schema: Schema,
@@ -3162,6 +3195,7 @@ export function createToolbar(
   serializeNode?: (node: import("prosemirror-model").Node) => string,
   getSourcePath: () => string = () => "",
   dismissMobileKeyboard?: () => void,
+  requestMobileEditing?: () => void,
 ): { dom: HTMLElement; plugin: Plugin; rebuild: () => void } {
   const buttonMap = new Map<string, Set<HTMLElement>>();
   const submenuMap = new Map<string, HTMLElement>();
@@ -3328,10 +3362,14 @@ export function createToolbar(
     e.preventDefault();
   });
 
-  const plugin = new Plugin({
-    key: toolbarPluginKey,
+  const plugin = colorPreviewPlugin({
     view(editorView) {
       editorViewRef = editorView;
+      const unregisterEditingIntent = registerDeferredUiEditingIntent(
+        editorView,
+        requestMobileEditing,
+        () => new Notice(tx("Butter kept your content unchanged because this edit target changed or is read-only. Reopen the control to try again.")),
+      );
       let previousEditable = editorView.editable;
       updateActiveStates(app, buttonMap, submenuMap, submenuChildMap, commandMap, schema, editorView);
       refreshRovingTabindex(dom);
@@ -3350,6 +3388,7 @@ export function createToolbar(
           refreshRovingTabindex(dom);
         },
         destroy() {
+          unregisterEditingIntent();
           closePopover();
           toolbarOverflowCleanup?.();
           toolbarOverflowCleanup = null;

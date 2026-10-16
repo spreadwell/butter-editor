@@ -234,13 +234,11 @@ export class ButterSettingTab extends PluginSettingTab {
   }
 
   public requestPage(section: ButterSettingsSection): void {
-    const alreadyActive = this.activeDeclarativePage !== null &&
-      this.activeTab === section;
     this.activeTab = section;
-    this.pendingNavigationPage = alreadyActive ? null : section;
-    if (!alreadyActive) {
-      window.setTimeout(() => this.openPendingNavigationPage(), 0);
-    }
+    // Opening the host tab can return to its index even when it retains the
+    // previous page object. Every external request must survive that reopen.
+    this.pendingNavigationPage = section;
+    window.setTimeout(() => this.openPendingNavigationPage(), 0);
   }
 
   private openPendingNavigationPage(): void {

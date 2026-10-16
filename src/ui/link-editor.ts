@@ -8,9 +8,14 @@ import {
   setIcon,
   type TFile,
 } from "obsidian";
-import type { Mark, Node as PMNode } from "prosemirror-model";
-import { NodeSelection, Plugin } from "prosemirror-state";
+import { Fragment, type Mark, type Node as PMNode } from "prosemirror-model";
+import { NodeSelection, Plugin, type Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
+import { addExternalLinkMark, projectExternalLinkTransaction } from "../editor/link-mark-policy";
+import { linkLabelFieldText, prepareLinkLabelContent, preserveLinkControlText } from "../editor/link-label-edit";
+import { markBlockConversionRefusal } from "../editor/native-block-id-conservation";
+import { bindEditorMenuInteraction } from "../editor/block-menu-ownership";
+import { linkOccurrenceRange, resolvedLinkOccurrenceDestination } from "../core/link-occurrence";
 import {
   isRepresentableWikilinkAlias,
   isRepresentableWikilinkTarget,
@@ -30,6 +35,8 @@ export interface LinkMarkRange {
   href: string;
   text: string;
   nonLinkMarks: readonly Mark[];
+  owner?: Mark;
+  title: string | null;
 }
 
 export type LinkEditorContext =
@@ -58,6 +65,15 @@ export function findLinkMarkRange(
 ): LinkMarkRange | null {
   const linkType = view.state.schema.marks.link;
   if (!linkType || pos < 0 || pos > view.state.doc.content.size) return null;
+  const owned = linkOccurrenceRange(view.state.doc, pos);
+  if (owned) {
+    const content = view.state.doc.slice(owned.from, owned.to).content;
+    const text = linkLabelFieldText(content);
+    const target = resolvedLinkOccurrenceDestination(view.state.doc, owned.mark);
+    if (text === null) return null;
+    return { ...owned, owner: owned.mark, href: target?.href ?? "", title: target?.title ?? null, text,
+      nonLinkMarks: content.firstChild?.marks.filter(mark => mark.type.name !== "link" && mark.type.name !== "link_occurrence") ?? [] };
+  }
   const $pos = view.state.doc.resolve(pos);
   if (!$pos.parent.isTextblock) return null;
 
@@ -107,8 +123,9 @@ export function findLinkMarkRange(
     from,
     to,
     href: (link.attrs as { href?: string }).href ?? "",
-    text: view.state.doc.textBetween(from, to),
+    text: linkLabelFieldText(view.state.doc.slice(from, to).content) ?? view.state.doc.textBetween(from, to),
     nonLinkMarks: firstChild.marks.filter((mark) => mark.type !== linkType),
+    title: typeof link.attrs.title === "string" ? link.attrs.title : null,
   };
 }
 
@@ -141,7 +158,7 @@ function contextFromSelection(view: EditorView): LinkEditorContext {
     kind: "insert",
     from: selection.from,
     to: selection.to,
-    text: selection.empty ? "" : view.state.doc.textBetween(selection.from, selection.to),
+    text: selection.empty ? "" : linkLabelFieldText(view.state.doc.slice(selection.from, selection.to).content) ?? view.state.doc.textBetween(selection.from, selection.to),
     marks: selection.$from.marks(),
   };
 }
@@ -161,7 +178,7 @@ function initialValues(view: EditorView, context: LinkEditorContext): {
     const node = currentWikilink(view, context.pos);
     const target = (node?.attrs.target as string | undefined) ?? "";
     const alias = (node?.attrs.alias as string | undefined) ?? "";
-    return { mode: "note", target, text: alias || target, editing: true };
+    return { mode: "note", target, text: node?.attrs.emptyAlias ? "" : alias || target, editing: true };
   }
   if (context.kind === "external") {
     const range = findLinkMarkRange(view, context.from);
@@ -195,7 +212,7 @@ function replacementRange(
       from: context.pos,
       to: context.pos + node.nodeSize,
       marks: node.marks,
-      text: (node.attrs.alias as string) || (node.attrs.target as string) || "",
+      text: node.attrs.emptyAlias ? "" : (node.attrs.alias as string) || (node.attrs.target as string) || "",
     };
   }
   if (context.kind === "external") {
@@ -213,77 +230,120 @@ function replacementRange(
   };
 }
 
-function applyValues(
+function declinedLinkEdit(view: EditorView): false {
+  if (!view.isDestroyed) {
+    const tr = view.state.tr;
+    markBlockConversionRefusal(tr);
+    view.dispatch(tr);
+  }
+  return false;
+}
+
+function dispatchLinkEdit(view: EditorView, tr: Transaction): boolean {
+  const before = view.state.doc;
+  view.dispatch(tr);
+  // A prepared admission filter can veto a proposal after the field's own
+  // validation. Keep the form open rather than reporting that veto as Save.
+  return !tr.docChanged || view.state.doc !== before;
+}
+
+/** A form owns the exact reviewed document; stale positions never acquire a
+ * different occurrence after a remote edit, undo, or awaited note creation. */
+export function captureLinkEditorMutation(view: EditorView, context: LinkEditorContext): () => boolean {
+  const doc = view.state.doc;
+  const range = replacementRange(view, context);
+  return () => Boolean(range && !view.isDestroyed && view.editable !== false && view.state.doc === doc) || declinedLinkEdit(view);
+}
+
+export function applyLinkEditorValues(
   view: EditorView,
   context: LinkEditorContext,
   mode: LinkEditorMode,
   values: Record<string, string>,
 ): boolean {
   const range = replacementRange(view, context);
-  if (!range) return false;
+  if (!range) return declinedLinkEdit(view);
   const rawText = values.text ?? "";
 
   if (mode === "note") {
     const target = (values.target ?? "").trim();
     if (!isRepresentableWikilinkTarget(target)) return false;
-    let alias = rawText.trim();
+    let alias = rawText;
     if (!isRepresentableWikilinkAlias(alias)) return false;
+    const emptyAlias = context.kind === "wikilink" && rawText === "";
     if (!alias || alias === target) alias = "";
     const type = view.state.schema.nodes.wikilink;
     if (!type) return false;
-    const node = type.create({ target, alias }, null, range.marks);
-    view.dispatch(view.state.tr.replaceWith(range.from, range.to, node).scrollIntoView());
-    return true;
+    if (context.kind === "wikilink") {
+      const existing = currentWikilink(view, context.pos)!;
+      if (existing.attrs.target === target && rawText === range.text) return true;
+    } else if (range.from !== range.to) {
+      const content = view.state.doc.slice(range.from, range.to).content;
+      const retainedMarks = range.marks.filter(mark => !["link", "link_occurrence"].includes(mark.type.name));
+      if (content.content.some(node => {
+        const marks = node.marks.filter(mark => !["link", "link_occurrence"].includes(mark.type.name));
+        return !node.isText || marks.length !== retainedMarks.length || !marks.every(mark => retainedMarks.some(existing => existing.eq(mark)));
+      })) return declinedLinkEdit(view);
+    }
+    const node = type.create({ target, alias, emptyAlias }, null, range.marks.filter(mark => !["link", "link_occurrence"].includes(mark.type.name)));
+    return dispatchLinkEdit(view, view.state.tr.replaceWith(range.from, range.to, node).scrollIntoView());
   }
 
-  const href = normalizeWebDestination(values.target ?? "");
+  const existing = context.kind === "external" ? findLinkMarkRange(view, context.from) : null;
+  if (context.kind === "wikilink" && currentWikilink(view, context.pos)?.attrs.emptyAlias && !rawText) return declinedLinkEdit(view);
+  const unchangedTarget = existing && (values.target ?? "").trim() === existing.href;
+  const href = unchangedTarget ? existing.href : normalizeWebDestination(values.target ?? "");
   const linkType = view.state.schema.marks.link;
-  if (!href || !linkType) return false;
-  const text = rawText.trim() || href;
+  const unresolvedReference = unchangedTarget && existing.owner?.attrs.syntax === "reference" && !href;
+  if ((!href && !unresolvedReference) || !linkType) return false;
+  const text = rawText || href || "";
   if (!text) return false;
-  const link = linkType.create({ href });
-
-  // Preserve mixed inline formatting when only the URL changes.
-  if (context.kind === "external" && text === range.text) {
-    const tr = view.state.tr
-      .removeMark(range.from, range.to, linkType)
-      .addMark(range.from, range.to, link)
-      .scrollIntoView();
-    view.dispatch(tr);
-    return true;
+  if (existing && unchangedTarget && text === existing.text) return true;
+  let replacement: Fragment;
+  if (range.from === range.to) replacement = Fragment.from(view.state.schema.text(text, range.marks));
+  else if (context.kind === "wikilink") {
+    if (text !== range.text) return declinedLinkEdit(view);
+    replacement = Fragment.from(view.state.schema.text(text, range.marks));
+  } else {
+    const prepared = prepareLinkLabelContent(view.state.doc.slice(range.from, range.to).content, text);
+    if (!prepared) return declinedLinkEdit(view);
+    replacement = prepared;
   }
-  // Applying a web link to an unchanged selection can add the mark
-  // without replacing its text nodes or their existing marks.
-  if (context.kind === "insert" && range.from !== range.to && text === range.text) {
-    view.dispatch(view.state.tr.addMark(range.from, range.to, link).scrollIntoView());
-    return true;
-  }
-  const replacement = view.state.schema.text(text, [...range.marks, link]);
-  view.dispatch(view.state.tr.replaceWith(range.from, range.to, replacement).scrollIntoView());
-  return true;
+  const tr = view.state.tr;
+  if (text !== range.text || context.kind === "wikilink" || range.from === range.to) tr.replaceWith(range.from, range.to, replacement);
+  const to = range.from + replacement.size;
+  tr.removeMark(range.from, to, linkType);
+  if (existing?.owner) {
+    const owner = unchangedTarget ? existing.owner : existing.owner.type.create({ ...existing.owner.attrs,
+      syntax: "inline", href, title: existing.title, reference: null, referenceForm: null, labelSource: null, labelSignature: null, labelOuterMarks: null, resolved: true });
+    tr.removeMark(range.from, to, owner.type).addMark(range.from, to, owner);
+  } else addExternalLinkMark(tr, range.from, to, linkType.create({ href: href!, title: existing?.title ?? null }));
+  return dispatchLinkEdit(view, projectExternalLinkTransaction(tr).scrollIntoView());
 }
 
-function removeLink(view: EditorView, context: LinkEditorContext): boolean {
+export function removeLinkEditorOccurrence(view: EditorView, context: LinkEditorContext): boolean {
   if (context.kind === "insert") return false;
   if (context.kind === "external") {
     const range = findLinkMarkRange(view, context.from);
     const linkType = view.state.schema.marks.link;
     if (!range || !linkType) return false;
-    view.dispatch(view.state.tr.removeMark(range.from, range.to, linkType).scrollIntoView());
-    return true;
+    const tr = view.state.tr.removeMark(range.from, range.to, linkType);
+    const ownerType = view.state.schema.marks.link_occurrence;
+    if (ownerType) tr.removeMark(range.from, range.to, ownerType);
+    return dispatchLinkEdit(view, tr.scrollIntoView());
   }
   const node = currentWikilink(view, context.pos);
   if (!node) return false;
+  if (node.attrs.emptyAlias) return dispatchLinkEdit(view, view.state.tr.delete(context.pos, context.pos + node.nodeSize).scrollIntoView());
   const text = (node.attrs.alias as string) || (node.attrs.target as string) || "";
   if (!text) return false;
-  view.dispatch(
+  return dispatchLinkEdit(view,
     view.state.tr.replaceWith(
       context.pos,
       context.pos + node.nodeSize,
       view.state.schema.text(text, node.marks),
     ).scrollIntoView(),
   );
-  return true;
 }
 
 function notePathFromTarget(target: string): string | null {
@@ -381,6 +441,7 @@ function openMobileLinkEditor(
 ): void {
   const { app, view } = options;
   const initial = initialValues(view, context);
+  const canMutate = captureLinkEditorMutation(view, context);
   const editing = initial.editing;
   const sourcePath = options.sourcePath ?? "";
   const restoreEditorOnClose = context.kind === "insert" || view.hasFocus();
@@ -394,16 +455,18 @@ function openMobileLinkEditor(
     private contentEl!: HTMLElement;
     private mode: LinkEditorMode = initial.mode;
     private targetInput!: HTMLInputElement;
-    private textInput!: HTMLInputElement;
+    private textInput!: HTMLInputElement | HTMLTextAreaElement;
     private suggestionsEl!: HTMLElement;
     private createNoteButton!: HTMLButtonElement;
     private suggestionButtons: HTMLButtonElement[] = [];
     private restoreEditor = restoreEditorOnClose;
     private modeExplicitlyChosen = false;
+    private initialControlText = initial.text;
 
     open(): void {
       const existingMenu = options.mobileMenu;
       this.menu = existingMenu ?? new Menu();
+      bindEditorMenuInteraction(this.menu, view);
       if (!existingMenu) {
         this.menu.addItem((item) => {
           item.setTitle(txKnown(editing ? "Edit link" : "Add link"));
@@ -501,7 +564,7 @@ function openMobileLinkEditor(
         cls: "butter-mobile-edit-field-label",
         text: tx("Display text"),
       });
-      this.textInput = textField.createEl("input", {
+      this.textInput = textField.createEl(/[\r\n]/.test(initial.text) ? "textarea" : "input", {
         cls: "butter-mobile-edit-input",
         attr: {
           type: "text",
@@ -510,6 +573,7 @@ function openMobileLinkEditor(
         },
       });
       this.textInput.value = initial.text;
+      this.initialControlText = this.textInput.value;
       this.textInput.spellcheck = false;
 
       this.createNoteButton = this.contentEl.createEl("button", {
@@ -561,8 +625,9 @@ function openMobileLinkEditor(
         this.refreshCreateNote();
       });
       for (const input of [this.targetInput, this.textInput]) {
-        input.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") {
+        input.addEventListener("keydown", (rawEvent) => {
+          const event = rawEvent as KeyboardEvent;
+          if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
             this.commit();
           } else if (
@@ -598,11 +663,14 @@ function openMobileLinkEditor(
 
     private commit(): void {
       const values = this.values();
+      const text = preserveLinkControlText(values.text, this.initialControlText, initial.text);
+      if (text === null) { declinedLinkEdit(view); this.flashInvalid(); return; }
+      values.text = text;
       const effectiveMode = !this.modeExplicitlyChosen
         && looksLikeWebDestination(values.target ?? "")
         ? "web"
         : this.mode;
-      if (!applyValues(view, context, effectiveMode, values)) {
+      if (!canMutate() || !applyLinkEditorValues(view, context, effectiveMode, values)) {
         this.flashInvalid();
         return;
       }
@@ -616,6 +684,7 @@ function openMobileLinkEditor(
         return;
       }
       try {
+        if (!canMutate()) { this.flashInvalid(); return; }
         if (!await createNoteIfMissing(app, target, sourcePath)) {
           this.flashInvalid();
           return;
@@ -722,10 +791,12 @@ export function openUnifiedLinkEditor(options: OpenLinkEditorOptions): void {
   const { app, view, anchor } = options;
   const context = options.context ?? contextFromSelection(view);
   const initial = initialValues(view, context);
+  const canMutate = captureLinkEditorMutation(view, context);
   let mode = initial.mode;
   const sourcePath = options.sourcePath ?? "";
   const editing = initial.editing;
   let modeExplicitlyChosen = false;
+  let initialControlText = initial.text;
 
   if (Platform.isMobile || activeDocument.body.classList.contains("is-mobile")) {
     openMobileLinkEditor(options, context);
@@ -733,11 +804,13 @@ export function openUnifiedLinkEditor(options: OpenLinkEditorOptions): void {
   }
 
   const commit = (values: Record<string, string>): boolean => {
+    const text = preserveLinkControlText(values.text ?? "", initialControlText, initial.text);
+    if (text === null) return declinedLinkEdit(view);
     const effectiveMode = !modeExplicitlyChosen
       && looksLikeWebDestination(values.target ?? "")
       ? "web"
       : mode;
-    const applied = applyValues(view, context, effectiveMode, values);
+    const applied = canMutate() && applyLinkEditorValues(view, context, effectiveMode, { ...values, text });
     if (applied) view.focus();
     return applied;
   };
@@ -793,6 +866,7 @@ export function openUnifiedLinkEditor(options: OpenLinkEditorOptions): void {
         label: tx("Display text"),
         icon: "type",
         initial: initial.text,
+        multiline: /[\r\n]/.test(initial.text),
         placeholder: tx("Optional"),
       },
     ],
@@ -855,6 +929,7 @@ export function openUnifiedLinkEditor(options: OpenLinkEditorOptions): void {
           const target = (values.target ?? "").trim();
           if (!isRepresentableWikilinkTarget(target)) return false;
           try {
+            if (!canMutate()) return false;
             if (!await createNoteIfMissing(app, target, sourcePath)) return false;
             return commit(values);
           } catch (error) {
@@ -871,7 +946,7 @@ export function openUnifiedLinkEditor(options: OpenLinkEditorOptions): void {
           separatorBefore: true,
           receivesValues: false,
           onClick: () => {
-            const removed = removeLink(view, context);
+            const removed = canMutate() && removeLinkEditorOccurrence(view, context);
             if (removed) view.focus();
             return removed;
           },
@@ -879,6 +954,7 @@ export function openUnifiedLinkEditor(options: OpenLinkEditorOptions): void {
         : []),
     ],
     onCommit: commit,
+    onFieldsReady: values => { initialControlText = values.text ?? ""; },
     onCancel: () => view.focus(),
   });
 }

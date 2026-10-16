@@ -30,6 +30,22 @@ export interface WhatsNewState {
 
 export const WHATS_NEW_RELEASES: readonly WhatsNewRelease[] = [
   {
+    "version": "0.12.2",
+    "headline": "More reliable saves and optional underline",
+    "summary": "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.",
+    "demos": [],
+    "improvements": [
+      "Open supported recovery snapshots as separate notes, or copy their text or exact JSON.",
+      "Preview supported standalone HTML blocks with Obsidian's native rendering.",
+      "Enable Rich formatting to use Underline in your toolbar, context menu, or command palette.",
+      "Optionally include recent save failure details in feedback, with a preview and no note content or file paths."
+    ],
+    "fixed": [
+      "Fixed editing cases involving literal text, code, tags, and formatting that could interrupt saving.",
+      "Fixed editing around embeds in quotes and callouts that could prevent a note from saving."
+    ]
+  },
+  {
     version: "0.12.1",
     headline: "List editing and link fixes",
     summary:

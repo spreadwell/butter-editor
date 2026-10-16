@@ -1,9 +1,12 @@
 import { setIcon } from "obsidian";
 import { Fragment, type Node as PMNode, type Schema } from "prosemirror-model";
-import type { EditorState, SelectionBookmark, Transaction } from "prosemirror-state";
+import { NodeSelection, type EditorState, type SelectionBookmark, type Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import { resolveInterBlockGap } from "./click-to-spawn";
+import { deselectSelectedLeaf, resolveInterBlockGap } from "./click-to-spawn";
 import { canResizeEmbedSource, parseEmbedSize, resizeEmbedSource } from "./embed-image-resize";
+import { linkOccurrence, linkOccurrenceRange } from "../core/link-occurrence";
+import { markBlockConversionRefusal } from "./native-block-id-conservation";
+import { sourceGeneration } from "./source-generation";
 
 const DRAG_THRESHOLD_PX = 5;
 
@@ -32,7 +35,9 @@ function isImageNode(node: PMNode | null | undefined): node is PMNode {
 
 function imageAsInline(node: PMNode, schema: Schema, renderedSize?: ImageRenderedSize): PMNode | null {
   if (node.type.name === "image") {
-    if (node.attrs.width != null || !renderedSize?.width) return node;
+    // Reference image dimensions belong to the literal alt, rather than native
+    // sizing syntax. Placement must keep the current definition dependency.
+    if (node.attrs.sourceSyntax === "reference" || node.attrs.width != null || !renderedSize?.width) return node;
     // Explicit inline placement must survive the auto-split pass. Recording
     // the image's current rendered width both preserves its visual footprint
     // and emits standard Obsidian-compatible image-size Markdown.
@@ -42,16 +47,16 @@ function imageAsInline(node: PMNode, schema: Schema, renderedSize?: ImageRendere
       height: null,
       displayMode: null,
       sourceRange: null,
-    });
+    }, null, node.marks);
   }
   const type = schema.nodes.obsidian_embed_inline;
   if (!type) return null;
   const rawSrc = String(node.attrs.src ?? "");
   const sized = parseEmbedSize(rawSrc);
-  const src = sized.width == null && renderedSize?.width && canResizeEmbedSource(rawSrc)
+  const src = node.attrs.literalSource == null && sized.width == null && renderedSize?.width && canResizeEmbedSource(rawSrc)
     ? resizeEmbedSource(rawSrc, Math.max(1, Math.round(renderedSize.width)), null)
     : rawSrc;
-  return type.create({ src });
+  return type.create({ ...node.attrs, src }, null, node.marks);
 }
 
 function imageAsStandalone(node: PMNode, schema: Schema, parent: PMNode): PMNode | null {
@@ -61,7 +66,7 @@ function imageAsStandalone(node: PMNode, schema: Schema, parent: PMNode): PMNode
   // A list_item must begin with a paragraph and the parser deliberately
   // keeps embeds inline there. Other block containers use the canonical
   // block embed node when the image occupies its own line.
-  if (parent.type.name === "list_item") {
+  if (parent.type.name === "list_item" || node.marks.length || node.attrs.literalSource != null) {
     const inline = imageAsInline(node, schema);
     return inline ? schema.nodes.paragraph?.create(null, inline) ?? null : null;
   }
@@ -69,6 +74,7 @@ function imageAsStandalone(node: PMNode, schema: Schema, parent: PMNode): PMNode
 }
 
 function sourceRange(state: EditorState, pos: number): SourceRange | null {
+  if (!Number.isSafeInteger(pos) || pos < 0 || pos >= state.doc.content.size) return null;
   const node = state.doc.nodeAt(pos);
   if (!isImageNode(node)) return null;
   if (node.type.name === "obsidian_embed") return { from: pos, to: pos + node.nodeSize, node };
@@ -101,7 +107,8 @@ function dispatchImageMove(
   view: EditorView,
   tr: Transaction,
   selectionBookmark?: SelectionBookmark,
-): void {
+): boolean {
+  const before = view.state.doc;
   if (selectionBookmark) {
     try {
       tr.setSelection(selectionBookmark.map(tr.mapping).resolve(tr.doc));
@@ -116,7 +123,7 @@ function dispatchImageMove(
   // browser-only concern.
   if (!view.dom) {
     view.dispatch(tr);
-    return;
+    return view.state.doc !== before;
   }
 
   const snapshots: ScrollSnapshot[] = [];
@@ -153,6 +160,27 @@ function dispatchImageMove(
     restore();
     ownerWindow.requestAnimationFrame(restore);
   });
+  return view.state.doc !== before;
+}
+
+function canPlaceImage(view: EditorView): boolean {
+  return !view.isDestroyed && view.editable !== false;
+}
+
+function ownsImagePlacement(view: EditorView, doc: PMNode, pos: number, node: PMNode): boolean {
+  return canPlaceImage(view) && view.state.doc === doc && view.state.doc.nodeAt(pos) === node;
+}
+
+function canMoveCompleteImageOwner(view: EditorView, pos: number, node: PMNode): boolean {
+  if (!linkOccurrence(node)) return true;
+  const owner = linkOccurrenceRange(view.state.doc, pos);
+  if (!owner || owner.from === pos && owner.to === pos + node.nodeSize) return true;
+  // Moving one leaf out of a complete source label would split one native
+  // occurrence into several. Preserve that owner rather than invent aliases.
+  const refusal = view.state.tr;
+  markBlockConversionRefusal(refusal);
+  view.dispatch(refusal);
+  return false;
 }
 
 export function moveImageInline(
@@ -162,8 +190,10 @@ export function moveImageInline(
   renderedSize?: ImageRenderedSize,
   selectionBookmark?: SelectionBookmark,
 ): boolean {
+  if (!canPlaceImage(view) || !Number.isSafeInteger(targetPos) || targetPos < 0 || targetPos > view.state.doc.content.size) return false;
   const source = sourceRange(view.state, sourcePos);
   if (!source || (targetPos >= source.from && targetPos <= source.to)) return false;
+  if (!canMoveCompleteImageOwner(view, sourcePos, source.node)) return false;
   const inline = imageAsInline(source.node, view.state.schema, renderedSize);
   if (!inline) return false;
 
@@ -174,8 +204,7 @@ export function moveImageInline(
   const index = $target.index();
   if (!$target.parent.canReplaceWith(index, index, inline.type, inline.marks)) return false;
   tr.insert(mapped, inline);
-  dispatchImageMove(view, tr, selectionBookmark);
-  return true;
+  return dispatchImageMove(view, tr, selectionBookmark);
 }
 
 export function moveImageStandalone(
@@ -184,8 +213,10 @@ export function moveImageStandalone(
   targetPos: number,
   selectionBookmark?: SelectionBookmark,
 ): boolean {
+  if (!canPlaceImage(view) || !Number.isSafeInteger(targetPos) || targetPos < 0 || targetPos > view.state.doc.content.size) return false;
   const source = sourceRange(view.state, sourcePos);
   if (!source || (targetPos >= source.from && targetPos <= source.to)) return false;
+  if (!canMoveCompleteImageOwner(view, sourcePos, source.node)) return false;
 
   const tr = view.state.tr.delete(source.from, source.to);
   const mapped = mapAfterDelete(tr, targetPos, source);
@@ -195,8 +226,7 @@ export function moveImageStandalone(
   const index = $target.index();
   if (!$target.parent.canReplaceWith(index, index, standalone.type)) return false;
   tr.insert(mapped, standalone);
-  dispatchImageMove(view, tr, selectionBookmark);
-  return true;
+  return dispatchImageMove(view, tr, selectionBookmark);
 }
 
 function blockBoundaryFor(view: EditorView, clientY: number) {
@@ -263,7 +293,11 @@ export function attachImageBodyPlacementDrag(options: {
 }): () => void {
   const { image, view, getPos } = options;
   image.draggable = false;
-  let armed: { x: number; y: number; pointerId: number } | null = null;
+  let armed: {
+    x: number; y: number; pointerId: number; pointerType: string;
+    doc: PMNode; pos: number; node: PMNode; editorDOM: HTMLElement; generation: symbol | null;
+  } | null = null;
+  let pendingClick: { selection: NodeSelection; storedMarks: EditorState["storedMarks"]; consumed: boolean } | null = null;
   let ui: ReturnType<typeof createPlacementUi> | null = null;
   let target: { kind: "inline" | "block"; pos: number } | null = null;
   let renderedSize: ImageRenderedSize | undefined;
@@ -271,6 +305,7 @@ export function attachImageBodyPlacementDrag(options: {
 
   const clear = () => {
     armed = null;
+    pendingClick = null;
     target = null;
     renderedSize = undefined;
     selectionBookmark = undefined;
@@ -283,7 +318,40 @@ export function attachImageBodyPlacementDrag(options: {
     activeWindow.removeEventListener("keydown", onKeyDown, true);
   };
 
+  const currentPos = () => {
+    try { return getPos(); } catch { return undefined; }
+  };
+  const ownsGesture = (source: NonNullable<typeof armed>) => {
+    if (
+      !ownsImagePlacement(view, source.doc, source.pos, source.node) ||
+      currentPos() !== source.pos || sourceGeneration(view.state) !== source.generation ||
+      view.dom !== source.editorDOM || !view.dom.isConnected || !image.isConnected || !view.dom.contains(image)
+    ) return false;
+    const nodeDOM = view.nodeDOM(source.pos);
+    return nodeDOM instanceof Element && nodeDOM.contains(image);
+  };
+  const ownsClickIntent = () => Boolean(
+    armed && pendingClick && ownsGesture(armed) &&
+    view.state.selection === pendingClick.selection && view.state.storedMarks === pendingClick.storedMarks,
+  );
+  const isPlainPrimaryPress = (event: MouseEvent) => event.button === 0 &&
+    !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+
+  const onMouseDown = (event: MouseEvent) => {
+    if (!pendingClick) return;
+    if (event.target !== image || !isPlainPrimaryPress(event) || !ownsClickIntent()) {
+      pendingClick = null;
+      return;
+    }
+    // The selected image owns this press until it is a click or a drag. Stop
+    // compatibility mousedown before click-to-spawn or native caret selection.
+    pendingClick.consumed = true;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
   const promote = (event: PointerEvent) => {
+    pendingClick = null;
     ui = createPlacementUi(image);
     activeDocument.body.classList.add("butter-is-image-dragging");
     image.setPointerCapture?.(event.pointerId);
@@ -325,7 +393,9 @@ export function attachImageBodyPlacementDrag(options: {
   };
 
   const onMove = (event: PointerEvent) => {
-    if (!armed) return;
+    if (!armed || event.pointerId !== armed.pointerId) return;
+    if (!ownsGesture(armed)) { clear(); return; }
+    if (pendingClick && !ownsClickIntent()) pendingClick = null;
     if (!ui) {
       const dx = event.clientX - armed.x;
       const dy = event.clientY - armed.y;
@@ -337,14 +407,25 @@ export function attachImageBodyPlacementDrag(options: {
   };
 
   const onUp = (event: PointerEvent) => {
-    if (!armed) return;
+    if (!armed || event.pointerId !== armed.pointerId) return;
+    const source = armed;
     const wasDragging = ui !== null;
     const placement = target;
     const sourceSize = renderedSize;
     const priorSelection = selectionBookmark;
-    const sourcePos = getPos();
+    const sourcePos = currentPos();
+    const clickSelection = !wasDragging && pendingClick?.consumed && ownsClickIntent() &&
+      isPlainPrimaryPress(event) && event.isPrimary !== false && event.pointerType === source.pointerType &&
+      Math.hypot(event.clientX - source.x, event.clientY - source.y) < DRAG_THRESHOLD_PX &&
+      image.ownerDocument.elementFromPoint(event.clientX, event.clientY) === image
+      ? pendingClick.selection : null;
+    const owned = ownsGesture(source);
     clear();
-    if (!wasDragging || !placement || sourcePos == null) return;
+    if (!wasDragging) {
+      if (clickSelection) deselectSelectedLeaf(view, clickSelection);
+      return;
+    }
+    if (!placement || sourcePos !== source.pos || !owned) return;
     event.preventDefault();
     if (placement.kind === "inline") {
       moveImageInline(view, sourcePos, placement.pos, sourceSize, priorSelection);
@@ -353,18 +434,37 @@ export function attachImageBodyPlacementDrag(options: {
     }
   };
 
-  const onCancel = () => clear();
+  const onCancel = (event: PointerEvent) => { if (armed?.pointerId === event.pointerId) clear(); };
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
+    if (event.key !== "Escape" || !armed) return;
+    if (ownsGesture(armed)) {
+      event.preventDefault();
+      // This Escape cancels the gesture. A later editor handler must not also
+      // deselect the image; retain the live selection rather than restoring
+      // the bookmark captured before the drag.
+      event.stopPropagation();
+    }
     clear();
   };
   const onPointerDown = (event: PointerEvent) => {
-    if (!view.editable || event.button !== 0 || event.pointerType === "touch") return;
+    if (!canPlaceImage(view) || event.button !== 0 || event.pointerType === "touch") return;
+    const pos = currentPos();
+    const node = pos == null ? null : sourceRange(view.state, pos)?.node;
+    if (pos == null || !node) return;
+    clear();
     const rect = image.getBoundingClientRect();
     renderedSize = { width: rect.width, height: rect.height };
     selectionBookmark = view.state.selection.getBookmark();
-    armed = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    armed = {
+      x: event.clientX, y: event.clientY, pointerId: event.pointerId, pointerType: event.pointerType,
+      doc: view.state.doc, pos, node, editorDOM: view.dom, generation: sourceGeneration(view.state),
+    };
+    const selection = view.state.selection;
+    if (
+      event.target === image && isPlainPrimaryPress(event) && event.isPrimary !== false &&
+      (event.pointerType === "mouse" || event.pointerType === "pen") &&
+      selection instanceof NodeSelection && selection.from === pos && selection.node === node && ownsGesture(armed)
+    ) pendingClick = { selection, storedMarks: view.state.storedMarks, consumed: false };
     activeWindow.addEventListener("pointermove", onMove, { passive: false });
     activeWindow.addEventListener("pointerup", onUp);
     activeWindow.addEventListener("pointercancel", onCancel);
@@ -373,10 +473,12 @@ export function attachImageBodyPlacementDrag(options: {
   const onNativeDragStart = (event: DragEvent) => event.preventDefault();
 
   image.addEventListener("pointerdown", onPointerDown);
+  image.addEventListener("mousedown", onMouseDown);
   image.addEventListener("dragstart", onNativeDragStart);
   return () => {
     clear();
     image.removeEventListener("pointerdown", onPointerDown);
+    image.removeEventListener("mousedown", onMouseDown);
     image.removeEventListener("dragstart", onNativeDragStart);
   };
 }
@@ -403,8 +505,10 @@ function mergeWithAdjacent(
   direction: "previous" | "next",
   renderedSize?: ImageRenderedSize,
 ): boolean {
+  if (!canPlaceImage(view)) return false;
   const info = blockInfo(view.state, pos);
   if (!info) return false;
+  if (!canMoveCompleteImageOwner(view, pos, info.node)) return false;
   const adjacentIndex = direction === "previous" ? info.index - 1 : info.index + 1;
   if (adjacentIndex < 0 || adjacentIndex >= info.parent.childCount) return false;
   const adjacent = info.parent.child(adjacentIndex);
@@ -422,14 +526,15 @@ function mergeWithAdjacent(
   const paragraph = view.state.schema.nodes.paragraph.create(adjacent.attrs, content);
   const from = Math.min(info.blockPos, adjacentPos);
   const to = Math.max(info.blockPos + info.blockNode.nodeSize, adjacentPos + adjacent.nodeSize);
-  view.dispatch(view.state.tr.replaceWith(from, to, paragraph).scrollIntoView());
-  return true;
+  return dispatchImageMove(view, view.state.tr.replaceWith(from, to, paragraph).scrollIntoView());
 }
 
 export function makeImageStandalone(view: EditorView, pos: number): boolean {
+  if (!canPlaceImage(view) || !sourceRange(view.state, pos)) return false;
   const state = view.state;
   const node = state.doc.nodeAt(pos);
   if (!isImageNode(node) || node.type.name === "obsidian_embed") return false;
+  if (!canMoveCompleteImageOwner(view, pos, node)) return false;
   const $pos = state.doc.resolve(pos);
   if (!$pos.parent.inlineContent || ($pos.parent.childCount === 1 && $pos.parent.firstChild === node)) return false;
   const parent = $pos.parent;
@@ -442,8 +547,7 @@ export function makeImageStandalone(view: EditorView, pos: number): boolean {
   if (!standalone) return false;
   replacements.push(standalone);
   if (after.size) replacements.push(parent.type.create(parent.attrs, after));
-  view.dispatch(state.tr.replaceWith(parentPos, parentPos + parent.nodeSize, replacements).scrollIntoView());
-  return true;
+  return dispatchImageMove(view, state.tr.replaceWith(parentPos, parentPos + parent.nodeSize, replacements).scrollIntoView());
 }
 
 export function imageLayoutActions(
@@ -451,18 +555,20 @@ export function imageLayoutActions(
   pos: number,
   renderedSize?: ImageRenderedSize,
 ): ImageLayoutAction[] {
+  if (!canPlaceImage(view) || !sourceRange(view.state, pos)) return [];
+  const doc = view.state.doc;
   const node = view.state.doc.nodeAt(pos);
   if (!isImageNode(node)) return [];
   const info = blockInfo(view.state, pos);
   if (!info) {
-    return [{ id: "standalone", label: "Move to standalone block", icon: "between-horizontal-start", run: () => makeImageStandalone(view, pos) }];
+    return [{ id: "standalone", label: "Move to standalone block", icon: "between-horizontal-start", run: () => ownsImagePlacement(view, doc, pos, node) && makeImageStandalone(view, pos) }];
   }
   const actions: ImageLayoutAction[] = [];
   if (info.index > 0 && info.parent.child(info.index - 1).type.name === "paragraph") {
-    actions.push({ id: "inline-previous", label: "Place inline with previous paragraph", icon: "text-cursor-input", run: () => mergeWithAdjacent(view, pos, "previous", renderedSize) });
+    actions.push({ id: "inline-previous", label: "Place inline with previous paragraph", icon: "text-cursor-input", run: () => ownsImagePlacement(view, doc, pos, node) && mergeWithAdjacent(view, pos, "previous", renderedSize) });
   }
   if (info.index + 1 < info.parent.childCount && info.parent.child(info.index + 1).type.name === "paragraph") {
-    actions.push({ id: "inline-next", label: "Place inline with next paragraph", icon: "text-cursor-input", run: () => mergeWithAdjacent(view, pos, "next", renderedSize) });
+    actions.push({ id: "inline-next", label: "Place inline with next paragraph", icon: "text-cursor-input", run: () => ownsImagePlacement(view, doc, pos, node) && mergeWithAdjacent(view, pos, "next", renderedSize) });
   }
   return actions;
 }

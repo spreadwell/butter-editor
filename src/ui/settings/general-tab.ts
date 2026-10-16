@@ -25,7 +25,7 @@ function renderRichFormattingSetting(
 
   richSetting.descEl.empty();
   richSetting.descEl.createDiv({
-    text: tx("Adds text color, custom highlights, underline, superscript, and subscript."),
+    text: tx("Adds text color, custom highlights, and underline."),
   });
   appendInlineNotice(
     richSetting.descEl,

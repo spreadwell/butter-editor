@@ -69,7 +69,6 @@ export function attachMenuSurfaceMotion(
   patchedMenus.add(menu);
 
   const originalHide = menu.hide.bind(menu);
-  const originalClose = menu.close.bind(menu);
   let leaving = false;
   let finalized = false;
   let pendingPointerAction = false;
@@ -105,15 +104,12 @@ export function attachMenuSurfaceMotion(
     immediateMenuClosers.delete(menu);
     dom?.ownerDocument.removeEventListener("pointerdown", notePointerAction, true);
     dom?.ownerDocument.removeEventListener("mousedown", notePointerAction, true);
-    // Restore first: Obsidian's hide/close implementations may delegate to
-    // each other internally, and must not re-enter the motion wrapper.
+    // Restore first so native cleanup cannot re-enter the motion wrapper.
+    // The legacy close alias delegates to hide and needs no separate patch.
     menu.hide = originalHide;
-    menu.close = originalClose;
     try {
-      originalClose();
-    } catch {
-      try { originalHide(); } catch { /* already detached */ }
-    }
+      originalHide();
+    } catch { /* already detached */ }
   };
   const requestClose = () => {
     if (leaving || finalized) return;
@@ -145,9 +141,6 @@ export function attachMenuSurfaceMotion(
   menu.hide = function motionHide(): Menu {
     requestClose();
     return menu;
-  };
-  menu.close = function motionClose(): void {
-    requestClose();
   };
   immediateMenuClosers.set(menu, finalize);
   menu.onHide(() => {

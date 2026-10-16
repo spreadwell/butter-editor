@@ -8,7 +8,8 @@
  */
 
 import type { Node as PMNode, Schema } from "prosemirror-model";
-import { isInlineMathSource } from "../core/inline-math-delimiters";
+import { isObsidianTagName } from "../core/tag-characters";
+import { commentNavigationSource } from "../core/comment-navigation";
 import {
   isRepresentableEmbedSource,
   isRepresentableFootnoteLabel,
@@ -40,6 +41,8 @@ export interface AtomField {
    *  every markdown file's basename so typing fuzzy-narrows from a
    *  full vault list - friendlier than memorizing exact filenames. */
   autocomplete?: "vault-files";
+  /** Preserve native multiline payloads; Shift+Enter inserts a line break. */
+  multiline?: boolean;
 }
 
 /** Description of an editable atom type: how to serialize it to
@@ -97,16 +100,15 @@ function joinEmbedSrc(values: Record<string, string>): string | null {
   if (!isRepresentableEmbedSource(file)) return null;
   const w = (values.width ?? "").trim();
   const h = (values.height ?? "").trim();
-  if (!w) return file;
-  if (h) return `${file}|${w}x${h}`;
-  return `${file}|${w}`;
+  const combined = !w ? file : h ? `${file}|${w}x${h}` : `${file}|${w}`;
+  return isRepresentableEmbedSource(combined) ? combined : null;
 }
 
 function inlineFootnoteFromFields(
   values: Record<string, string>,
   node: PMNode,
 ): PMNode | null {
-  const content = values.content.replace(/\s+$/, "");
+  const content = values.content;
   return isRepresentableInlineFootnote(content)
     ? node.type.create({ content })
     : null;
@@ -117,14 +119,14 @@ export const SPECS: Record<string, AtomSpec> = {
     typeName: "wikilink",
     label: "Wikilink",
     toSource(node) {
-      const { target, alias } = node.attrs;
-      return alias ? `[[${target}|${alias}]]` : `[[${target}]]`;
+      const { target, alias, emptyAlias } = node.attrs;
+      return commentNavigationSource(node) ?? (alias || emptyAlias === true ? `[[${target}|${alias}]]` : `[[${target}]]`);
     },
     fromSource(src, schema) {
       const trimmed = src.trim();
       if (!trimmed) return null;
       // Bracketed form `[[Note]]` or `[[Note|alias]]`.
-      const bracketed = /^\[\[([^\]|]+)(\|([^\]]+))?\]\]$/.exec(trimmed);
+      const bracketed = /^\[\[([^\]|]+)(\|([^\]]*))?\]\]$/.exec(trimmed);
       if (bracketed) {
         const target = bracketed[1].trim();
         const alias = (bracketed[3] ?? "").trim();
@@ -135,6 +137,7 @@ export const SPECS: Record<string, AtomSpec> = {
         return schema.nodes.wikilink.create({
           target,
           alias,
+          emptyAlias: bracketed[2] !== undefined && alias === "",
         });
       }
       // Plain form - allow `Note` or `Note|alias` without requiring
@@ -151,7 +154,7 @@ export const SPECS: Record<string, AtomSpec> = {
           !isRepresentableWikilinkTarget(target) ||
           !isRepresentableWikilinkAlias(alias)
         ) return null;
-        return schema.nodes.wikilink.create({ target, alias });
+        return schema.nodes.wikilink.create({ target, alias, emptyAlias: alias === "" });
       }
       return isRepresentableWikilinkTarget(trimmed)
         ? schema.nodes.wikilink.create({ target: trimmed, alias: "" })
@@ -194,7 +197,10 @@ export const SPECS: Record<string, AtomSpec> = {
       // string as target, don't store an alias - the wikilink will
       // render its target as the visible text by default.
       if (!alias || alias === target) alias = "";
-      return node.type.create({ target, alias });
+      // An authored empty pipe is an explicit blank display, not the default
+      // target label. Editing only the target must retain that distinction.
+      return node.type.create({ target, alias,
+        emptyAlias: node.attrs.emptyAlias === true && values.alias.trim() === "" });
     },
   },
   obsidian_tag: {
@@ -204,9 +210,9 @@ export const SPECS: Record<string, AtomSpec> = {
       return `#${node.attrs.tag}`;
     },
     fromSource(src, schema) {
-      const m = /^#([A-Za-z0-9_\-/]+)$/.exec(src.trim());
-      if (!m) return null;
-      return schema.nodes.obsidian_tag.create({ tag: m[1] });
+      const source = src.trim();
+      if (!source.startsWith("#") || !isObsidianTagName(source.slice(1))) return null;
+      return schema.nodes.obsidian_tag.create({ tag: source.slice(1) });
     },
     fields: [
       {
@@ -222,9 +228,9 @@ export const SPECS: Record<string, AtomSpec> = {
     fromFields(values, node) {
       // Accept user-typed `#tag` OR plain `tag`; strip the leading
       // hash so the attr value stays clean and round-trips through
-      // the existing toSource regex.
+      // the shared native source grammar.
       const raw = values.tag.trim().replace(/^#/, "");
-      if (!/^[A-Za-z0-9_\-/]+$/.test(raw)) return null;
+      if (!isObsidianTagName(raw)) return null;
       return node.type.create({ tag: raw });
     },
   },
@@ -268,7 +274,7 @@ export const SPECS: Record<string, AtomSpec> = {
     typeName: "obsidian_embed_inline",
     label: "Embed",
     toSource(node) {
-      return `![[${node.attrs.src}]]`;
+      return commentNavigationSource(node) ?? `![[${node.attrs.src}]]`;
     },
     fromSource(src, schema) {
       const m = /^!\[\[([^\]]+)\]\]$/.exec(src.trim());
@@ -303,8 +309,8 @@ export const SPECS: Record<string, AtomSpec> = {
     },
     fromSource(src, schema) {
       const t = src.trim();
-      if (!isInlineMathSource(t)) return null;
       const value = t.slice(1, -1);
+      if (!t.startsWith("$") || !t.endsWith("$") || !isRepresentableInlineMath(value)) return null;
       return schema.nodes.inline_math.create({ value });
     },
     fields: [
@@ -313,13 +319,14 @@ export const SPECS: Record<string, AtomSpec> = {
         label: "TeX",
         icon: "sigma",
         placeholder: "x^2 + y^2 = r^2",
+        multiline: true,
       },
     ],
     toFields(node) {
       return { value: (node.attrs.value as string) ?? "" };
     },
     fromFields(values, node) {
-      const value = values.value.trim();
+      const value = values.value;
       if (!isRepresentableInlineMath(value)) return null;
       return node.type.create({ value });
     },
@@ -359,7 +366,7 @@ export const SPECS: Record<string, AtomSpec> = {
       return `^[${node.attrs.content}]`;
     },
     fromSource(src, schema) {
-      const m = /^\^\[(.*)\]$/.exec(src);
+      const m = /^\^\[([\s\S]*)\]$/.exec(src);
       if (!m || !isRepresentableInlineFootnote(m[1])) return null;
       return schema.nodes.inline_footnote.create({ content: m[1] });
     },
@@ -369,6 +376,7 @@ export const SPECS: Record<string, AtomSpec> = {
         label: "Footnote text",
         icon: "asterisk",
         placeholder: "Footnote body shown inline",
+        multiline: true,
       },
     ],
     toFields(node) {

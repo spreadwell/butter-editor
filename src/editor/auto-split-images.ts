@@ -11,8 +11,8 @@
  * This plugin watches every transaction and, when a paragraph ends
  * up with mixed content where one or more children are "block-class"
  * (full-width-rendering) inline atoms, replaces the paragraph with
- * up to 3 new paragraphs - pre-atom (trimmed), atom-only, post-
- * atom (trimmed) - so the atom sits alone in its own block.
+ * up to 3 new paragraphs - pre-atom, atom-only, post-atom - so the
+ * atom sits alone in its own block without deleting text or marks.
  *
  * Block-class inline atoms:
  *   • `image` with `width === null` (no explicit pixel width set;
@@ -26,11 +26,10 @@
  * `![[pic|150x150]]`) stay inline since the user has explicitly
  * scoped the visual size.
  *
- * Whitespace handling: the leading/trailing whitespace of the new
- * pre/post paragraphs is trimmed because markdown-it trims it on
- * re-parse anyway. Without trimming, every split paragraph would
- * lose 1-2 chars of textContent on round-trip and the save guard's
- * fingerprint check would fail.
+ * Reference images retain their authored definition binding and native alt
+ * grammar. Marked atoms retain their complete source owner/provenance; splitting
+ * a linked occurrence across paragraphs would change native cardinality. Both
+ * stay inline. The serializer owns faithful edge-whitespace spelling.
  *
  * Drag interlock: the plugin SKIPS its work when a Butter drag is
  * in progress (the Drag Scene body class is set). Splits
@@ -42,15 +41,19 @@
  * strict source preservation can turn it off and the plugin
  * becomes a no-op.
  */
-import { Plugin, PluginKey } from "prosemirror-state";
+import { Plugin, PluginKey, type Transaction } from "prosemirror-state";
+import { isHistoryTransaction } from "prosemirror-history";
 import type { Schema } from "prosemirror-model";
 import type { Node as PMNode } from "prosemirror-model";
 import { changedRangesInFinalDoc } from "./changed-ranges";
+import { RAW_BLOCK_SYNC_META } from "../core/raw-block-safety";
 
 const key = new PluginKey("butter-auto-split-images");
 
 function shouldBeBlockLevel(node: PMNode): boolean {
+  if (node.marks.length) return false;
   if (node.type.name === "image") {
+    if (node.attrs.sourceSyntax === "reference") return false;
     // Pixel-sized → keep inline. width=null covers both natural and
     // full-width display modes; both render full-column-wide.
     return node.attrs.width == null;
@@ -64,37 +67,6 @@ function shouldBeBlockLevel(node: PMNode): boolean {
   return false;
 }
 
-// Trim leading whitespace from the first text node in a fragment,
-// dropping the node entirely if it goes to zero length. Returns the
-// resulting children array.
-function trimLeadingWhitespace(children: PMNode[], schema: Schema): PMNode[] {
-  if (children.length === 0) return children;
-  const first = children[0];
-  if (!first.isText) return children;
-  const trimmed = first.text!.replace(/^[ \t]+/, "");
-  if (trimmed === first.text) return children;
-  if (trimmed.length === 0) return children.slice(1);
-  return [
-    schema.text(trimmed, first.marks),
-    ...children.slice(1),
-  ];
-}
-
-// Trim trailing whitespace from the last text node in a children
-// array, dropping the node if it goes to zero length.
-function trimTrailingWhitespace(children: PMNode[], schema: Schema): PMNode[] {
-  if (children.length === 0) return children;
-  const last = children[children.length - 1];
-  if (!last.isText) return children;
-  const trimmed = last.text!.replace(/[ \t]+$/, "");
-  if (trimmed === last.text) return children;
-  if (trimmed.length === 0) return children.slice(0, -1);
-  return [
-    ...children.slice(0, -1),
-    schema.text(trimmed, last.marks),
-  ];
-}
-
 export function autoSplitImagesPlugin(
   schema: Schema,
   isEnabled: () => boolean,
@@ -103,6 +75,16 @@ export function autoSplitImagesPlugin(
     key,
     appendTransaction(transactions, _oldState, newState) {
       if (!isEnabled()) return null;
+      // History and trusted source/save reconciliation restore an accepted
+      // placement. Their bounding replacements can include unchanged inline
+      // layouts; those ranges do not request new automatic placement.
+      if (transactions.some(tr => {
+        // Later append rounds contain only unseen suffix transactions. PM
+        // binds each appended transaction to the initiating root operation.
+        const root = (tr.getMeta("appendedTransaction") as Transaction | undefined) ?? tr;
+        return isHistoryTransaction(tr) || tr.getMeta(RAW_BLOCK_SYNC_META) === true ||
+          isHistoryTransaction(root) || root.getMeta(RAW_BLOCK_SYNC_META) === true;
+      })) return null;
       const changedRanges = changedRangesInFinalDoc(transactions, newState.doc);
       if (changedRanges.length === 0) return null;
       // Skip while a drag is in progress - splitting paragraphs
@@ -172,15 +154,9 @@ export function autoSplitImagesPlugin(
         });
         if (!atom) continue;
 
-        // Trim trailing ws from pre, leading ws from post. Markdown-
-        // it trims these on re-parse, so leaving them in causes a
-        // textContent delta the save guard rejects.
-        const trimmedPre = trimTrailingWhitespace(preChildren, schema);
-        const trimmedPost = trimLeadingWhitespace(postChildren, schema);
-
         const replacement: PMNode[] = [];
-        if (trimmedPre.length > 0) {
-          replacement.push(para.create(null, trimmedPre));
+        if (preChildren.length > 0) {
+          replacement.push(para.create(null, preChildren));
         }
         // When the isolated atom is a wikilink-embed, switch to the
         // BLOCK-level `obsidian_embed` schema node - that's what
@@ -201,8 +177,8 @@ export function autoSplitImagesPlugin(
           atomBlock = para.create(null, atomNode);
         }
         replacement.push(atomBlock);
-        if (trimmedPost.length > 0) {
-          replacement.push(para.create(null, trimmedPost));
+        if (postChildren.length > 0) {
+          replacement.push(para.create(null, postChildren));
         }
         const paraEnd = paraPos + paraNode.nodeSize;
         tr.replaceWith(paraPos, paraEnd, replacement);

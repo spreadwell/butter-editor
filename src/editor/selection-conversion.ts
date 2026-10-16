@@ -1,6 +1,7 @@
 import { Fragment, type Node as PMNode } from "prosemirror-model";
 import { TextSelection, type Command, type EditorState } from "prosemirror-state";
 import { closeHistory } from "prosemirror-history";
+import { createHeadingWithExactInline } from "./textblock-command";
 
 export type SelectionTarget = "paragraph" | "blockquote" | "obsidian_callout"
   | "bullet_list" | "ordered_list" | "task_list" | `h${number}`;
@@ -124,7 +125,8 @@ export function convertTextSelection(target: SelectionTarget, calloutType = "not
           ));
         }
         const type = target === "paragraph" ? state.schema.nodes.paragraph : state.schema.nodes.heading;
-        return [type.create(target === "paragraph" ? null : { level: Number(target.slice(1)) }, node.content)];
+        return [target === "paragraph" ? type.create(null, node.content)
+          : createHeadingWithExactInline(type, { level: Number(target.slice(1)) }, node.content)];
       };
       // Partial flat-list runs cannot acquire an orphaned indentation level.
       const next = state.doc.nodeAt(replaceTo);

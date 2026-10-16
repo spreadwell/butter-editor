@@ -29,7 +29,7 @@ import {
 } from "prosemirror-state";
 import type { EditorState, Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import type { Node as PMNode } from "prosemirror-model";
+import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
 import { App, Menu, Notice } from "obsidian";
 import { shiftSelectedListItemDepth } from "./list-operations";
 import { LIST_DEPTH_MULTI_SELECTION_META } from "./list-depth";
@@ -43,7 +43,11 @@ import {
 import { tx, tv } from "../i18n";
 import { dismissMenuOnScroll } from "../ui/menu-scroll-dismiss";
 import { hideMenuSurfaceImmediately } from "../ui/surface-motion";
+import { writeInternalClipboardSlice } from "./internal-clipboard";
 import { joinOrderedRunsAfterConversion } from "./flat-list-editing";
+import { isCalloutConversionRefusal } from "./native-block-id-conservation";
+import { bindEditorMenuInteraction, captureBlockMenuMutation, isEditorMenuInteraction } from "./block-menu-ownership";
+import { isEditorModalInteraction } from "./modal-selection-ownership";
 
 export interface MultiBlockSelection {
   /** Doc positions of the top-level blocks currently selected. Each
@@ -274,7 +278,7 @@ export function openMultiBlockContextMenu(
   triggerHandle: HTMLElement,
   triggerBlockPos: number,
   positions: number[],
-  serializeNode: (node: PMNode) => string,
+  _serializeNode: (node: PMNode) => string,
 ): Menu {
   const sortedPositions = [...positions].sort((a, b) => a - b);
   const count = sortedPositions.length;
@@ -287,7 +291,10 @@ export function openMultiBlockContextMenu(
     })
     .filter((x): x is { pos: number; node: PMNode } => x != null);
 
+  const mayMutate = captureBlockMenuMutation(view, nodes);
+
   const menu = new Menu();
+  bindEditorMenuInteraction(menu, view);
   // Shared chrome - adds .butter-block-context-menu class + the
   // header row (icon "layers" for multi-stack, "N blocks" title,
   // total char count subtext). Header DOM is identical to the
@@ -300,17 +307,14 @@ export function openMultiBlockContextMenu(
   });
 
   const copyAll = async (): Promise<boolean> => {
-    try {
-      const md = nodes.map((n) => serializeNode(n.node)).join("\n\n");
-      await navigator.clipboard.writeText(md.replace(/\n+$/, ""));
-      return true;
-    } catch {
-      new Notice(tx("Clipboard write failed"));
-      return false;
-    }
+    const copied = await writeInternalClipboardSlice(view,
+      new Slice(Fragment.fromArray(nodes.map(({ node }) => node)), 0, 0));
+    if (!copied) new Notice(tx("Clipboard write failed"));
+    return copied;
   };
 
   const deleteAll = () => {
+    if (!mayMutate()) return;
     const tr = view.state.tr;
     for (let i = nodes.length - 1; i >= 0; i--) {
       const { pos, node } = nodes[i];
@@ -338,6 +342,7 @@ export function openMultiBlockContextMenu(
   const sharedItems = intersectBlockMenuSpecs(perBlockSpecs);
   if (sharedItems.length > 0) {
     renderBlockMenuItems(menu, sharedItems, (item) => {
+      if (!mayMutate()) { hideMenuSurfaceImmediately(menu); return; }
       if (item.applyTr) {
         const tr = view.state.tr;
         const orderedConversions = item.id === "ordered_list"
@@ -354,11 +359,12 @@ export function openMultiBlockContextMenu(
         if (orderedConversions.length > 0) {
           joinOrderedRunsAfterConversion(tr, orderedConversions);
         }
-        if (tr.docChanged) {
+        if (tr.docChanged || isCalloutConversionRefusal(tr)) {
+          const previousDoc = view.state.doc;
           view.dispatch(tr);
           // Doc changed → captured positions are stale. Clear the
           // multi-set so the user starts a fresh gesture.
-          dispatchMultiBlock(
+          if (view.state.doc !== previousDoc) dispatchMultiBlock(
             view.state,
             view.dispatch.bind(view),
             { kind: "clear" },
@@ -387,7 +393,12 @@ export function openMultiBlockContextMenu(
     item.setTitle(tx("Cut"));
     item.setIcon("scissors");
     item.onClick(async () => {
-      if (await copyAll()) {
+      if (!mayMutate()) return;
+      const capturedDoc = view.state.doc, capturedSelection = view.state.selection;
+      const capturedMultiSelection = getMultiBlockSelection(view.state);
+      if (await copyAll() && mayMutate() && view.state.doc === capturedDoc && view.state.selection.eq(capturedSelection) &&
+        getMultiBlockSelection(view.state) === capturedMultiSelection &&
+        nodes.every(({ pos, node }) => view.state.doc.nodeAt(pos) === node)) {
         deleteAll();
         new Notice(tv("Cut {count} blocks", { count }));
       }
@@ -398,6 +409,7 @@ export function openMultiBlockContextMenu(
     item.setTitle(tx("Duplicate"));
     item.setIcon("copy-plus");
     item.onClick(() => {
+      if (!mayMutate()) return;
       const last = nodes[nodes.length - 1];
       const insertAt = last.pos + last.node.nodeSize;
       const clones = nodes.map(({ node }) =>
@@ -420,8 +432,12 @@ export function openMultiBlockContextMenu(
         item.setTitle(tx(merge.title));
         item.setIcon(merge.icon);
         item.onClick(() => {
+          if (!mayMutate()) return;
+          const previousDoc = view.state.doc;
           merge.run(view, nodes);
-          dispatchMultiBlock(
+          // A prepared merge can be refused by content/reference admission.
+          // Keep the original selection until an edit actually enters state.
+          if (view.state.doc !== previousDoc) dispatchMultiBlock(
             view.state,
             view.dispatch.bind(view),
             { kind: "clear" },
@@ -595,6 +611,7 @@ export function multiBlockSelectPlugin(
       const onPointerDown = (e: PointerEvent) => {
         const target = e.target as Element | null;
         if (!target) return;
+        if (isEditorMenuInteraction(editorView, target) || isEditorModalInteraction(editorView, target)) return;
         const isToolbarSurface = Boolean(target.closest?.(
           ".butter-toolbar, .butter-toolbar-submenu-popup",
         ));
@@ -749,6 +766,7 @@ export function multiBlockSelectPlugin(
         // so dispatching the clear here keeps the timing in sync.
         const target = e.target as Element | null;
         if (!target) return;
+        if (isEditorMenuInteraction(editorView, target) || isEditorModalInteraction(editorView, target)) return;
         if (target.closest(".butter-drag-handle")) return;
         if (target.closest(".butter-selection-overlay")) return;
         if (target.closest(
@@ -815,6 +833,7 @@ export function multiBlockSelectPlugin(
       const onKeyDown = (e: KeyboardEvent) => {
         if (e.key !== "Tab") return;
         if (e.altKey || e.ctrlKey || e.metaKey) return;
+        if (isEditorModalInteraction(editorView, e.target)) return;
         const state = editorView.state;
         const multi = getMultiBlockSelection(state);
         const nodeSelOnListItem =

@@ -46,6 +46,7 @@ import {
 } from "../editor/block-menu-spec";
 import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
 import { tx, txKnown, tv } from "../i18n";
+import { captureDeferredUiOwnership } from "../editor/deferred-ui-ownership";
 
 const BODY_CLASS = "butter-mobile-drawer-open";
 const RETURNING_KEYBOARD_CLASS = "butter-mobile-drawer-returning-keyboard";
@@ -83,7 +84,7 @@ export interface DrawerOpenOptions {
  *  `closeMobileInsertDrawer` is exported and called from multiple
  *  sites (close button, tile tap, focus-in auto-dismiss) without
  *  passing context. */
-let activeCleanup: (() => void) | null = null;
+let activeCleanup: ((explicit?: boolean) => boolean | void) | null = null;
 let closeTimer: number | null = null;
 let returningKeyboardTimer: number | null = null;
 let keyboardAlignTimer: number | null = null;
@@ -94,7 +95,7 @@ export interface DrawerPrepareResult {
   previousHeightPx: number | null;
 }
 
-export function setMobileDrawerCleanup(cleanup: (() => void) | null): void {
+export function setMobileDrawerCleanup(cleanup: ((explicit?: boolean) => boolean | void) | null): void {
   activeCleanup = cleanup;
 }
 
@@ -202,10 +203,11 @@ function holdToolbarForKeyboardReturn(): void {
   }, RETURNING_KEYBOARD_MS);
 }
 
-function runActiveCleanup(): void {
-  if (!activeCleanup) return;
-  activeCleanup();
-  activeCleanup = null;
+function runActiveCleanup(explicit = false): boolean {
+  const cleanup = activeCleanup;
+  if (cleanup?.(explicit) === false) return false;
+  if (activeCleanup === cleanup) activeCleanup = null;
+  return true;
 }
 
 function removeDrawerBodyLockIfIdle(): void {
@@ -608,6 +610,7 @@ function renderInsertTile(
   schema: Schema,
   app: App,
 ): void {
+  const ownership = captureDeferredUiOwnership(view);
   const tile = activeWindow.createEl("button");
   tile.className = "butter-mobile-insert-drawer-tile clickable-icon";
   tile.setAttribute("aria-label", txKnown(item.label));
@@ -621,6 +624,7 @@ function renderInsertTile(
   tile.appendChild(labelEl);
   tile.addEventListener("click", (e) => {
     e.preventDefault();
+    if (!ownership.canMutate({ explicit: true })) return;
     // Close FIRST so the keyboard reappears alongside the
     // inserted block - the user expects to keep typing.
     closeMobileInsertDrawer();
@@ -680,6 +684,7 @@ function renderBlockTile(
   view: EditorView,
   ctx: DrawerBlockContext,
 ): void {
+  const ownership = captureDeferredUiOwnership(view);
   const tile = activeWindow.createEl("button");
   tile.className = "butter-mobile-insert-drawer-tile clickable-icon";
   tile.setAttribute("aria-label", txKnown(item.title));
@@ -694,6 +699,7 @@ function renderBlockTile(
   tile.appendChild(labelEl);
   tile.addEventListener("click", (e) => {
     e.preventDefault();
+    if (!ownership.canMutate({ explicit: true }) || view.state.doc.nodeAt(ctx.pos) !== ctx.node) return;
     closeMobileInsertDrawer();
     try {
       if (item.applyTr) {
@@ -717,6 +723,7 @@ function renderBlockSubTile(
   view: EditorView,
   ctx: DrawerBlockContext,
 ): void {
+  const ownership = captureDeferredUiOwnership(view);
   const tile = activeWindow.createEl("button");
   tile.className = "butter-mobile-insert-drawer-tile clickable-icon";
   tile.setAttribute("aria-label", txKnown(sub.title));
@@ -732,6 +739,7 @@ function renderBlockSubTile(
   tile.appendChild(labelEl);
   tile.addEventListener("click", (e) => {
     e.preventDefault();
+    if (!ownership.canMutate({ explicit: true }) || view.state.doc.nodeAt(ctx.pos) !== ctx.node) return;
     closeMobileInsertDrawer();
     try {
       if (sub.applyTr) {
@@ -754,14 +762,14 @@ function renderBlockSubTile(
  *  keyboard return is desired (we don't refocus here because the
  *  trigger sites - close button, tile click, editor refocus
  *  have different refocus needs). */
-export function closeMobileInsertDrawer(options: { returningKeyboard?: boolean } = {}): number {
+export function closeMobileInsertDrawer(options: { returningKeyboard?: boolean; explicit?: boolean } = {}): number {
+  if (!runActiveCleanup(options.explicit === true)) return -1;
   suppressNativeMobileToolbar();
   if (options.returningKeyboard) holdToolbarForKeyboardReturn();
   clearPendingClose();
   // Run open-time cleanup (removes fake cursor + focusin listener)
   // BEFORE starting the close animation, so a synchronous focus event
   // can't double-fire close.
-  runActiveCleanup();
   const existing = Array.from(
     activeDocument.body.querySelectorAll<HTMLElement>(
       ".butter-mobile-insert-drawer",

@@ -6,6 +6,7 @@ import {
   type Schema,
 } from "prosemirror-model";
 import type { NodeView, NodeViewConstructor } from "prosemirror-view";
+import { isCodeEditContainmentMutation } from "./code-edit-containment";
 
 /**
  * Parse provenance and drag identity do not affect a node's rendered DOM.
@@ -91,6 +92,9 @@ export function stableDefaultNodeViews(
           currentNode = nextNode;
           return true;
         },
+        ignoreMutation: rendered.contentDOM
+          ? (mutation) => isCodeEditContainmentMutation(mutation, rendered.dom)
+          : undefined,
       };
     };
   }

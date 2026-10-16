@@ -1,9 +1,27 @@
+import { isObsidianTagName, isObsidianTagText } from "../core/tag-characters";
+
 export type AutocompleteMode = "wikilink" | "embed" | "tag";
 
-const TAG_QUERY_RE = /^[A-Za-z0-9_/-]*$/;
-
 export function isTagAutocompleteQuery(text: string): boolean {
-  return TAG_QUERY_RE.test(text);
+  return isObsidianTagText(text);
+}
+
+/** Partial numeric queries are useful; only representable names become atoms. */
+export function tagAutocompleteSuggestions(
+  query: string,
+  available: Iterable<string>,
+): Array<{ text: string; create?: boolean }> {
+  const tags = new Set(Array.from(available).filter(isObsidianTagName));
+  const lower = query.toLowerCase();
+  const suggestions: Array<{ text: string; create?: boolean }> = Array.from(tags)
+    .filter(tag => !query || tag.toLowerCase().includes(lower))
+    .sort()
+    .slice(0, 20)
+    .map(text => ({ text }));
+  if (isObsidianTagName(query) && !Array.from(tags).some(tag => tag.toLowerCase() === lower)) {
+    suggestions.unshift({ text: query, create: true });
+  }
+  return suggestions;
 }
 
 export function getAutocompleteQuery(

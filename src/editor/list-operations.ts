@@ -12,7 +12,7 @@
  *     Toggle the GFM task state of the current list line
  *     (empty → `[ ]` → `[x]` → empty).
  */
-import { Plugin as PMPlugin, NodeSelection } from "prosemirror-state";
+import { Plugin as PMPlugin, NodeSelection, Selection } from "prosemirror-state";
 import type {
   EditorState,
   Transaction,
@@ -26,6 +26,8 @@ import { TextSelection } from "prosemirror-state";
 import { StepMap } from "prosemirror-transform";
 import { getMultiBlockSelection } from "./multi-block-select";
 import { shiftListItemDepths, shiftTextSelectedListItemDepths } from "./list-depth";
+import { markBlockConversionRefusal } from "./native-block-id-conservation";
+import { flatListLayoutFor } from "../core/list-layout";
 
 // ═══════════════════════════════════════════
 //  Move block up/down
@@ -45,6 +47,47 @@ interface MovableContext {
   childIndex: number;
 }
 
+interface MoveRanges {
+  sourceEnd: number;
+  targetStart: number;
+  targetEnd: number;
+}
+
+/** Flat-list children are document siblings, but one visible item owns its
+ * deeper descendant run. Keyboard reordering must move that entire run. */
+function moveRanges(parent: PMNode, sourceStart: number, dir: -1 | 1): MoveRanges | null {
+  const layout = flatListLayoutFor(parent);
+  const source = layout[sourceStart];
+  const subtreeEnd = (start: number): number => {
+    const entry = layout[start];
+    if (!entry) return start + 1;
+    let end = start + 1;
+    while (end < parent.childCount && layout[end] && layout[end]!.effectiveDepth > entry.effectiveDepth) end++;
+    return end;
+  };
+  const sourceEnd = subtreeEnd(sourceStart);
+  if (dir === 1) {
+    const targetStart = sourceEnd;
+    if (targetStart >= parent.childCount) return null;
+    const target = layout[targetStart];
+    // A nested item cannot move out past its owning ancestor's boundary.
+    if (source && source.effectiveDepth > 0 && (!target || target.effectiveDepth !== source.effectiveDepth)) return null;
+    return { sourceEnd, targetStart, targetEnd: subtreeEnd(targetStart) };
+  }
+  let targetStart = sourceStart - 1;
+  if (targetStart < 0) return null;
+  if (source) {
+    while (targetStart >= 0 && layout[targetStart] && layout[targetStart]!.effectiveDepth > source.effectiveDepth) targetStart--;
+    const target = layout[targetStart];
+    if (targetStart < 0 || (source.effectiveDepth > 0 && (!target || target.effectiveDepth !== source.effectiveDepth))) return null;
+  } else {
+    // Moving ordinary prose above a list crosses the complete preceding
+    // root item, rather than stealing that root's final descendant.
+    while (layout[targetStart]?.parentIndex != null) targetStart = layout[targetStart]!.parentIndex!;
+  }
+  return { sourceEnd, targetStart, targetEnd: sourceStart };
+}
+
 function findMovable(
   state: EditorState,
   dir: -1 | 1,
@@ -52,6 +95,9 @@ function findMovable(
   const { $from } = state.selection;
   for (let d = $from.depth; d >= 0; d--) {
     const parent = d === 0 ? state.doc : $from.node(d);
+    // Inline mark/text/atom siblings and table rows/cells are parts of the
+    // containing block. A block-move shortcut must never reorder them.
+    if (parent.inlineContent || parent.type.spec.tableRole) continue;
     const childIndex = d === 0 ? $from.index(0) : $from.index(d);
     const target = childIndex + dir;
     if (target >= 0 && target < parent.childCount) {
@@ -68,27 +114,70 @@ function moveBlockCmd(dir: -1 | 1): Command {
     if (!ctx) return false;
 
     const { parent, parentPos, childIndex } = ctx;
-    const target = childIndex + dir;
-    const children: PMNode[] = [];
-    parent.forEach((child) => children.push(child));
-    const [a, b] =
-      dir === 1 ? [childIndex, target] : [target, childIndex];
-    [children[a], children[b]] = [children[b], children[a]];
+    const ranges = moveRanges(parent, childIndex, dir);
+    if (!ranges) {
+      if (dispatch) {
+        const refused = state.tr;
+        markBlockConversionRefusal(refused);
+        dispatch(refused);
+      }
+      return true;
+    }
+    const { sourceEnd, targetStart, targetEnd } = ranges;
+    const original: PMNode[] = [];
+    parent.forEach(child => original.push(child));
+    const sourceNodes = original.slice(childIndex, sourceEnd), targetNodes = original.slice(targetStart, targetEnd);
+    const a = Math.min(childIndex, targetStart), end = Math.max(sourceEnd, targetEnd);
+    const first = dir === 1 ? targetNodes : sourceNodes, second = dir === 1 ? sourceNodes : targetNodes;
+    const children = [...original.slice(0, a), ...first, ...second, ...original.slice(end)];
+    // An ordered run's start belongs to its first position, as in the drag
+    // reorder policy. Moving its first continuation ahead must not invent a
+    // new 1-run or move the authored start onto a second independent run.
+    const layout = flatListLayoutFor(parent), left = layout[a], right = layout[Math.max(childIndex, targetStart)];
+    if (left && right && left.markerNumber !== null && right.markerNumber !== null &&
+      left.runStartIndex === right.runStartIndex && left.effectiveDepth === right.effectiveDepth &&
+      left.runStartIndex === a) {
+      const authoredStart: unknown = parent.child(a).attrs.start;
+      children[a] = children[a].type.create({ ...children[a].attrs,
+        start: typeof authoredStart === "number" ? authoredStart : null, sourceRange: null },
+        children[a].content, children[a].marks);
+      const secondStart = a + first.length;
+      children[secondStart] = children[secondStart].type.create({ ...children[secondStart].attrs, start: null, sourceRange: null },
+        children[secondStart].content, children[secondStart].marks);
+    }
+
+    const content = Fragment.fromArray(children);
+    const contentStart = ctx.depth === 0 ? 0 : parentPos + 1;
+    let oldStart = contentStart, newStart = contentStart;
+    for (let index = 0; index < childIndex; index++) oldStart += parent.child(index).nodeSize;
+    const newIndex = dir === 1 ? a + first.length : a;
+    for (let index = 0; index < newIndex; index++) newStart += children[index].nodeSize;
+    const sourceSize = Fragment.fromArray(sourceNodes).size;
+    if (!parent.type.validContent(content) || state.selection.from < oldStart ||
+      state.selection.to > oldStart + sourceSize) {
+      if (dispatch) {
+        const refused = state.tr;
+        markBlockConversionRefusal(refused);
+        dispatch(refused);
+      }
+      return true;
+    }
 
     if (!dispatch) return true;
 
     const tr = state.tr;
-    const contentStart = ctx.depth === 0 ? 0 : parentPos + 1;
     const contentEnd =
       ctx.depth === 0 ? state.doc.content.size : parentPos + parent.nodeSize - 1;
-    tr.replaceWith(contentStart, contentEnd, Fragment.fromArray(children));
+    tr.replaceWith(contentStart, contentEnd, content);
 
     // Preserve the caret in the moved block.
-    let offset = contentStart;
-    for (let i = 0; i < target; i++) offset += children[i].nodeSize;
-    // Place caret at the start of the moved block's text content.
-    const newPos = Math.min(offset + 1, tr.doc.content.size);
-    tr.setSelection(TextSelection.near(tr.doc.resolve(newPos)));
+    const selected = state.selection.toJSON() as { type: string; anchor?: number; head?: number };
+    const delta = newStart - oldStart;
+    tr.setSelection(Selection.fromJSON(tr.doc, {
+      ...selected,
+      ...(selected.anchor !== undefined ? { anchor: selected.anchor + delta } : {}),
+      ...(selected.head !== undefined ? { head: selected.head + delta } : {}),
+    }));
 
     dispatch(tr.scrollIntoView());
     return true;

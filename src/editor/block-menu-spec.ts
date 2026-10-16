@@ -30,9 +30,9 @@
  * math's "Edit source" which opens a modal targeting one block;
  * broadcasting it would open N modals at once.
  */
-import type { Transaction } from "prosemirror-state";
+import { Selection, type EditorState, type Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import { Fragment, type Node as PMNode, type Schema } from "prosemirror-model";
+import { Fragment, Slice, type Node as PMNode, type Schema } from "prosemirror-model";
 import { App, Menu, Notice, setIcon } from "obsidian";
 import {
   COMMON_LANGS,
@@ -47,6 +47,12 @@ import { tx, txKnown, type MessageKey } from "../i18n";
 import { markTurnIntoMotion } from "./block-animator";
 import { attachMenuSurfaceMotion } from "../ui/surface-motion";
 import { convertTextSelection, hasTextSelection, selectionTarget } from "./selection-conversion";
+import { createHeadingWithExactInline } from "./textblock-command";
+import { projectLiteralCodeContent } from "./code-literal-projection";
+import { allowsDeclaredCodeTransaction, allowsPreparedSaveTransaction } from "./structural-save-admission";
+import { markBlockConversionRefusal } from "./native-block-id-conservation";
+import { writeInternalClipboardSlice } from "./internal-clipboard";
+import { captureBlockMenuMutation, inheritEditorMenuInteraction } from "./block-menu-ownership";
 export { MERGE_MENU_ITEMS, type MergeMenuItem } from "./block-merge";
 
 // ── Spec types ─────────────────────────────────────────────────
@@ -244,289 +250,126 @@ function paragraphSplitParts(schema: Schema, node: PMNode): PMNode[] | null {
 }
 
 // Inline content with marks is preserved across paragraph ↔ heading
-// and into the inner paragraph of list / quote / callout wrappers;
-// everything else flattens to plain `textContent`. Code stores plain
-// text only; math stores TeX in the `value` attr; divider/table
-// discard content. For flat-list targets the source's list-kind is
+// and into list / quote / callout wrappers. Code/Math use an explicit
+// literal projection; incompatible shapes decline before mutation.
+// For flat-list targets the source's list-kind is
 // just flipped on the same list_item - no structural rewrap needed.
 //
 // May return multiple replacement nodes - currently only when
 // converting a paragraph that contains softbreaks into a list, in
 // which case each visual line becomes its own list_item.
+function hasAuthoredCalloutTitle(node: PMNode): boolean {
+  if (node.type.name === "obsidian_callout" && node.attrs.title) return true;
+  let found = false;
+  node.descendants(child => {
+    if (child.type.name === "obsidian_callout" && child.attrs.title) found = true;
+    return !found;
+  });
+  return found;
+}
+
+/** Explicit menu intent retains inline trees and container children. Literal
+ * Code/Math projections spell supported atoms; opaque blocks have no implicit
+ * textContent projection. A caller declines the entire edit when no exact
+ * representation exists. */
 export function buildConvertedNode(
   schema: Schema,
   source: PMNode,
   targetId: string,
 ): PMNode | PMNode[] | null {
-  const tgt = TURN_INTO_ITEMS.find((t) => t.id === targetId);
-  // A quote/callout is a block container, not one text run. Converting the
-  // wrapper to Paragraph must therefore convert each child independently.
-  // `source.textContent` deliberately has no separator between block
-  // children, so flattening the wrapper would join `first` + `second` into
-  // one paragraph and silently erase their block boundary.
-  if (
-    targetId === "paragraph"
-    && (source.type.name === "blockquote" || source.type.name === "obsidian_callout")
-  ) {
-    const parts: PMNode[] = [];
-    source.forEach((child) => {
-      const converted = buildConvertedNode(schema, child, "paragraph");
-      if (Array.isArray(converted)) parts.push(...converted);
-      else if (converted) parts.push(converted);
+  if (hasAuthoredCalloutTitle(source)) return null;
+  const name = source.type.name;
+  const container = name === "blockquote" || name === "obsidian_callout" || name === "list_item";
+  const prose = name === "paragraph" || name === "heading";
+  const inline = prose ? source.content : container && source.childCount === 1 &&
+    (source.firstChild?.type.name === "paragraph" || source.firstChild?.type.name === "heading")
+    ? source.firstChild.content : null;
+  const children: PMNode[] = [];
+  if (container) source.forEach(child => children.push(child));
+  const literalText = name === "code_block" ? source.textContent : name === "math_block"
+    ? source.attrs.value as string : null;
+  const literalInline = (): Fragment | null => {
+    if (literalText === null || literalText.includes("\r")) return null;
+    const result: PMNode[] = [];
+    literalText.split("\n").forEach((line, index) => {
+      if (index) result.push(schema.nodes.softbreak.create());
+      if (line) result.push(schema.text(line));
     });
-    if (parts.length > 0) return parts;
-  }
-  // Some atom-block source types store their primary text in an attr
-  // (math_block.value, block_comment.value) rather than as text
-  // children. `source.textContent` returns "" for those, so without
-  // this fallback "Turn into code block" on a math block produces an
-  // empty code fence — content lost.
-  const attrText = (() => {
-    if (source.type.name === "math_block" || source.type.name === "block_comment") {
-      return (source.attrs.value as string | undefined) ?? "";
-    }
-    return "";
-  })();
-  const text = attrText || source.textContent;
-  // Preserve the actual inline tree whenever the source is a textblock or a
-  // simple one-textblock container. Flattening a list item to textContent
-  // discards links, code, marks and inline atoms; it also turns literal text
-  // such as `&nbsp;` into active HTML-entity syntax on the next parse.
-  const inline = (() => {
-    if (source.type.name === "paragraph" || source.type.name === "heading") {
-      return source.content;
-    }
-    if (
-      (source.type.name === "list_item" ||
-        source.type.name === "blockquote" ||
-        source.type.name === "obsidian_callout") &&
-      source.childCount === 1 &&
-      source.firstChild?.isTextblock
-    ) {
-      return source.firstChild.content;
-    }
-    return null;
-  })();
-  // Multi-line text sources (code_block, math_block, block_comment)
-  // need their embedded newlines turned into explicit `softbreak`
-  // nodes inside the synthesized textblock. A single `text("a\nb")`
-  // node serializes to a paragraph that markdown-it RE-parses with
-  // an explicit softbreak between "a" and "b" — structurally
-  // different doc, save guard fires on the round-trip check.
-  //
-  // Also strip leading AND trailing whitespace from every line.
-  // CommonMark "lazy paragraph continuation" eats up to 3 leading
-  // spaces from each line of a paragraph on reparse; markdown-it
-  // also strips trailing whitespace. Source text with indentation
-  // (e.g. code blocks being converted to paragraphs) would lose
-  // those bytes through the round-trip and fingerprint-diverge.
-  // The conversion is lossy by nature — paragraphs can't preserve
-  // code-style indentation — so normalize at synthesis time so the
-  // user sees the final shape immediately and saves are stable.
-  const softbreakType = schema.nodes.softbreak;
-  const inlineFromText = (() => {
-    if (!text) return null;
-    if (!softbreakType || !text.includes("\n")) {
-      const trimmed = text.replace(/^[ \t]+|[ \t]+$/g, "");
-      return trimmed ? schema.text(trimmed) : null;
-    }
-    const lines = text.split(/\r?\n/);
-    const out: PMNode[] = [];
-    lines.forEach((line, i) => {
-      if (i > 0) out.push(softbreakType.create());
-      const trimmed = line.replace(/^[ \t]+|[ \t]+$/g, "");
-      if (trimmed) out.push(schema.text(trimmed));
-    });
-    return out;
-  })();
-  const paragraphLikeInlineFromText = (() => {
-    if (!Array.isArray(inlineFromText)) return inlineFromText;
-    const lines = text
-      .split(/\r?\n/)
-      .map((line) => line.replace(/^[ \t]+|[ \t]+$/g, ""))
-      .filter((line) => line.length > 0);
-    if (lines.some((line, i) => i > 0 && /^(?:[#\-*+>]|\d+\.)/.test(line))) {
-      return schema.text(lines.join(" "));
-    }
-    const out: PMNode[] = [];
-    for (let i = 0; i < inlineFromText.length; i++) {
-      const node = inlineFromText[i];
-      if (node.type.name !== "softbreak") {
-        out.push(node);
-        continue;
-      }
-      const next = inlineFromText[i + 1];
-      if (next?.isText && /^(?:[#\-*+>]|\d+\.)/.test(next.text ?? "")) {
-        out.push(schema.text(" "));
-      } else {
-        out.push(node);
-      }
-    }
-    return out.length > 0 ? out : null;
-  })();
-
-  // Heading inline content. When converting any source to a heading,
-  // the source's inline (or text) cannot contain `softbreak` nodes —
-  // the heading serializer collapses softbreaks to spaces, and the
-  // reparsed heading therefore carries `text("a b")` instead of the
-  // original `text("a"), softbreak, text("b")`. The fingerprint sees
-  // a 1-char textLen drift per softbreak, save guard fires. Flatten
-  // softbreaks to spaces at synthesis time so the synthesized
-  // heading already matches what reparse will produce.
-  const flattenForHeading = (
-    content: PMNode[] | PMNode | Fragment | null,
-  ): PMNode[] | null => {
-    if (content == null) return null;
-    const nodes: PMNode[] = [];
-    const push = (n: PMNode) => nodes.push(n);
-    // PMNode has `.forEach` inherited from its content Fragment —
-    // it iterates the node's CHILDREN, not the node itself. For a
-    // single text PMNode (which has zero children), `.forEach`
-    // pushes nothing, the heading ends up empty, and the user's
-    // "Turn into heading" silently drops all content. Distinguish
-    // by `.type` (PMNode-only): if present, it's a single node;
-    // otherwise it's a Fragment.
-    if (Array.isArray(content)) content.forEach(push);
-    else if ((content as PMNode).type) push(content as PMNode);
-    else (content as Fragment).forEach(push);
-    const out: PMNode[] = [];
-    let pendingTextBuf = "";
-    const flushPending = () => {
-      if (pendingTextBuf) {
-        out.push(schema.text(pendingTextBuf));
-        pendingTextBuf = "";
-      }
-    };
-    for (const n of nodes) {
-      if (n.type.name === "softbreak" || n.type.name === "hard_break") {
-        pendingTextBuf += " ";
-      } else if (n.isText) {
-        // Merge runs of text + softbreak-as-space into a single text
-        // node so the heading has clean single-text-node inline
-        // matching what markdown-it produces on reparse.
-        if (n.marks.length === 0) {
-          pendingTextBuf += n.text;
-        } else {
-          flushPending();
-          out.push(n);
-        }
-      } else {
-        flushPending();
-        out.push(n);
-      }
-    }
-    flushPending();
-    // Trim leading whitespace from the FIRST node iff it's unmarked
-    // text at the start of the heading content, and trailing
-    // whitespace from the LAST node iff it's unmarked text at the
-    // end. Source content with leading/trailing empty lines (or
-    // softbreaks) would otherwise produce text nodes with leading
-    // or trailing spaces, which markdown-it strips on heading
-    // reparse. Crucially, we DON'T trim whitespace at mark
-    // boundaries — `**bold** text` needs the space to let `**`
-    // close cleanly; without it, `**bold**text` may not close the
-    // bold and the literal `**` ends up in the reparsed text.
-    if (out.length > 0 && out[0].isText && out[0].marks.length === 0) {
-      const trimmed = out[0].text!.replace(/^[ \t]+/, "");
-      out[0] = trimmed ? schema.text(trimmed) : null as unknown as PMNode;
-    }
-    const lastIdx = out.length - 1;
-    if (
-      lastIdx >= 0 &&
-      out[lastIdx] &&
-      out[lastIdx].isText &&
-      out[lastIdx].marks.length === 0
-    ) {
-      const trimmed = out[lastIdx].text!.replace(/[ \t]+$/, "");
-      out[lastIdx] = trimmed ? schema.text(trimmed) : null as unknown as PMNode;
-    }
-    const cleaned = out.filter((n) => n != null);
-    return cleaned.length > 0 ? cleaned : null;
+    return Fragment.fromArray(result);
   };
-  const headingInline = flattenForHeading(inline ?? inlineFromText);
-
+  const proseContent = inline ?? literalInline();
+  const projected = (): { content: Fragment; ids: PMNode[] } | null => {
+    if (literalText !== null) return { content: literalText ? Fragment.from(schema.text(literalText)) : Fragment.empty, ids: [] };
+    if (!inline) return null;
+    const body: PMNode[] = [], ids: PMNode[] = [];
+    inline.forEach(node => (node.type.name === "block_id" ? ids : body).push(node));
+    const content = projectLiteralCodeContent(Fragment.fromArray(body));
+    return content ? { content, ids } : null;
+  };
   switch (targetId) {
     case "paragraph":
-      return schema.nodes.paragraph.create(null, inline || paragraphLikeInlineFromText);
-    case "h1":
-    case "h2":
-    case "h3":
-    case "h4":
-    case "h5":
-    case "h6": {
-      const level = tgt?.level ?? 1;
-      return schema.nodes.heading.create({ level }, headingInline);
+      // Unwrap the exact block children. Atomic opaque siblings and their
+      // source-owned metadata remain blocks rather than vanishing in a loop.
+      if (container) return children;
+      if (name === "horizontal_rule") return schema.nodes.paragraph.create();
+      return proseContent ? schema.nodes.paragraph.create(null, proseContent) : null;
+    case "h1": case "h2": case "h3": case "h4": case "h5": case "h6": {
+      if (!proseContent) return null;
+      let breaks = false;
+      proseContent.forEach(node => { if (node.type.name === "softbreak" || node.type.name === "hard_break") breaks = true; });
+      if (breaks) return null;
+      return createHeadingWithExactInline(schema.nodes.heading, { level: Number(targetId.slice(1)) }, proseContent);
     }
-    case "bullet_list":
-    case "ordered_list":
-    case "task_list": {
-      const kind: "bullet" | "ordered" | "task" =
-        targetId === "ordered_list"
-          ? "ordered"
-          : targetId === "task_list"
-            ? "task"
-            : "bullet";
-      if (source.type.name === "list_item") {
-        const sourceAttrs = source.attrs as unknown as {
-          checked?: unknown;
-          start?: number | null;
-        };
-        const checkedRaw = sourceAttrs.checked;
-        return schema.nodes.list_item.create(
-          clearSourceRange({
-            ...source.attrs,
-            kind,
-            checked: kind === "task" ? (typeof checkedRaw === "boolean" ? checkedRaw : false) : null,
-            start: kind === "ordered" ? sourceAttrs.start : null,
-          }),
-          source.content,
-        );
+    case "bullet_list": case "ordered_list": case "task_list": {
+      const kind = targetId === "ordered_list" ? "ordered" : targetId === "task_list" ? "task" : "bullet";
+      if (name === "list_item") return schema.nodes.list_item.create(clearSourceRange({
+        ...source.attrs, kind,
+        checked: kind === "task" ? typeof source.attrs.checked === "boolean" ? source.attrs.checked : false : null,
+        start: kind === "ordered" ? source.attrs.start as number | null : null,
+      }), source.content);
+      const attrs = { kind, depth: 0, tight: true, checked: kind === "task" ? false : null, start: null };
+      if (container) {
+        // A list item requires a leading paragraph. Retain the exact body
+        // when it already satisfies that grammar; never flatten atomic attrs.
+        return schema.nodes.list_item.validContent(source.content)
+          ? schema.nodes.list_item.create(attrs, source.content) : null;
       }
-      const liAttrs = {
-        kind,
-        depth: 0,
-        tight: true,
-        checked: kind === "task" ? false : null,
-        start: null,
-      };
-      if (source.type.name === "paragraph") {
-        const segments = splitInlineAtSoftbreaks(source.content, schema);
-        if (segments.length > 1) {
-          return segments.map((seg) =>
-            schema.nodes.list_item.create(liAttrs, [
-              schema.nodes.paragraph.create(null, seg),
-            ]),
-          );
-        }
-      }
-      const para = schema.nodes.paragraph.create(null, inline || paragraphLikeInlineFromText);
-      return schema.nodes.list_item.create(liAttrs, [para]);
+      if (!proseContent) return null;
+      const segments = name === "paragraph" ? splitInlineAtSoftbreaks(proseContent, schema) : [proseContent];
+      let lineCount = 1;
+      proseContent.forEach(node => { if (node.type.name === "softbreak") lineCount++; });
+      if (name === "paragraph" && segments.length !== lineCount) return null;
+      return (segments.length ? segments : [Fragment.empty]).map(content =>
+        schema.nodes.list_item.create(attrs, schema.nodes.paragraph.create(null, content)));
     }
-    case "blockquote": {
-      const para = schema.nodes.paragraph.create(null, inline || paragraphLikeInlineFromText);
-      return schema.nodes.blockquote.create(null, para);
+    case "blockquote": case "obsidian_callout": {
+      const content = container ? source.content : Fragment.from(source);
+      const type = schema.nodes[targetId];
+      return type.validContent(content) ? type.create(targetId === "obsidian_callout" ? { calloutType: "note" } : null, content) : null;
     }
-    case "obsidian_callout": {
-      const para = schema.nodes.paragraph.create(null, inline || paragraphLikeInlineFromText);
-      return schema.nodes.obsidian_callout.create(
-        { calloutType: "note" },
-        para,
-      );
+    case "code_block": {
+      const literal = projected();
+      if (!literal) return null;
+      return [schema.nodes.code_block.create({ language: "" }, literal.content),
+        ...literal.ids.map(id => schema.nodes.paragraph.create(null, id))];
     }
-    case "code_block":
-      return schema.nodes.code_block.create(
-        { language: "" },
-        text ? schema.text(text) : null,
-      );
-    case "math_block":
-      return schema.nodes.math_block.create({ value: text });
-    case "horizontal_rule":
-      return schema.nodes.horizontal_rule.create();
-    default:
-      return null;
+    case "math_block": {
+      const literal = projected();
+      // Detached Math metadata ownership has not been qualified. Never
+      // deactivate a native reference by moving its marker into opaque TeX.
+      return literal && !literal.ids.length ? schema.nodes.math_block.create({ value: literal.content.textBetween(0, literal.content.size, "", "") }) : null;
+    }
+    case "horizontal_rule": {
+      let opaque = false;
+      source.descendants(node => {
+        if (node.type.name === "block_id" || !node.isText && node.isAtom ||
+          node.isText && node.marks.some(mark => mark.type.name === "code" || mark.type.name === "comment")) opaque = true;
+      });
+      return prose && !opaque ? schema.nodes.horizontal_rule.create() : null;
+    }
+    default: return null;
   }
 }
-
 // Mutates `tr` to convert the block at `pos` to `targetId`. Skips when
 // the source already matches the target (clean no-op for "click the
 // already-active option"). Used by both the single-block menu (one
@@ -538,10 +381,14 @@ function applyTurnIntoTr(
   node: PMNode,
   schema: Schema,
   targetId: string,
+  state: EditorState,
 ): void {
   if (currentTurnIntoId(node) === targetId) return;
   const replacement = buildConvertedNode(schema, node, targetId);
-  if (!replacement) return;
+  if (!replacement) {
+    markBlockConversionRefusal(tr);
+    return;
+  }
   const arr = Array.isArray(replacement) ? [...replacement] : [replacement];
   const sourceBlockId = (node.attrs as { blockId?: unknown }).blockId;
   if (typeof sourceBlockId === "string" && sourceBlockId.length > 0) {
@@ -561,6 +408,10 @@ function applyTurnIntoTr(
     });
   }
   tr.replaceWith(pos, pos + node.nodeSize, arr);
+  if (targetId === "code_block") tr.setSelection(Selection.near(tr.doc.resolve(pos + 1)));
+  if ((targetId === "code_block" || targetId === "math_block" ||
+    node.type.name === "code_block" || node.type.name === "math_block") &&
+    !allowsDeclaredCodeTransaction(state, tr, false)) markBlockConversionRefusal(tr);
 }
 
 // ── Utilities ──────────────────────────────────────────────────
@@ -578,6 +429,8 @@ function labelCase(s: string): string {
 // ── Spec builder ───────────────────────────────────────────────
 
 export interface BuildSpecArgs {
+  /** Explicit mobile edit intent; recomputes the owning view's licensed state. */
+  requestEditing?: () => void;
   selectionScope?: boolean;
   view: EditorView;
   pos: number;
@@ -600,6 +453,11 @@ export function buildSingleBlockMenuItems(
   args: BuildSpecArgs,
 ): BlockMenuItem[] {
   const { view, pos, node, app, blockDom } = args;
+  const openedDoc = view.state.doc;
+  const requestEditing = () => {
+    if (!view.isDestroyed && view.state.doc === openedDoc) args.requestEditing?.();
+  };
+  const mayMutate = captureBlockMenuMutation(view, [{ pos, node }]);
   const schema = view.state.schema;
   const items: BlockMenuItem[] = [];
 
@@ -628,7 +486,7 @@ export function buildSingleBlockMenuItems(
         title: t.label,
         icon: t.icon,
         isCurrent: t.id === currentTurn,
-        applyTr: (tr, p, n) => applyTurnIntoTr(tr, p, n, schema, t.id),
+        applyTr: (tr, p, n) => applyTurnIntoTr(tr, p, n, schema, t.id, view.state),
       }));
       if (sub.length > 0) subGroups.push(sub);
     }
@@ -679,6 +537,7 @@ export function buildSingleBlockMenuItems(
           if (!dom) return;
           const cur = (n.attrs.language as string) || "";
           showLangPopover(dom, cur, (next) => {
+            if (!mayMutate()) return;
             v.dispatch(
               v.state.tr.setNodeMarkup(p, undefined, {
                 ...clearSourceRange(n.attrs),
@@ -733,15 +592,21 @@ export function buildSingleBlockMenuItems(
         icon: "pencil",
         singleOnly: true,
         sideEffect: (v, p, n) => {
+          if (v === view) requestEditing();
+          if (v !== view || !mayMutate()) return;
           const cur = (n.attrs.value as string) || "";
           new MathEditModal(app, cur, (next) => {
-            v.dispatch(
-              v.state.tr.setNodeMarkup(p, undefined, {
-                ...clearSourceRange(n.attrs),
-                value: next,
-              }),
-            );
-          }).open();
+            requestEditing();
+            if (!mayMutate()) return false;
+            if (next === cur) return true;
+            const tr = v.state.tr.setNodeMarkup(p, undefined, {
+              ...clearSourceRange(n.attrs),
+              value: next,
+            });
+            if (!allowsPreparedSaveTransaction(v.state, tr)) return false;
+            v.dispatch(tr);
+            return v.state.doc.eq(tr.doc);
+          }, v).open();
         },
       });
       break;
@@ -832,7 +697,7 @@ export function buildSingleBlockMenuItems(
         title: k.label,
         icon: k.icon,
         isCurrent: k.id === currentListId,
-        applyTr: (tr, p, n) => applyTurnIntoTr(tr, p, n, schema, k.id),
+        applyTr: (tr, p, n) => applyTurnIntoTr(tr, p, n, schema, k.id, view.state),
       }));
       items.push({
         id: "list-type",
@@ -889,19 +754,10 @@ export function buildBlockLifecycleMenuItems(
 ): BlockMenuItem[] {
   const writeBlock = (view: EditorView, node: PMNode): Promise<boolean> => {
     if (!serializeNode) return Promise.resolve(false);
-    const markdown = serializeNode(node).replace(/\n+$/, "");
-    const clipboard = view.dom.ownerDocument.defaultView?.navigator.clipboard;
-    if (!clipboard) {
-      new Notice(tx("Clipboard write failed"));
-      return Promise.resolve(false);
-    }
-    return clipboard.writeText(markdown).then(
-      () => true,
-      () => {
-        new Notice(tx("Clipboard write failed"));
-        return false;
-      },
-    );
+    return writeInternalClipboardSlice(view, new Slice(Fragment.from(node), 0, 0)).then(copied => {
+      if (!copied) new Notice(tx("Clipboard write failed"));
+      return copied;
+    });
   };
 
   const items: BlockMenuItem[] = [];
@@ -921,8 +777,12 @@ export function buildBlockLifecycleMenuItems(
       title: "Cut",
       icon: "scissors",
       sideEffect: (view, pos, node) => {
+        const mayMutate = captureBlockMenuMutation(view, [{ pos, node }]);
+        if (!mayMutate()) return;
+        const capturedDoc = view.state.doc, capturedSelection = view.state.selection;
         void writeBlock(view, node).then((copied) => {
-          if (!copied || view.state.doc.nodeAt(pos) !== node) return;
+          if (!copied || !mayMutate() || view.state.doc !== capturedDoc || !view.state.selection.eq(capturedSelection) ||
+            view.state.doc.nodeAt(pos) !== node) return;
           view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize));
           view.focus();
         });
@@ -1097,7 +957,7 @@ export function renderBlockMenuItems(
         mi.dom?.classList.add("is-warning");
       }
       if (item.submenu) {
-        const sub = mi.setSubmenu();
+        const sub = inheritEditorMenuInteraction(menu, mi.setSubmenu());
         renderBlockMenuSubItems(sub, item, runItem);
       } else {
         mi.onClick((activation) => runItem(item, activation));

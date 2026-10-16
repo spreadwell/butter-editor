@@ -1,4 +1,4 @@
-import { toggleMark } from "prosemirror-commands";
+import { toggleExternalLink } from "./link-mark-policy";
 import type { Schema } from "prosemirror-model";
 import { TextSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
@@ -11,7 +11,7 @@ export function insertMarkdownLink(view: EditorView, schema: Schema): void {
   const { selection, tr } = view.state;
   if (!selection.empty) {
     if (
-      toggleMark(markType, { href: "https://" })(
+      toggleExternalLink(markType, { href: "https://" })(
         view.state,
         view.dispatch.bind(view),
       )

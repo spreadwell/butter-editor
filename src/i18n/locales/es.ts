@@ -1,10 +1,14 @@
 import type { TranslationTable } from "../../i18n";
 import { recentEs } from "./release-copy";
 import { feedbackEs } from "./feedback-copy";
+import { recoveryEs } from "./recovery-copy";
+import { saveDiagnosticsEs } from "./save-diagnostics-copy";
 
 export const es = {
   ...recentEs,
   ...feedbackEs,
+  ...recoveryEs,
+  ...saveDiagnosticsEs,
   "Abstract callout": "Destacado: Resumen",
   "Activated": "Activado",
   "Advanced": "Avanzado",
@@ -171,7 +175,7 @@ export const es = {
   "Rich formatting": "Formato enriquecido",
   "Write and format your notes without seeing Markdown syntax.": "Escribe y da formato a tus notas sin ver la sintaxis de Markdown.",
   "Adds text color, custom highlights, underline, superscript, subscript, and keyboard text to the toolbar.": "Añade a la barra de herramientas color de texto, resaltados personalizados, subrayado, superíndice, subíndice y texto de teclado.",
-  "Adds text color, custom highlights, underline, superscript, and subscript.": "Añade color de texto, resaltados personalizados, subrayado, superíndice y subíndice.",
+  "Adds text color, custom highlights, and underline.": "Añade color de texto, resaltados personalizados y subrayado.",
   "Uses HTML, which can make notes less portable and harder to read in source view.": "Usa HTML, lo que puede reducir la compatibilidad de las notas y dificultar la lectura en la vista de código fuente.",
   "You can change rich formatting anytime in settings.": "Puedes cambiar el formato enriquecido en cualquier momento desde los ajustes.",
   "Rich paste and file drop": "Pegar enriquecido y soltar archivos",
@@ -404,7 +408,7 @@ export const es = {
   "Preset colors": "Colores preestablecidos",
   "Mobile & Desktop": "Móvil y escritorio",
   "Colours are off": "Colores desactivados",
-  "Turn on rich formatting in the general tab to customize preset colours.": "Active el formato enriquecido en la pestaña General para personalizar los colores predefinidos.",
+  "Turn on rich formatting in the Editor tab to customize preset colours.": "Activa el formato enriquecido en la pestaña Editor para personalizar los colores predefinidos.",
   "{label} preset {number}": "{label} preestablecido {number}",
   "Preset {number}": "Preestablecido {number}",
   "Reset to defaults": "Restablecer valores predeterminados",

@@ -1,10 +1,14 @@
 import type { TranslationTable } from "../../i18n";
 import { recentRu } from "./release-copy";
 import { feedbackRu } from "./feedback-copy";
+import { recoveryRu } from "./recovery-copy";
+import { saveDiagnosticsRu } from "./save-diagnostics-copy";
 
 export const ru = {
   ...recentRu,
   ...feedbackRu,
+  ...recoveryRu,
+  ...saveDiagnosticsRu,
   "Abstract callout": "Выносной блок «Резюме»",
   "Activated": "Активировано",
   "Advanced": "Расширенные настройки",
@@ -171,7 +175,7 @@ export const ru = {
   "Rich formatting": "Расширенное форматирование",
   "Write and format your notes without seeing Markdown syntax.": "Пишите и форматируйте заметки, не отвлекаясь на разметку Markdown.",
   "Adds text color, custom highlights, underline, superscript, subscript, and keyboard text to the toolbar.": "Добавляет на панель инструментов цвет текста, настраиваемое выделение, подчёркивание, надстрочный и подстрочный текст, а также оформление клавиш.",
-  "Adds text color, custom highlights, underline, superscript, and subscript.": "Добавляет цвет текста, настраиваемое выделение, подчёркивание, надстрочный и подстрочный текст.",
+  "Adds text color, custom highlights, and underline.": "Добавляет цвет текста, настраиваемое выделение и подчёркивание.",
   "Uses HTML, which can make notes less portable and harder to read in source view.": "Использует HTML, поэтому заметки могут быть менее совместимыми и сложнее читаться в режиме исходного текста.",
   "You can change rich formatting anytime in settings.": "Расширенное форматирование можно изменить в настройках в любое время.",
   "Rich paste and file drop": "Богатая вставка и удаление файлов",
@@ -404,7 +408,7 @@ export const ru = {
   "Preset colors": "Предустановленные цвета",
   "Mobile & Desktop": "Мобильные и настольные компьютеры",
   "Colours are off": "Цвета отключены",
-  "Turn on rich formatting in the general tab to customize preset colours.": "Включите расширенное форматирование на вкладке «Общие», чтобы настроить предустановленные цвета.",
+  "Turn on rich formatting in the Editor tab to customize preset colours.": "Включите расширенное форматирование на вкладке «Редактор», чтобы настроить предустановленные цвета.",
   "{label} preset {number}": "{label} предустановка {number}",
   "Preset {number}": "Предустановка {number}",
   "Reset to defaults": "Восстановить настройки по умолчанию",

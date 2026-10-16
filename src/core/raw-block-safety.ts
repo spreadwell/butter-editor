@@ -13,36 +13,34 @@
  * target it, and Backspace / Delete / Cut / drag-handle-remove can
  * drop the node from the doc. Once it's gone, the next save
  * serializes an empty (or near-empty) doc → writes an empty file
- * → source is GONE. Because raw_block only appears when parse
- * failed, this is a failure mode layered on top of an already-bad
- * day for the user.
+ * → source is GONE. The whole-file diagnostic fallback therefore
+ * needs stronger protection than a qualified local HTML source atom.
  *
- * Zero tolerance for data loss: this plugin installs a
- * `filterTransaction` that REJECTS any transaction which would
- * reduce the raw_block count in the doc, UNLESS the transaction
- * carries the `RAW_BLOCK_SYNC_META` flag. That flag is set by
- * `setViewData` when it replaces the doc because an external change
- * re-synced the file into Butter - at that point a fresh parse
- * either succeeded (legitimate raw_block removal, we want this) or
- * produced another raw_block (still protected).
+ * This plugin locks a whole-file fallback against every local document
+ * mutation, including insertion beside it. A transaction carrying the trusted
+ * `RAW_BLOCK_SYNC_META` flag may replace it after an external reparse either
+ * succeeds or produces another protected fallback. Mixed opaque constructs
+ * are not classified by this whole-file failure predicate.
  *
  * Regular user transactions - keyboard, drag handle, slash command,
  * paste, cut - never carry the meta, so they can't destroy a
- * raw_block. The `onReject` callback surfaces a `Notice` telling
+ * whole-source fallback. The `onReject` callback surfaces a `Notice` telling
  * the user the source is locked until they fix it externally, so
  * the block isn't a silent brick.
  */
 
 import { Plugin as PMPlugin } from "prosemirror-state";
 import type { Node as PMNode } from "prosemirror-model";
+import { isNativeHtmlSourceKind } from "./native-html-block-source";
 
 /** Meta key carried by trusted transactions (setViewData sync) that
  *  are permitted to remove raw_blocks because a fresh parse already
  *  produced the replacement content. */
 export const RAW_BLOCK_SYNC_META = "butter-raw-block-sync";
 
-function isWholeSourceFallback(doc: PMNode): boolean {
-  return doc.childCount === 1 && doc.firstChild?.type.name === "raw_block";
+export function isWholeSourceFallback(doc: PMNode): boolean {
+  return doc.childCount === 1 && doc.firstChild?.type.name === "raw_block" &&
+    !isNativeHtmlSourceKind(doc.firstChild.attrs.sourceKind, doc.firstChild.attrs.raw);
 }
 
 /**

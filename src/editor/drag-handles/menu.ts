@@ -18,6 +18,8 @@ import {
 import { tx, tv } from "../../i18n";
 import { dismissMenuOnScroll } from "../../ui/menu-scroll-dismiss";
 import { hideMenuSurfaceImmediately } from "../../ui/surface-motion";
+import { isCalloutConversionRefusal } from "../native-block-id-conservation";
+import { bindEditorMenuInteraction, captureBlockMenuMutation } from "../block-menu-ownership";
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -29,8 +31,15 @@ export function openBlockContextMenu(
   pos: number,
   node: PMNode,
   serializeNode: (node: PMNode) => string,
+  requestEditing?: () => void,
 ): Menu {
+  const openedDoc = view.state.doc;
+  const requestEditIntent = () => {
+    if (!view.isDestroyed && view.state.doc === openedDoc) requestEditing?.();
+  };
+  const mayMutate = captureBlockMenuMutation(view, [{ pos, node }]);
   const menu = new Menu();
+  bindEditorMenuInteraction(menu, view);
   menu.setUseNativeMenu(false);
   const charCount = node.textContent.length;
   applyBlockContextMenuChrome(menu, {
@@ -42,13 +51,15 @@ export function openBlockContextMenu(
     }),
   });
 
-  const items = buildSingleBlockMenuItems({ view, pos, node, app });
+  const items = buildSingleBlockMenuItems({ view, pos, node, app, requestEditing: requestEditIntent });
   if (items.length > 0) {
     renderBlockMenuItems(menu, items, (item, activation) => {
+      requestEditIntent();
+      if (!mayMutate()) { hideMenuSurfaceImmediately(menu); return; }
       if ("applyTr" in item && item.applyTr) {
         const tr = view.state.tr;
         item.applyTr(tr, pos, node);
-        if (tr.docChanged) view.dispatch(tr);
+        if (tr.docChanged || isCalloutConversionRefusal(tr)) view.dispatch(tr);
         view.focus();
       } else if ("sideEffect" in item && item.sideEffect) {
         item.sideEffect(view, pos, node, activation);
@@ -62,6 +73,9 @@ export function openBlockContextMenu(
     menu,
     buildBlockLifecycleMenuItems(serializeNode),
     (item, activation) => {
+      // Copy is a reviewed snapshot; every mutation needs live ownership.
+      if (item.id !== "block-copy") requestEditIntent();
+      if (item.id !== "block-copy" && !mayMutate()) { hideMenuSurfaceImmediately(menu); return; }
       if (item.applyTr) {
         const tr = view.state.tr;
         item.applyTr(tr, pos, node);

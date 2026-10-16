@@ -1,4 +1,5 @@
 import { restoreOwnedViewport } from "./util/viewport-operation";
+import { fileViewRouting, type FileViewOwner, type FileViewRouting } from "./util/file-view-routing";
 import {
   Plugin,
   MarkdownView,
@@ -11,13 +12,16 @@ import {
   TFile,
   WorkspaceLeaf,
   requireApiVersion,
+  normalizePath,
 } from "obsidian";
 
 // Extension registration must happen before schema.ts or obsidian-md-bridge
 // evaluate their module bodies. Example extensions are not activated in
 // shipped builds.
 import { serializer } from "./core/serializer";
-import { debug, setVerbose, recordError, getErrorLog, clearErrorLog } from "./integration/debug";
+import { setVerbose, recordError, getErrorLog, clearErrorLog } from "./integration/debug";
+import { SaveDiagnostics } from "./integration/save-diagnostics";
+import { SaveFailureNotices } from "./ui/save-failure-notice";
 
 
 import {
@@ -48,10 +52,15 @@ import {
 import { openFind, openReplace } from "./editor/search-plugin";
 import {
   installSaveStatus,
+  SaveStatusSessions,
   type SaveState,
+  type SaveStatusOwner,
   type SaveStatusController,
 } from "./ui/save-status";
 import { SaveDiffModal } from "./ui/save-diff-modal";
+import { SaveRecoveryModal } from "./ui/save-recovery-modal";
+import { installStartupSaveRecovery } from "./ui/save-recovery-startup";
+import { SaveRecoveryStore, type SaveRecoverySnapshot } from "./integration/save-recovery";
 import { ShortcutHelpModal } from "./ui/shortcut-help";
 
 
@@ -81,6 +90,11 @@ import {
   patchNativeListCommands,
   type NativeListCommandRecord,
 } from "./util/native-list-commands";
+import {
+  patchNativeLinkCommands,
+  type NativeLinkCommandRecord,
+} from "./util/native-link-commands";
+import { openUnifiedLinkEditor } from "./ui/link-editor";
 import { toggleTaskOnCurrentLine } from "./editor/list-operations";
 import { ButterSettingTab } from "./ui/settings-tab";
 import { setPresetColorsProvider } from "./ui/toolbar";
@@ -161,17 +175,20 @@ import { ErrorLogModal } from "./ui/modals/ErrorLogModal";
  * unusual documents whose blocks do not expose source geometry.
  */
 async function swapButterToMarkdown(view: ButterEditorView) {
-  if (!view.file) return;
+  if (!view.file || view.leaf.view !== view) return;
+  const routing = fileViewRouting(view.app);
+  const owner = routing.capture(view.leaf, view.file);
+  if (!owner) return;
   const anchor = view.captureViewportAnchor();
   const fallbackLine = view.visibleHeadingLine();
-  await view.leaf.setViewState(
+  const applied = await routing.setExplicit(owner,
     {
       type: "markdown",
       state: { file: view.file.path, mode: "source" },
     },
     anchor ? { [BUTTER_VIEWPORT_STATE_KEY]: anchor } : { line: fallbackLine },
   );
-  if (anchor) await restoreViewportAfterSwap(view.leaf, anchor);
+  if (applied && anchor) await restoreViewportAfterSwap(view.leaf, anchor);
 }
 
 /**
@@ -475,7 +492,10 @@ function captureViewport(leaf: WorkspaceLeaf): ButterViewportAnchor | null {
 async function switchToMode(
   leaf: WorkspaceLeaf,
   mode: ButterViewMode,
+  capturedOwner?: FileViewOwner,
+  capturedRouting?: FileViewRouting,
 ): Promise<void> {
+  if (capturedRouting?.isDisposed) return;
   const view = leaf.view;
   const file: TFile | null =
     view instanceof MarkdownView || view instanceof ButterEditorView
@@ -483,7 +503,9 @@ async function switchToMode(
 
       : null;
   if (!file) return;
-  if (getCurrentMode(leaf) === mode) return;
+  const routing = capturedRouting ?? fileViewRouting(view.app);
+  const owner = capturedOwner ?? routing.capture(leaf, file);
+  if (!owner || owner.file !== file || !routing.isCurrent(owner)) return;
   const anchor = captureViewport(leaf);
   const line = captureLine(leaf);
   const ephemeralState = anchor
@@ -491,18 +513,18 @@ async function switchToMode(
     : { line };
 
   if (mode === "butter") {
-    await leaf.setViewState(
+    const applied = await routing.setExplicit(owner,
       {
         type: VIEW_TYPE_BUTTER,
         state: { file: file.path },
       },
       ephemeralState,
     );
-    if (anchor) await restoreViewportAfterSwap(leaf, anchor);
+    if (applied && anchor) await restoreViewportAfterSwap(leaf, anchor);
     return;
   }
 
-  await leaf.setViewState(
+  const applied = await routing.setExplicit(owner,
     {
       type: "markdown",
       state: {
@@ -513,11 +535,11 @@ async function switchToMode(
     },
     ephemeralState,
   );
-  if (anchor) await restoreViewportAfterSwap(leaf, anchor);
+  if (applied && anchor) await restoreViewportAfterSwap(leaf, anchor);
 }
 
 /** Cycle the leaf to the next mode in the user's configured list. */
-export function cycleView(leaf: WorkspaceLeaf, modes: ButterViewMode[]): void {
+export function cycleView(leaf: WorkspaceLeaf, modes: ButterViewMode[], routing?: FileViewRouting): void {
   if (!modes.length) return;
   const current = getCurrentMode(leaf);
   let nextIdx = 0;
@@ -525,7 +547,7 @@ export function cycleView(leaf: WorkspaceLeaf, modes: ButterViewMode[]): void {
     const idx = modes.indexOf(current);
     if (idx >= 0) nextIdx = (idx + 1) % modes.length;
   }
-  void switchToMode(leaf, modes[nextIdx]);
+  void switchToMode(leaf, modes[nextIdx], undefined, routing);
 }
 
 /** Human-readable label for a mode - used in tooltips / menu items. */
@@ -549,11 +571,13 @@ const LOCALIZED_COMMAND_NAMES = {
   "toggle-inline-code": "Toggle inline code",
   "toggle-strikethrough": "Toggle strikethrough",
   "toggle-highlight": "Toggle highlight",
+  "toggle-underline": "Underline",
   "show-shortcuts": "Show keyboard shortcuts",
   "open-outline": "Open outline view",
   "toggle-frontmatter-visibility": "Toggle frontmatter visibility",
   "toggle-comments": "Toggle comments",
   "show-recent-errors": "Show recent errors",
+  "recover-unsaved-edits": "Recover unsaved edits",
 } as const satisfies Record<string, MessageKey>;
 
 /** Lucide icon name for each mode - surfaced in the View-as menu.
@@ -572,18 +596,23 @@ export function modeIcon(mode: ButterViewMode): string {
  * Swap a MarkdownView's leaf to Butter while preserving the source row and
  * within-row position currently under the viewport probe.
  */
-async function swapMarkdownToButter(view: MarkdownView) {
-  if (!view.file) return;
+async function swapMarkdownToButter(view: MarkdownView, capturedOwner?: FileViewOwner,
+  capturedRouting?: FileViewRouting) {
+  if (capturedRouting?.isDisposed) return;
+  if (!view.file || view.leaf.view !== view) return;
+  const routing = capturedRouting ?? fileViewRouting(view.app);
+  const owner = capturedOwner ?? routing.capture(view.leaf, view.file);
+  if (!owner || !routing.isCurrent(owner)) return;
   const anchor = captureMarkdownViewport(view);
   const fallbackLine = visibleHeadingLineMD(view);
-  await view.leaf.setViewState(
+  const applied = await routing.setExplicit(owner,
     {
       type: VIEW_TYPE_BUTTER,
       state: { file: view.file.path },
     },
     anchor ? { [BUTTER_VIEWPORT_STATE_KEY]: anchor } : { line: fallbackLine },
   );
-  if (anchor) await restoreViewportAfterSwap(view.leaf, anchor);
+  if (applied && anchor) await restoreViewportAfterSwap(view.leaf, anchor);
 }
 
 /**
@@ -675,7 +704,7 @@ export interface ButterSettings {
    * Butter exposes the marks that have no markdown shorthand and can
    * only be written as inline HTML in source: `<font color>` (text
    * color), `<mark style="background: ...">` (custom highlight
-   * color), `<u>` (underline), `<sup>` / `<sub>`, `<kbd>`.
+   * color), and `<u>` (underline). Other HTML marks remain readable.
    *
    * When OFF, those toolbar buttons hide so the user can't author
    * HTML inline. The plain `==highlight==` toggle stays available
@@ -1219,6 +1248,9 @@ const BUTTER_BODY_CLASSES = [
 ];
 
 export default class ButterEditorPlugin extends Plugin {
+  private fileRouting: FileViewRouting | null = null;
+  private readonly markdownCycleControls = new WeakMap<MarkdownView, HTMLElement>();
+  private readonly markdownToggleButtons = new WeakSet<HTMLElement>();
   settings!: ButterSettings;
   /** Remembered when we've flipped the core Outline plugin off so
    *  onunload can restore it - without this we'd leave the user
@@ -1227,12 +1259,14 @@ export default class ButterEditorPlugin extends Plugin {
   /** Ribbon icon for our outline, kept to flip visibility when the
    *  setting changes without reloading the plugin. */
   private outlineRibbonEl: HTMLElement | null = null;
-  /** Status-bar save-state indicator. Reflects the active view's last
-   *  save outcome: clean (round-tripped) or normalized (structure was
-   *  altered to satisfy the parser). */
+  /** Optional status surface aggregates unresolved editor-session failures. */
   private saveStatus: SaveStatusController | null = null;
   /** Retained even while the optional status-bar surface is disabled. */
   private saveStatusState: SaveState = { kind: "clean" };
+  private saveStatusSessions = new SaveStatusSessions();
+  private saveRecoveryStore: SaveRecoveryStore | null = null;
+  public saveDiagnostics: SaveDiagnostics | null = null;
+  private saveFailureNotices: SaveFailureNotices | null = null;
   /** Reference to our settings tab so callers (e.g. the toolbar's
    *  right-click "Settings" item) can pre-select a sub-tab before
    *  opening the modal. */
@@ -1240,6 +1274,7 @@ export default class ButterEditorPlugin extends Plugin {
   private nativeFormattingCommandRestorers: Array<() => void> = [];
   private nativeSearchCommandRestorers: Array<() => void> = [];
   private nativeListCommandRestorers: Array<() => void> = [];
+  private nativeLinkCommandRestorers: Array<() => void> = [];
   private restoreHotkeyManagerFormattingBridge: (() => void) | null = null;
   private handledFormattingHotkeyEvents = new WeakSet<object>();
 
@@ -1356,16 +1391,18 @@ export default class ButterEditorPlugin extends Plugin {
       | "support",
     section?: string,
   ): void {
-    if (subtab && this.settingTab) {
-      this.settingTab.requestPage(subtab);
-    }
-    if (section && this.settingTab) {
-      this.settingTab.pendingFocusSection = section;
-    }
     const setting = (this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
     if (!setting) return;
     setting.open?.();
     setting.openTabById?.(this.manifest.id);
+    // open() can restore this tab itself before the explicit selection above.
+    // Queue the destination only after both host displays have settled.
+    if (section && this.settingTab) {
+      this.settingTab.pendingFocusSection = section;
+    }
+    if (subtab && this.settingTab) {
+      this.settingTab.requestPage(subtab);
+    }
   }
 
   /** Opens the license settings tab and immediately initiates a trial. */
@@ -1763,6 +1800,19 @@ export default class ButterEditorPlugin extends Plugin {
 
   async onload() {
     try { await this.loadSettings(); } catch { /* corrupt data.json — defaults applied */ }
+    const diagnosticDirectory = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+    const diagnosticPath = normalizePath(`${diagnosticDirectory}/save-diagnostics.json`);
+    const diagnosticAdapter = this.app.vault.adapter;
+    this.saveDiagnostics = new SaveDiagnostics(this.manifest.version, {
+      read: async () => {
+        if (!await diagnosticAdapter.exists(diagnosticPath)) return null;
+        const stat = await diagnosticAdapter.stat(diagnosticPath);
+        if (!stat || stat.size > 65_536) throw new Error("Diagnostic history exceeds limit");
+        return diagnosticAdapter.read(diagnosticPath);
+      },
+      write: value => diagnosticAdapter.write(diagnosticPath, value),
+    });
+    void this.saveDiagnostics.load();
     // Feed user-customized preset colours into the shared colour palette
     // (desktop) + mobile picker. Reads settings live, so edits take
     // effect the next time a picker opens.
@@ -1878,9 +1928,6 @@ export default class ButterEditorPlugin extends Plugin {
     this.registerObsidianProtocolHandler("butter-recover", (params) => {
       void this.handleRecoveryDeepLink(params.key, params.customer);
     });
-
-    // Boot toast announcing the loaded plugin and version.
-    new Notice(`${this.manifest.name} v${this.manifest.version}`, 3000);
 
     // Locked-file UX. When another process holds a vault file open
     // exclusively (VS Code, antivirus mid-scan, another Obsidian
@@ -2038,8 +2085,8 @@ export default class ButterEditorPlugin extends Plugin {
 
     this.registerView(
       VIEW_TYPE_BUTTER,
-      (leaf) => new ButterEditorView(leaf, this.settings, this, (result) => {
-        this.setSaveStatus(result);
+      (leaf) => new ButterEditorView(leaf, this.settings, this, (result, owner) => {
+        this.setSaveStatus(result, owner);
       }),
     );
 
@@ -2074,11 +2121,13 @@ export default class ButterEditorPlugin extends Plugin {
     );
 
     this.registerCommands();
+    installStartupSaveRecovery(this, () => this.recoveryStore(), () => this.openSaveRecovery());
     this.registerMenus();
     this.registerNewFileHook();
     this.registerNativeFormattingCommandBridge();
     this.registerNativeListCommandBridge();
     this.registerNativeSearchCommandBridge();
+    this.registerNativeLinkCommandBridge();
     this.registerHotkeyManagerFormattingBridge();
     this.registerPolishCommands();
 
@@ -2126,11 +2175,8 @@ export default class ButterEditorPlugin extends Plugin {
     this.registerEvent(
       this.app.workspace.on("file-open", () => {
         this.installCycleButtonsOnAllMarkdownViews();
-        // Reset save-status indicator when switching files. The
-        // newly-opened file's first save (whenever it fires) will
-        // update the status; until then the indicator shows clean by
-        // default. Avoids carrying a "normalized" warning over from a
-        // different file the user already moved past.
+        // Reset legacy informational state, while unresolved failures retain
+        // their exact session ownership across file or pane changes.
         this.setSaveStatus({ kind: "clean" });
       }),
     );
@@ -2153,6 +2199,8 @@ export default class ButterEditorPlugin extends Plugin {
           if (!(file instanceof TFile) || file.extension !== "md") return;
           const targetLeaf = leaf ?? this.app.workspace.getMostRecentLeaf();
           if (!targetLeaf) return;
+          const routing = fileViewRouting(this.app), owner = routing.capture(targetLeaf, file);
+          if (!owner || owner.snapshot.file !== file) return;
           const current = getCurrentMode(targetLeaf);
           const ourModes: ButterViewMode[] =
             current === "butter"
@@ -2165,7 +2213,7 @@ export default class ButterEditorPlugin extends Plugin {
               item.setTitle(tv("Open as {mode}", { mode: tx(modeLabel(mode)) }));
               item.setIcon(modeIcon(mode));
               item.onClick(() => {
-                void switchToMode(targetLeaf, mode);
+                void switchToMode(targetLeaf, mode, owner, routing);
               });
               addedItems.push(item);
             });
@@ -2288,6 +2336,8 @@ export default class ButterEditorPlugin extends Plugin {
   }
 
   private installCycleButtonsOnAllMarkdownViews() {
+    const routing = this.fileRouting;
+    if (!routing || routing.isDisposed) return;
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view as MarkdownView & {
         _butterCycleAdded?: boolean;
@@ -2301,17 +2351,36 @@ export default class ButterEditorPlugin extends Plugin {
       const currentMode = getCurrentMode(leaf) ?? "live";
       const icon = modeIcon(currentMode);
 
+      // A native MarkdownView may outlive a plugin reload. Replace only the
+      // explicit legacy Butter action; its old callback belongs to old code.
+      const existing = view._butterCycleEl;
+      if (existing && existing !== this.markdownCycleControls.get(view) &&
+        existing.getAttribute("data-butter-action") === "cycle") {
+        existing.remove();
+        delete view._butterCycleEl;
+        delete view._butterCycleAdded;
+      }
       if (!view._butterCycleAdded) {
         view._butterCycleAdded = true;
         const el = view.addAction(
           icon,
           "Switch view mode",
           () => {
-            cycleView(view.leaf, this.settings.viewCycleModes);
+            if (routing.isDisposed || view.leaf.view !== view || !el.isConnected) return;
+            cycleView(view.leaf, this.settings.viewCycleModes, routing);
           },
         );
         el.setAttribute("data-butter-action", "cycle");
         view._butterCycleEl = el;
+        this.markdownCycleControls.set(view, el);
+        this.register(() => {
+          if (view._butterCycleEl === el) {
+            delete view._butterCycleEl;
+            delete view._butterCycleAdded;
+          }
+          if (el.getAttribute("data-butter-action") === "cycle") el.remove();
+          this.markdownCycleControls.delete(view);
+        });
       } else if (view._butterCycleEl) {
         // Existing button: refresh icon so it tracks in-place mode
         // changes (Source ↔ Live Preview ↔ Reading don't recreate
@@ -2342,45 +2411,63 @@ export default class ButterEditorPlugin extends Plugin {
     ]);
     actions.querySelectorAll<HTMLElement>(".clickable-icon").forEach((btn) => {
       if (btn.getAttribute("data-butter-action")) return; // ours, skip
-      if (btn.dataset.butterToggleHidden === "1") return; // already hidden
+      if (this.markdownToggleButtons.has(btn)) return;
       const svg = btn.querySelector("svg");
       if (!svg) return;
       const hasToggleIcon = Array.from(svg.classList).some((c) =>
         NATIVE_TOGGLE_ICONS.has(c),
       );
       if (!hasToggleIcon) return;
+      // Adopt only the legacy Butter marker. It cannot remain hidden after a
+      // reload without a current lifecycle owner that will restore it.
+      if (btn.dataset.butterToggleHidden === "1") {
+        btn.removeClass("butter-hidden");
+        delete btn.dataset.butterToggleHidden;
+      }
+      const hiddenBefore = btn.classList.contains("butter-hidden");
+      const markerBefore = btn.dataset.butterToggleHidden;
       btn.addClass("butter-hidden");
       btn.dataset.butterToggleHidden = "1";
+      this.markdownToggleButtons.add(btn);
+      this.register(() => {
+        this.markdownToggleButtons.delete(btn);
+        if (btn.dataset.butterToggleHidden !== "1") return;
+        if (!hiddenBefore) btn.removeClass("butter-hidden");
+        if (markerBefore === undefined) delete btn.dataset.butterToggleHidden;
+        else btn.dataset.butterToggleHidden = markerBefore;
+      });
     });
   }
 
   onunload(): void {
     this.stopUpgradePolling();
+    void this.saveDiagnostics?.flush();
+    this.saveFailureNotices?.dispose();
+    this.saveFailureNotices = null;
     this.saveStatus?.destroy();
     this.saveStatus = null;
     this.settingTab?.dispose();
     this.settingTab = null;
 
-    // FIRST: flush any in-flight scheduled saves across open Butter
-    // views. If the user disables Butter mid-typing (within the save
-    // scheduler's idle window), pending edits would otherwise get
-    // torn down without firing and the last few keystrokes would be
-    // lost. Obsidian unloads the plugin before tearing down its
-    // views, so we can't rely on per-view `onClose` to catch this
-    // path.
+    // Request pending saves before view teardown. This synchronous hook
+    // cannot await their completion; save/recovery callbacks continue to
+    // retain failures, and this boundary must observe their rejection.
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_BUTTER);
     for (const leaf of leaves) {
       const view = leaf.view as ButterEditorView | undefined;
-      const scheduler = (view as { saveScheduler?: { hasPending: () => boolean; flush: () => void } } | undefined)?.saveScheduler as
-        | { hasPending: () => boolean; flush: () => void }
+      const scheduler = (view as { saveScheduler?: { hasPending: () => boolean; flush: () => Promise<void> } } | undefined)?.saveScheduler as
+        | { hasPending: () => boolean; flush: () => Promise<void> }
         | null
         | undefined;
       if (scheduler && scheduler.hasPending()) {
         try {
-          scheduler.flush();
+          // Obsidian's synchronous plugin unload cannot await this save.
+          // Observe rejection without cancelling its pending/recovery state.
+          void scheduler.flush().catch(() => {
+            recordError("save", "Plugin-unload save remains pending");
+          });
         } catch {
-          /* swallow - save can fail during teardown; onClose will
-             get another shot if we make it that far */
+          recordError("save", "Plugin-unload save remains pending");
         }
       }
     }
@@ -2524,6 +2611,14 @@ export default class ButterEditorPlugin extends Plugin {
     butterMarkCommand("toggle-inline-code", tx("Toggle inline code"), "code");
     butterMarkCommand("toggle-strikethrough", tx("Toggle strikethrough"), "strikethrough");
     butterMarkCommand("toggle-highlight", tx("Toggle highlight"), "highlight");
+    this.addCommand({
+      id: "toggle-underline",
+      name: tx("Underline"),
+      checkCallback: (checking) => {
+        if (!this.settings.enableHtmlFormatting || !this.canToggleButterMark("underline")) return false;
+        return checking || this.toggleButterMark("underline");
+      },
+    });
   }
 
   private resolveButterEditor(target?: EventTarget | null) {
@@ -2609,6 +2704,7 @@ export default class ButterEditorPlugin extends Plugin {
         this.refreshNativeFormattingCommandBridge();
         this.refreshNativeSearchCommandBridge();
         this.refreshNativeListCommandBridge();
+        this.refreshNativeLinkCommandBridge();
         return result;
       };
       commandManager.addCommand = wrappedAddCommand;
@@ -2700,6 +2796,68 @@ export default class ButterEditorPlugin extends Plugin {
   private restoreNativeListCommandBridge(): void {
     for (const restore of this.nativeListCommandRestorers) restore();
     this.nativeListCommandRestorers = [];
+  }
+
+  private nativeButterLinkTarget(): {
+    view: ButterEditorView;
+    pm: NonNullable<ReturnType<ButterEditorView["pmViewRef"]>>;
+  } | false | null {
+    const view = this.app.workspace.getActiveViewOfType(ButterEditorView);
+    if (!view) return null;
+    const pm = view.pmViewRef();
+    if (!view.file || !view.isEditable() || !pm || pm.isDestroyed || pm.editable === false || !pm.dom.isConnected) return false;
+    const focused = activeDocument.activeElement;
+    if (focused && !pm.dom.contains(focused) && focused.closest(
+      "input, textarea, select, [contenteditable='true'], .metadata-container, .inline-title, .view-header-title",
+    )) return false;
+    const { $from, $to } = pm.state.selection;
+    if (!pm.state.schema.marks.link || !$from.parent.inlineContent || !$to.parent.inlineContent) return false;
+    return { view, pm };
+  }
+
+  private canOpenNativeButterLink(): boolean | null {
+    const target = this.nativeButterLinkTarget();
+    return target === null ? null : target !== false;
+  }
+
+  private openNativeButterLink(): boolean {
+    const target = this.nativeButterLinkTarget();
+    if (!target) return false;
+    openUnifiedLinkEditor({
+      app: this.app,
+      view: target.pm,
+      anchor: target.pm.dom,
+      sourcePath: target.view.file?.path ?? "",
+      autoFocus: true,
+    });
+    return true;
+  }
+
+  private registerNativeLinkCommandBridge(): void {
+    this.refreshNativeLinkCommandBridge();
+    this.app.workspace.onLayoutReady(() => this.refreshNativeLinkCommandBridge());
+    for (const delayMs of [0, 100, 500, 1500, 3000]) {
+      const timer = window.setTimeout(() => this.refreshNativeLinkCommandBridge(), delayMs);
+      this.register(() => window.clearTimeout(timer));
+    }
+    this.register(() => this.restoreNativeLinkCommandBridge());
+  }
+
+  private refreshNativeLinkCommandBridge(): void {
+    this.restoreNativeLinkCommandBridge();
+    const commands = this.app.commands?.commands as
+      | Record<string, NativeLinkCommandRecord | undefined>
+      | undefined;
+    this.nativeLinkCommandRestorers = patchNativeLinkCommands(
+      commands,
+      () => this.canOpenNativeButterLink(),
+      () => this.openNativeButterLink(),
+    );
+  }
+
+  private restoreNativeLinkCommandBridge(): void {
+    for (const restore of this.nativeLinkCommandRestorers) restore();
+    this.nativeLinkCommandRestorers = [];
   }
 
   private restoreNativeFormattingCommandBridge() {
@@ -2877,6 +3035,12 @@ export default class ButterEditorPlugin extends Plugin {
       callback: () => {
         new ErrorLogModal(this.app, getErrorLog(), () => clearErrorLog()).open();
       },
+    });
+
+    this.addCommand({
+      id: "recover-unsaved-edits",
+      name: tx("Recover unsaved edits"),
+      callback: () => this.openSaveRecovery(),
     });
 
     this.outlineRibbonEl = this.addRibbonIcon(
@@ -3073,13 +3237,19 @@ export default class ButterEditorPlugin extends Plugin {
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
         if (!(file instanceof TFile) || file.extension !== "md") return;
+        const filePath = file.path;
+        const routing = fileViewRouting(this.app);
         menu.addItem((item) => {
           item
             .setTitle(tx("Open in Butter editor"))
             .setIcon(modeIcon("butter"))
             .onClick(() => {
+              if (routing.isDisposed) return;
               const leaf = this.app.workspace.getLeaf(false);
-              void leaf.setViewState({
+              if (file.path !== filePath || this.app.vault.getAbstractFileByPath(filePath) !== file) return;
+              const owner = routing.capture(leaf, file);
+              if (!owner) return;
+              void routing.setExplicit(owner, {
                 type: VIEW_TYPE_BUTTER,
                 state: { file: file.path },
               });
@@ -3091,11 +3261,13 @@ export default class ButterEditorPlugin extends Plugin {
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, _editor, view) => {
         if (!(view instanceof MarkdownView) || !view.file) return;
+        const routing = fileViewRouting(this.app), owner = routing.capture(view.leaf, view.file);
+        if (!owner || owner.snapshot.view !== view) return;
         menu.addItem((item) => {
           item
             .setTitle(tx("Switch to Butter editor"))
             .setIcon(modeIcon("butter"))
-            .onClick(() => void swapMarkdownToButter(view));
+            .onClick(() => void swapMarkdownToButter(view, owner, routing));
         });
       }),
     );
@@ -3161,8 +3333,14 @@ export default class ButterEditorPlugin extends Plugin {
   }
 
   private registerNewFileHook() {
+    const routing = fileViewRouting(this.app);
+    routing.observeWorkspaceLeaves();
+    this.fileRouting = routing;
+    this.register(() => routing.dispose());
+    this.registerEvent(this.app.workspace.on("layout-change", () => routing.sweepDetached()));
     this.registerEvent(
       this.app.workspace.on("file-open", (file) => {
+        routing.observeFileOpen(file);
         if (!this.settings.openNewFilesInButter) return;
         if (!file || file.extension !== "md") return;
         // Poll for up to ~10 frames (~165ms @ 60fps) looking for a
@@ -3175,49 +3353,49 @@ export default class ButterEditorPlugin extends Plugin {
         //     completes, so we need to wait until the swap lands
         // A fixed single-rAF deferral handled the easy paths but lost
         // the race on the slow ones, leaving the leaf in Live Preview.
-        this.tryAutoSwapToButter(file, 0);
+        const owners = new Map<WorkspaceLeaf, FileViewOwner>();
+        this.app.workspace.iterateAllLeaves(leaf => {
+          const owner = routing.captureAutomatic(leaf, file);
+          if (owner) owners.set(leaf, owner);
+        });
+        this.tryAutoSwapToButter(file, 0, file.path, routing, owners);
       }),
     );
   }
 
-  /** Locate any leaf showing `file` as a MarkdownView and swap it to
-   *  Butter. Re-arms via `requestAnimationFrame` up to MAX_ATTEMPTS so
-   *  we catch leaves that haven't finished mounting yet. Short-
-   *  circuits silently if the file is already in a Butter view (the
-   *  expected path now that view-registry routing sends .md straight
-   *  to Butter). Only logs when an actual swap is performed or when
-   *  the budget runs out without finding either butter or markdown
-   *  view - those are the real signals worth noticing. */
-  private tryAutoSwapToButter(file: TFile, attempt: number) {
+  /** Native mode choices belong to an exact leaf/file occurrence. Polling a
+   * companion pane must not override them, or a later navigation intent. */
+  private tryAutoSwapToButter(file: TFile, attempt: number, path: string, routing: FileViewRouting,
+    owners: ReadonlyMap<WorkspaceLeaf, FileViewOwner>) {
     const MAX_ATTEMPTS = 10;
-    if (!this.settings.openNewFilesInButter) return;
-    let target: WorkspaceLeaf | null = null;
-    let alreadyButter = false;
+    if (!this.settings.openNewFilesInButter || routing.isDisposed || file.path !== path ||
+      this.app.vault.getAbstractFileByPath(path) !== file) return;
+    const targets: WorkspaceLeaf[] = [];
     this.app.workspace.iterateAllLeaves((leaf) => {
-      if (alreadyButter) return;
       const view = leaf.view;
-      if (view instanceof ButterEditorView && view.file?.path === file.path) {
-        alreadyButter = true;
-        return;
-      }
-      if (!target && view instanceof MarkdownView && view.file?.path === file.path) {
-        target = leaf;
+      if (view instanceof MarkdownView && view.file === file && owners.has(leaf) &&
+        !routing.hasExplicitIntent(leaf, file)) {
+        targets.push(leaf);
       }
     });
-    if (alreadyButter) return; // routed directly via extension map - nothing to do
-    if (target) {
-      debug("auto-butter", `swap on attempt ${attempt}:`, file.path);
-      void (target as WorkspaceLeaf).setViewState({
-        type: VIEW_TYPE_BUTTER,
-        state: { file: file.path },
+    if (targets.length) {
+      const completions = targets.map(leaf => {
+        const captured = owners.get(leaf);
+        const owner = captured ? routing.automaticOwner(captured) : null;
+        return owner ? routing.setAutomatic(owner, { type: VIEW_TYPE_BUTTER, state: { file: path } })
+          : Promise.resolve(true); // stale owners retire; they never acquire a retry
+      });
+      void Promise.all(completions).then(applied => {
+        if (applied.some(value => !value) && attempt < MAX_ATTEMPTS) {
+          window.requestAnimationFrame(() => this.tryAutoSwapToButter(file, attempt + 1, path, routing, owners));
+        }
       });
       return;
     }
     if (attempt >= MAX_ATTEMPTS) {
-      debug("auto-butter", `no butter or markdown leaf after ${attempt} attempts:`, file.path);
       return;
     }
-    window.requestAnimationFrame(() => this.tryAutoSwapToButter(file, attempt + 1));
+    window.requestAnimationFrame(() => this.tryAutoSwapToButter(file, attempt + 1, path, routing, owners));
   }
 
   /** Reload settings changed by Sync or another process and reconcile every
@@ -3570,13 +3748,79 @@ export default class ButterEditorPlugin extends Plugin {
     if (this.saveStatus) return;
     this.saveStatus = installSaveStatus(this, (state) => {
       new SaveDiffModal(this.app, state.original, state.saved, state.reason).open();
-    });
+    }, () => this.openSaveRecovery());
     this.saveStatus.set(this.saveStatusState);
   }
 
-  private setSaveStatus(state: SaveState): void {
-    this.saveStatusState = state;
-    this.saveStatus?.set(state);
+  private setSaveStatus(state: SaveState, owner?: SaveStatusOwner): void {
+    this.saveStatusState = this.saveStatusSessions.report(state, owner);
+    this.saveStatus?.set(this.saveStatusState);
+    // Reporting UI must never alter the outcome of the save it describes.
+    try {
+      if (owner && state.kind === "blocked") {
+        this.saveFailureNotices ??= new SaveFailureNotices(
+          () => this.openSaveRecovery(), () => this.openSettings("support"),
+        );
+        this.saveFailureNotices.blocked(owner);
+      } else if (owner && state.kind === "clean") {
+        this.saveFailureNotices?.saved(owner);
+      }
+    } catch {
+      recordError("save", "Could not display save failure actions");
+    }
+  }
+
+  private recoveryStore(): SaveRecoveryStore {
+    if (!this.saveRecoveryStore) {
+      const pluginDirectory = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+      this.saveRecoveryStore = new SaveRecoveryStore(
+        this.app.vault.adapter,
+        normalizePath(`${pluginDirectory}/recovery`),
+      );
+    }
+    return this.saveRecoveryStore;
+  }
+
+  public async retainSaveRecovery(snapshot: SaveRecoverySnapshot): Promise<void> {
+    try {
+      await this.recoveryStore().retain(snapshot);
+      this.saveDiagnostics?.recoveryWritten();
+    } catch (error) {
+      this.saveDiagnostics?.recoveryWriteFailed();
+      throw error;
+    }
+  }
+
+  public async clearSavedRecovery(id: string, generation: number): Promise<void> {
+    try { await this.recoveryStore().clearSaved(id, generation); }
+    catch (error) {
+      this.saveDiagnostics?.recoveryCleanupFailed();
+      new Notice(tx("Butter saved the note, but could not clear its recovery snapshot."), 8000);
+      throw error;
+    }
+    // Acknowledged abandoned generations may retire without changing the
+    // latest status reported by their replacement or another editor pane.
+    this.saveStatusState = this.saveStatusSessions.resolveRetained({ id, generation });
+    this.saveStatus?.set(this.saveStatusState);
+  }
+
+  public openSaveRecovery(): void {
+    new SaveRecoveryModal(this.app, this.recoveryStore(), (snapshot) => this.resolveDiscardedRecoveryStatus(snapshot)).open();
+  }
+
+  private resolveDiscardedRecoveryStatus(owner: SaveStatusOwner): void {
+    // Inspect current ownership only after an explicit discard. A live dirty
+    // session still needs its warning; abandoned retained sessions may clear.
+    const live = this.app.workspace.getLeavesOfType(VIEW_TYPE_BUTTER).some(leaf => {
+      const view = leaf.view as unknown as { hasSaveStatusSession?: (id: string) => boolean };
+      // A rejected legacy-bundle close can leave an older Butter view alive.
+      // Unknown ownership must not erase its warning after a discard.
+      return typeof view.hasSaveStatusSession !== "function" || view.hasSaveStatusSession(owner.id);
+    });
+    if (live) return;
+    this.saveStatusState = this.saveStatusSessions.resolveRetained(owner);
+    this.saveStatus?.set(this.saveStatusState);
+    this.saveFailureNotices?.saved(owner);
   }
 
   public applyI18nLanguage(): void {

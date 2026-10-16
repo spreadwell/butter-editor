@@ -8,11 +8,14 @@
 import { App, setIcon } from "obsidian";
 import { Plugin as PMPlugin, PluginKey, Selection } from "prosemirror-state";
 import { Decoration, DecorationSet, type EditorView } from "prosemirror-view";
-import { setBlockType, wrapIn } from "prosemirror-commands";
+import { wrapIn } from "prosemirror-commands";
 import type { Schema } from "prosemirror-model";
 
 import { bindFloatingSurfaceReposition } from "../util/floating-surface";
 import { tx, type MessageKey } from "../i18n";
+import { setHeadingBlockType, setHeadingBlockTypeInTransaction, setParagraphBlockType,
+  setLiteralCodeBlock, setLiteralCodeBlockInTransaction, allowsExactTextblockTransaction } from "../editor/textblock-command";
+import { allowsDeclaredCodeTransaction, notifyCodeConversionRefusal } from "../editor/structural-save-admission";
 
 // ═══════════════════════════════════════════
 //  Items
@@ -25,6 +28,37 @@ export interface SlashItem {
   icon: string;
   keywords: string[];
   run: (view: EditorView, schema: Schema, app: App) => void;
+}
+
+/** Keep the query deletion and heading conversion in one transaction. A
+ * structural admission veto then retains the whole typed query and history. */
+export function runSlashTextblock(
+  view: EditorView, schema: Schema, id: string, triggerPos: number,
+): boolean {
+  const heading = /^h[1-6]$/.test(id), paragraph = id === "paragraph";
+  const code = ["code", "mermaid", "dataview", "dataviewjs", "base"].includes(id);
+  if (!heading && !paragraph && !code) return false;
+  const base = view.state.tr.delete(triggerPos, view.state.selection.head);
+  const tr = code
+    ? setLiteralCodeBlockInTransaction(base, schema.nodes.code_block, { language: id === "code" ? "" : id })
+    : setHeadingBlockTypeInTransaction(base, paragraph ? schema.nodes.paragraph : schema.nodes.heading,
+      heading ? { level: Number(id.slice(1)) } : {});
+  if (!tr) {
+    if (code) notifyCodeConversionRefusal(view.state);
+    return true;
+  }
+  if (code ? !allowsDeclaredCodeTransaction(view.state, tr)
+    : !allowsExactTextblockTransaction(view.state, tr)) return true;
+  view.dispatch(tr.scrollIntoView());
+  return true;
+}
+
+/** Kept for callers that explicitly exercise heading slash intent. */
+export function runSlashHeading(
+  view: EditorView, schema: Schema, id: string, triggerPos: number,
+): boolean {
+  if (!/^h[1-6]$/.test(id)) return false;
+  return runSlashTextblock(view, schema, id, triggerPos);
 }
 
 export type SlashCategory =
@@ -134,7 +168,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     desc: "Large section heading",
     icon: "heading-1",
     keywords: ["h1", "title", "header", "section"],
-    run: (v, s) => setBlockType(s.nodes.heading, { level: 1 })(v.state, v.dispatch),
+    run: (v, s) => setHeadingBlockType(s.nodes.heading, { level: 1 })(v.state, v.dispatch),
   },
   {
     id: "h2",
@@ -142,7 +176,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     desc: "Medium heading",
     icon: "heading-2",
     keywords: ["h2", "header", "section"],
-    run: (v, s) => setBlockType(s.nodes.heading, { level: 2 })(v.state, v.dispatch),
+    run: (v, s) => setHeadingBlockType(s.nodes.heading, { level: 2 })(v.state, v.dispatch),
   },
   {
     id: "h3",
@@ -150,7 +184,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     desc: "Smaller heading",
     icon: "heading-3",
     keywords: ["h3", "header", "section"],
-    run: (v, s) => setBlockType(s.nodes.heading, { level: 3 })(v.state, v.dispatch),
+    run: (v, s) => setHeadingBlockType(s.nodes.heading, { level: 3 })(v.state, v.dispatch),
   },
   {
     id: "h4",
@@ -158,7 +192,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     desc: "Small heading",
     icon: "heading-4",
     keywords: ["h4", "header", "section"],
-    run: (v, s) => setBlockType(s.nodes.heading, { level: 4 })(v.state, v.dispatch),
+    run: (v, s) => setHeadingBlockType(s.nodes.heading, { level: 4 })(v.state, v.dispatch),
   },
   {
     id: "h5",
@@ -166,7 +200,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     desc: "Subsection",
     icon: "heading-5",
     keywords: ["h5", "header", "section"],
-    run: (v, s) => setBlockType(s.nodes.heading, { level: 5 })(v.state, v.dispatch),
+    run: (v, s) => setHeadingBlockType(s.nodes.heading, { level: 5 })(v.state, v.dispatch),
   },
   {
     id: "h6",
@@ -174,7 +208,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     desc: "Smallest heading",
     icon: "heading-6",
     keywords: ["h6", "header", "section"],
-    run: (v, s) => setBlockType(s.nodes.heading, { level: 6 })(v.state, v.dispatch),
+    run: (v, s) => setHeadingBlockType(s.nodes.heading, { level: 6 })(v.state, v.dispatch),
   },
   {
     id: "paragraph",
@@ -182,7 +216,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     desc: "Plain text block",
     icon: "pilcrow",
     keywords: ["para", "text", "plain", "body"],
-    run: (v, s) => setBlockType(s.nodes.paragraph)(v.state, v.dispatch),
+    run: (v, s) => setParagraphBlockType(s.nodes.paragraph)(v.state, v.dispatch),
   },
 
   // ── Lists ───────────────────────────────────────────────────
@@ -252,7 +286,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     desc: "Fenced code",
     icon: "file-code",
     keywords: ["code", "fence", "pre", "snippet"],
-    run: (v, s) => setBlockType(s.nodes.code_block)(v.state, v.dispatch),
+    run: (v, s) => setLiteralCodeBlock(s.nodes.code_block)(v.state, v.dispatch),
   },
   {
     id: "math",
@@ -471,19 +505,7 @@ function insertCodeBlock(
   schema: Schema,
   language: string,
 ) {
-  const node = schema.nodes.code_block.create({ language });
-  const tr = view.state.tr.replaceSelectionWith(node).scrollIntoView();
-  // Place caret inside the code block (for editable langs) or
-  // just inside the structure (for widgets - doesn't visually
-  // matter; the NodeView swaps to view mode anyway).
-  const from = view.state.selection.from;
-  const targetPos = Math.min(from + 1, tr.doc.content.size);
-  tr.setSelection(
-    Selection.near(
-      tr.doc.resolve(targetPos),
-    ),
-  );
-  view.dispatch(tr);
+  setLiteralCodeBlock(schema.nodes.code_block, { language })(view.state, view.dispatch.bind(view));
   view.focus();
 }
 
@@ -692,10 +714,12 @@ class SlashMenuPopover {
     const item = this.items[idx];
     if (!item) return;
     const { view } = this;
-    const head = view.state.selection.head;
-    view.dispatch(view.state.tr.delete(this.triggerPos, head));
     try {
-      item.run(view, this.schema, this.app);
+      if (!runSlashTextblock(view, this.schema, item.id, this.triggerPos)) {
+        const head = view.state.selection.head;
+        view.dispatch(view.state.tr.delete(this.triggerPos, head));
+        item.run(view, this.schema, this.app);
+      }
     } catch (e) {
       console.error("[butter-editor] slash command failed:", e);
     }

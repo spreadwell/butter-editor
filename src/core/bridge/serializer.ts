@@ -2,6 +2,12 @@ import { Node as PMNode, Fragment, Mark } from "prosemirror-model";
 import { schema } from "../schema";
 import { CANONICAL_DEFAULTS, type CanonicalFormOptions } from "./common";
 import { isDigitCode } from "../inline-math-delimiters";
+import { isObsidianTagCharacter } from "../tag-characters";
+import { blockCommentSource, hasUnclosedHtmlCommentTail } from "../html-comments";
+import { commentNavigationSource } from "../comment-navigation";
+import { commentMarkdownSource } from "../comment-markdown-navigation";
+import { emptyLinkSource, markdownLinkDestination as markdownDestination, markdownLinkTitle as markdownTitle } from "../native-link-ownership";
+import { isLinkOccurrence, linkOccurrence, linkOccurrenceShapeEquals, setLinkOccurrenceLabelCodec, referenceImageSource, setReferenceImageAltCodec, isNativeNestedLinkAnchor, linkOccurrenceFootnoteDefinitions } from "../link-occurrence";
 import {
   flatListLayoutFor,
   listItemCanRepresentLooseNestedEdge,
@@ -12,6 +18,26 @@ import {
   orderedListStart,
   type FlatListLayoutEntry,
 } from "../list-layout";
+
+function nativeOwnedCommentLabel(children: readonly PMNode[]): string | null {
+  let source = "";
+  for (const child of children) {
+    if (child.marks.some(mark => mark.type.name !== "comment")) return null;
+    if (child.isText) {
+      const text = child.text ?? "";
+      // A newly authored opaque literal must not acquire native navigation.
+      if (/%%|[\r\n#[]|\^[A-Za-z0-9-]/.test(text)) return null;
+      source += text;
+    } else if (child.type.name === "obsidian_tag") source += `#${String(child.attrs.tag)}`;
+    else if (child.type.name === "footnote_ref") source += `[^${String(child.attrs.label)}]`;
+    else if (child.type.name === "comment_navigation") {
+      const raw = commentMarkdownSource(child); if (raw === null) return null; source += raw;
+    } else {
+      const raw = commentNavigationSource(child); if (raw === null) return null; source += raw;
+    }
+  }
+  return source && !/%%|[\r\n]/.test(source) ? source : null;
+}
 
 
 
@@ -43,25 +69,15 @@ export const markSpecs: Record<string, MarkSpec> = {
     // highlights honour `html` for the markdown vs HTML shape choice.
     open: (mark) => {
       if (mark.attrs.color) {
-        return `<mark style="background:${mark.attrs.color}">`;
+        return `<mark style="background:${htmlAttribute(mark.attrs.color as string)}">`;
       }
       return mark.attrs.html ? "<mark>" : "==";
     },
     close: (mark) =>
       mark.attrs.color || mark.attrs.html ? "</mark>" : "==",
     expel: (mark) => !mark.attrs.color && !mark.attrs.html,
-    // `escape: false` - the highlight plugin's `==…==` rule consumes
-    // the inner content as a single raw text token (no inline-rule
-    // re-tokenization), and the parser side doesn't de-escape `\…`
-    // sequences inside that span. Escaping markdown syntax inside
-    // would create an escape-loop on round-trip: each save adds
-    // another layer of backslashes because re-parse keeps the literal
-    // `\[` text-content and re-emit escapes the backslash. Tradeoff:
-    // a user who authors `==**bold inside**==` won't get nested bold
-    // recognized - but that's already the parser's current behavior
-    // (highlight is opaque to inner inline rules). escape:false just
-    // makes the serializer match the parser's opacity.
-    escape: false,
+    // The highlight rule recursively tokenizes its body. Literal syntax and
+    // entity-looking text therefore need the same escaping as ordinary text.
   },
   // `escape: false` - the comment span's content is treated as opaque
   // by the obsidian comment plugin (no inner inline rules fire on it).
@@ -70,10 +86,12 @@ export const markSpecs: Record<string, MarkSpec> = {
   // re-parse keeps the literal `\*` text-content (the comment plugin
   // doesn't de-escape) and re-emit escapes the backslash. Opaque
   // content with no inner tokenization should never be escaped.
-  comment:       { open: "%%", close: "%%", escape: false },
-  // Common inline HTML tags. expel:true so adjacent whitespace is
-  // pushed outside the tag (markdown convention; matches how strong/
-  // em/highlight already behave). rank:0 so they open OUTSIDE
+  // Keep the opaque payload innermost. When a peer mark changes within a
+  // comment, the close/reopen stack splits the comment at that boundary,
+  // placing the peer's source delimiters outside each opaque segment.
+  comment:       { open: "%%", close: "%%", escape: false, rank: 1000 },
+  // Common inline HTML tags preserve the supplied whitespace interval.
+  // rank:0 so they open OUTSIDE
   // markdown content marks (strong, em, etc.) - produces
   // `<font>**bold**</font>` rather than the malformed
   // `**<font>bold**</font>`.
@@ -84,18 +102,19 @@ export const markSpecs: Record<string, MarkSpec> = {
   font: {
     open: (mark) => {
       const parts: string[] = [];
-      if (mark.attrs.color) parts.push(`color="${mark.attrs.color}"`);
-      if (mark.attrs.face) parts.push(`face="${mark.attrs.face}"`);
-      if (mark.attrs.size) parts.push(`size="${mark.attrs.size}"`);
+      if (mark.attrs.color) parts.push(`color="${htmlAttribute(mark.attrs.color as string)}"`);
+      if (mark.attrs.face) parts.push(`face="${htmlAttribute(mark.attrs.face as string)}"`);
+      if (mark.attrs.size) parts.push(`size="${htmlAttribute(mark.attrs.size as string)}"`);
       return parts.length ? `<font ${parts.join(" ")}>` : "<font>";
     },
     close: () => "</font>",
     rank: 0,
   },
   code: {
-    open:   (_m, parent, idx) => backticksFor(parent.child(idx), -1),
-    close:  (_m, parent, idx) => backticksFor(parent.child(idx - 1), 1),
+    open:   (_m, parent, idx) => backticksFor(parent, idx, -1),
+    close:  (_m, parent, idx) => backticksFor(parent, idx, 1),
     escape: false,
+    rank: 0,
   },
   link: {
     open: "[",
@@ -107,11 +126,11 @@ export const markSpecs: Record<string, MarkSpec> = {
       // Pick angle form when href contains whitespace or unbalanced
       // parens; otherwise plain (which is the common case and matches
       // what users authored).
-      const href = markdownDestination((mark.attrs.href ?? "") as string);
       // title: `"..."`. Inner `"` and `\` need backslash-escaping so
       // the title parses back as a single string. Without this, a
       // title like `she said "hi"` round-trips as broken markdown.
       const rawTitle = (mark.attrs.title ?? "") as string;
+      const href = markdownDestination((mark.attrs.href ?? "") as string, Boolean(rawTitle));
       const t = rawTitle
         ? ` "${markdownTitle(rawTitle)}"`
         : "";
@@ -120,14 +139,23 @@ export const markSpecs: Record<string, MarkSpec> = {
   },
 };
 
-function backticksFor(node: PMNode, side: number): string {
-  const re = /`+/g;
-  let m, len = 0;
-  if (node.isText) while ((m = re.exec(node.text!))) len = Math.max(len, m[0].length);
-  let result = len > 0 && side > 0 ? " `" : "`";
-  for (let i = 0; i < len; i++) result += "`";
-  if (len > 0 && side < 0) result += " ";
-  return result;
+function backticksFor(parent: PMNode, index: number, side: number): string {
+  const anchor = side < 0 ? index : index - 1;
+  const mark = parent.child(anchor).marks.find((item) => item.type.name === "code");
+  let start = anchor;
+  let end = anchor + 1;
+  while (start > 0 && mark?.isInSet(parent.child(start - 1).marks)) start--;
+  while (end < parent.childCount && mark?.isInSet(parent.child(end).marks)) end++;
+  let text = "";
+  for (let at = start; at < end; at++) text += parent.child(at).text ?? "";
+  const delimiter = "`".repeat(longestCharacterRun(text, "`") + 1);
+  // CommonMark removes exactly one leading/trailing space when both are
+  // present and the body is not all spaces. Add one reversible padding space
+  // for that case, or when a boundary backtick would merge with the fence.
+  const padded = /^`|`$/.test(text) || (/^ .* $/s.test(text) && /[^ ]/.test(text));
+  return side < 0
+    ? delimiter + (padded ? " " : "")
+    : (padded ? " " : "") + delimiter;
 }
 
 // ── Canonical-form preferences ──
@@ -135,17 +163,13 @@ function backticksFor(node: PMNode, side: number): string {
 // ── Escape helpers ──
 
 function escapeTildeRuns(str: string): string {
-  return str.replace(/~{2,}/g, (run) => run.replace(/~/g, "\\~"));
-}
-
-function escapeTagLikeHashes(str: string, boundaryAtStart: boolean): string {
-  return str.replace(
-    /(^|[ \t\r\n])#(?=[A-Za-z0-9_/-]*[A-Za-z_/-][A-Za-z0-9_/-]*)/g,
-    (match, prefix: string, offset: number) => {
-      if (offset === 0 && prefix === "" && !boundaryAtStart) return match;
-      return `${prefix}\\#`;
-    },
-  );
+  // Native strike/fence grammar needs a run of at least two tildes. Interior
+  // single tildes remain readable approximation text. Protect text-node and
+  // physical-line edges, where a neighboring emitted delimiter can extend
+  // the run even though this literal node contains only one tilde.
+  return str.replace(/~+/g, (run: string, index: number) =>
+    run.length > 1 || index === 0 || index + run.length === str.length
+      ? run.replace(/~/g, "\\~") : run);
 }
 
 function protectEntityLikeAmpersands(
@@ -158,19 +182,9 @@ function protectEntityLikeAmpersands(
   );
 }
 
-function markdownDestination(value: string): string {
-  let raw = protectEntityLikeAmpersands(value, "&amp;");
-  raw = raw.replace(/\r/g, "&#13;").replace(/\n/g, "&#10;");
-  const needsAngle = /[\s()<>\\]/.test(raw);
-  return needsAngle
-    ? `<${raw.replace(/([<>\\])/g, "\\$1")}>`
-    : raw;
-}
-
-function markdownTitle(value: string): string {
-  let raw = protectEntityLikeAmpersands(value, "&amp;");
-  raw = raw.replace(/\r/g, "&#13;").replace(/\n/g, "&#10;");
-  return raw.replace(/(["\\])/g, "\\$1");
+export function htmlAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/\r/g, "&#13;").replace(/\n/g, "&#10;");
 }
 
 function encodeBoundaryWhitespace(value: string): string {
@@ -217,8 +231,23 @@ function safeCodeFence(
   );
 }
 
-function esc(str: string, startOfLine = false, tagBoundaryAtStart = startOfLine): string {
-  str = str.replace(/[`*\\[\]_]/g, "\\$&");
+/** External rich clipboard text is literal content, not authored Markdown.
+ * Reuse the file serializer's exact text codec at that import boundary. */
+export function escapeMarkdownText(str: string, startOfLine = true): string {
+  return esc(str, startOfLine, false);
+}
+
+const DOLLAR_ESCAPE_PATTERNS = {
+  text: /\$/g,
+  currency: /\$(?![0-9])/g,
+} as const;
+
+function esc(str: string, startOfLine = false, preserveCurrency = false): string {
+  str = str.replace(/[`*\\[\]_<>=%^#!]/g, "\\$&");
+  // A currency-only literal textblock has no emitted math/code/comment
+  // token seam. Its digit-followed dollars cannot close each other under
+  // the native inline-math grammar; every other dollar remains protected.
+  str = str.replace(DOLLAR_ESCAPE_PATTERNS[preserveCurrency ? "currency" : "text"], "\\$&");
   str = escapeTildeRuns(str);
   // Literal entity-looking text must remain literal text. markdown-it decodes
   // `&nbsp;`, `&#160;`, etc. during parse, so a user typing those characters
@@ -228,9 +257,8 @@ function esc(str: string, startOfLine = false, tagBoundaryAtStart = startOfLine)
   str = str.replace(/\u00a0/g, "&nbsp;");
   if (startOfLine)
     str = str
-      .replace(/^[#\-*+>]/, "\\$&")
+      .replace(/^[-+>]/, "\\$&")
       .replace(/^(\s*\d+)([.)])/, "$1\\$2");
-  str = escapeTagLikeHashes(str, tagBoundaryAtStart);
   return str;
 }
 
@@ -259,6 +287,15 @@ function isInnerLineStart(out: string): boolean {
 // ── Serializer state ──
 
 export type NodeSer = (state: SerState, node: PMNode, parent?: PMNode, index?: number) => void;
+
+function tagNeedsBoundary(parent?: PMNode, index?: number): boolean {
+  if (!parent || index === undefined || index === 0) return false;
+  const previous = parent.child(index - 1);
+  if (["wikilink", "obsidian_embed_inline", "inline_math", "footnote_ref", "inline_footnote", "image", "empty_link"].includes(previous.type.name)) return false;
+  if (previous.marks.some(mark => !mark.isInSet(parent.child(index).marks))) return false;
+  return previous.type.name !== "softbreak" && previous.type.name !== "hard_break" &&
+    !(previous.isText && /\s$/.test(previous.text ?? ""));
+}
 
 type DelimiterBoundaryFallbacks = Map<number, Set<string>>;
 const unknownDelimiterBoundary = Symbol("unknown-delimiter-boundary");
@@ -491,6 +528,26 @@ function markedRunIncludesMark(
   return false;
 }
 
+function adjacentRunSharesDelimiter(
+  parent: PMNode,
+  mark: Mark,
+  start: number,
+  end: number,
+  canonicalForm: Required<CanonicalFormOptions>,
+): boolean {
+  const delimiter = markdownDelimiterFor(mark, canonicalForm);
+  if (delimiter === null) return false;
+  const shares = (outside: readonly Mark[], inside: readonly Mark[]): boolean =>
+    outside.some(peer => !peer.eq(mark) && !peer.isInSet(inside) &&
+      markdownDelimiterFor(peer, canonicalForm)?.[0] === delimiter[0]);
+  // Distinct adjacent strong/em runs would emit a shared *** (or ___) seam.
+  // Native pairing treats that seam as a single run, so its character/mark
+  // ownership cannot represent both requested intervals. This checks the
+  // neighboring emitted marks, rather than only their visible text flanks.
+  return (start > 0 && shares(parent.child(start - 1).marks, parent.child(start).marks)) ||
+    (end < parent.childCount && shares(parent.child(end).marks, parent.child(end - 1).marks));
+}
+
 function nestedDelimiterBoundaryOverrides(
   parent: PMNode,
   mark: Mark,
@@ -502,7 +559,7 @@ function nestedDelimiterBoundaryOverrides(
   const delimiter = markdownDelimiterFor(mark, canonicalForm);
   if (delimiter === null) return result;
   const ordered = parent.child(start).marks
-    .filter((candidate) => markdownDelimiterFor(candidate, canonicalForm) !== null)
+    .filter((candidate) => markSpecs[candidate.type.name])
     .slice()
     .sort((left, right) => {
       const leftRank = markSpecs[left.type.name]?.rank ?? 100;
@@ -520,7 +577,7 @@ function nestedDelimiterBoundaryOverrides(
     const peerDelimiter = markdownDelimiterFor(peer, canonicalForm);
     // Identical delimiter characters form one markdown-it run (`***`), whose
     // flanking context is the semantic content outside the complete run.
-    if (peerDelimiter === null || peerDelimiter[0] === delimiter[0]) continue;
+    if (peerDelimiter?.[0] === delimiter[0]) continue;
     const peerStartsHere = !peer.isInSet(previousMarks);
     const peerEndsHere =
       Boolean(peer.isInSet(parent.child(end - 1).marks)) &&
@@ -544,24 +601,99 @@ function markedRunNeedsHtml(
   end: number,
   canonicalForm: Required<CanonicalFormOptions>,
 ): boolean {
+  if (mark.type.name === "comment") {
+    // %% is an opaque string representation. Standard hidden inline HTML
+    // keeps atom/break meaning and literal delimiter seams representable.
+    if (markedRunContains(parent, start, end, "%%") !== false) return true;
+    let payload = "";
+    for (let index = start; index < end; index++) {
+      const child = parent.child(index);
+      if (!child.isText || /^%|%$/.test(child.text ?? "")) return true;
+      payload += child.text ?? "";
+    }
+    // Entire hidden paragraphs must not acquire the block-comment sentinel
+    // meaning. A physical blank line likewise ends inline Markdown parsing.
+    if (!payload.trim() || /^\s*list-break\s*$/i.test(payload) || /\r|\n/.test(payload)) return true;
+    // Native metadataCache scans ASCII IDs inside opaque %% comments, even
+    // with later visible text. A standard hidden span keeps that literal
+    // payload hidden without creating an unintended native reference.
+    if (/\^[A-Za-z0-9-]+/.test(payload) || payload.includes("#") || payload.includes("[") ||
+      payload.includes("[^") || payload.includes("^[")) return true;
+    return false;
+  }
+  if (mark.type.name === "code") {
+    // Backticks are an opaque text spelling. An HTML code mark instead keeps
+    // ordinary inline parsing active for other marks, links, atoms and breaks.
+    let payload = "";
+    for (let index = start; index < end; index++) {
+      const child = parent.child(index);
+      if (!child.isText || child.marks.some((peer) => !peer.eq(mark))) return true;
+      payload += child.text ?? "";
+    }
+    // Markdown-it trims one space at each edge of three-or-more all-space
+    // spans; other engines retain them. HTML avoids that dialect ambiguity.
+    if (/^ {3,}$/.test(payload) || /\r|\n/.test(payload)) return true;
+    return false;
+  }
   const delimiter = markdownDelimiterFor(mark, canonicalForm);
   if (delimiter === null) return false;
+
+  if (adjacentRunSharesDelimiter(parent, mark, start, end, canonicalForm)) return true;
+
+  // Native Obsidian can absorb escaped literal delimiter characters into
+  // adjacent emphasis/strike syntax even when markdown-it resolves the
+  // intended interval. Standard HTML separates source ownership without
+  // adding text (for example em over literal **x**, or strike over ~).
+  if (["strong", "em", "strikethrough"].includes(mark.type.name) &&
+    (markedRunContains(parent, start, end, delimiter[0]) !== false ||
+      adjacentBoundaryCharacter(parent, start, -1) === delimiter[0] ||
+      adjacentBoundaryCharacter(parent, end, 1) === delimiter[0])) return true;
 
   // Obsidian comments are opaque to inner Markdown tokenization. Any
   // delimiter mark sharing their text must wrap the comment in an HTML mark;
   // putting Markdown delimiters inside `%%...%%` turns them into literal text.
   if (markedRunIncludesMark(parent, start, end, "comment")) return true;
+  if (markedRunIncludesMark(parent, start, end, "code")) return true;
+
+  // Preserve complete mark-run edge whitespace exactly with standard HTML;
+  // moving it outside would remove an authored styling/link interval.
+  const firstChild = parent.child(start);
+  const lastChild = parent.child(end - 1);
+  if ((firstChild.isText && /^\s/.test(firstChild.text ?? "")) ||
+    (lastChild.isText && /\s$/.test(lastChild.text ?? ""))) return true;
+  // Native emphasis scans escaped punctuation at its physical source edge,
+  // rather than the decoded flank used by markdown-it. HTML is required at
+  // these edges, including strong/em neighbors whose shared *** run would
+  // otherwise assign the escaped tilde/backslash to the wrong mark interval.
+  const escapedEdge = /[`*\\[\]_<>=%^$#!~]/;
+  if (["strong", "em", "strikethrough"].includes(mark.type.name) &&
+    ((firstChild.isText && escapedEdge.test(firstCodePoint(firstChild.text ?? "") ?? "")) ||
+      (lastChild.isText && escapedEdge.test(lastCodePoint(lastChild.text ?? "") ?? "")))) return true;
 
   // The Obsidian highlight rule pairs with the first raw closing `==`.
   // There is no Markdown escape for `=` in this syntax, so literal content
   // containing the delimiter requires the equivalent HTML mark.
   if (
     mark.type.name === "highlight" &&
-    markedRunContains(parent, start, end, "==") !== false
+    markedRunContains(parent, start, end, "=") !== false
   ) {
     return true;
   }
-  if (mark.type.name === "highlight") return false;
+  if (mark.type.name === "highlight") {
+    // The tag rule needs a semantic left boundary. Native == is source text
+    // at that boundary while the HTML mark has explicit zero-width tokens.
+    for (let index = start; index < end; index++) {
+      if (parent.child(index).type.name === "obsidian_tag") return true;
+    }
+    return false;
+  }
+
+  // If the peer set changes at the edge, a peer's HTML/Markdown closing
+  // delimiter can be the immediate flanking character rather than the
+  // semantic text edge. Prefer HTML instead of claiming an unproved flank.
+  const firstPeers = parent.child(start).marks.filter((peer) => !peer.eq(mark));
+  const lastPeers = parent.child(end - 1).marks.filter((peer) => !peer.eq(mark));
+  if (!Mark.sameSet(firstPeers, lastPeers)) return true;
 
   const firstEdge = markedRunEdge(parent, start, end, "first");
   const lastEdge = markedRunEdge(parent, start, end, "last");
@@ -620,7 +752,7 @@ function computeDelimiterBoundaryFallbacks(
   for (let index = 0; index <= parent.childCount; index++) {
     const marks = index < parent.childCount
       ? parent.child(index).marks.filter(
-          (mark) => markdownDelimiterFor(mark, canonicalForm) !== null,
+          (mark) => mark.type.name === "code" || mark.type.name === "comment" || markdownDelimiterFor(mark, canonicalForm) !== null,
         )
       : [];
     const current = new Map(
@@ -886,15 +1018,6 @@ export class SerState {
     }
   }
 
-  lastOutputCharacter(): string {
-    return this.outputLastCode < 0 ? "" : String.fromCharCode(this.outputLastCode);
-  }
-
-  atTagBoundary(): boolean {
-    const code = this.outputLastCode;
-    return code < 0 || code === 0x20 || code === 0x09 || code === 0x0d || code === 0x0a;
-  }
-
   atInnerLineStart(): boolean { return this.outputPrefixTail !== null; }
 
   /**
@@ -962,13 +1085,15 @@ export class SerState {
     forceHtml = false,
   ): string {
     const name = mark.type.name;
+    if (name === "comment" && forceHtml) return '<span style="display:none">';
     if (this.isOverlap(mark) || forceHtml) {
+      if (name === "code") return "<code>";
       if (name === "strong") return "<strong>";
       if (name === "em") return "<em>";
       if (name === "strikethrough") return "<s>";
       if (name === "highlight") {
         return mark.attrs.color
-          ? `<mark style="background:${mark.attrs.color}">`
+          ? `<mark style="background:${htmlAttribute(mark.attrs.color as string)}">`
           : "<mark>";
       }
     }
@@ -987,7 +1112,9 @@ export class SerState {
     forceHtml = false,
   ): string {
     const name = mark.type.name;
+    if (name === "comment" && forceHtml) return "</span>";
     if (this.isOverlap(mark) || forceHtml) {
+      if (name === "code") return "</code>";
       if (name === "strong") return "</strong>";
       if (name === "em") return "</em>";
       if (name === "strikethrough") return "</s>";
@@ -1020,7 +1147,7 @@ export class SerState {
   }
 
   /** Write text with optional escaping and per-line delim. */
-  text(text: string, escape = true) {
+  text(text: string, escape = true, semanticStart = false, preserveCurrency = false) {
     const lines = text.split("\n");
     for (let i = 0; i < lines.length; i++) {
       // Start-of-line is true for `i > 0` (after explicit newline)
@@ -1036,8 +1163,10 @@ export class SerState {
       // in `this.out`. Pre-fix, text-looks-like-block patterns
       // (`## title`, `- list`, `> quote`, `---`) round-tripped
       // wrong inside lists / blockquotes because SOL escape didn't
-      // fire there.
+      // fire there. `semanticStart` also covers inline cells and mark opens
+      // whose capture/wrapper bytes do not reflect their visible text edge.
       const sol =
+        (semanticStart && i === 0) ||
         i > 0 ||
         this.atBlank() ||
         !!this.closed ||
@@ -1049,12 +1178,11 @@ export class SerState {
       } else if (this.delim && this.atBlank()) {
         this.appendOutput(this.delim);
       }
-      const tagBoundaryAtStart = sol || this.atTagBoundary();
-      this.appendOutput(escape ? esc(lines[i], sol, tagBoundaryAtStart) : lines[i]);
+      this.appendOutput(escape ? esc(lines[i], sol, preserveCurrency) : lines[i]);
     }
   }
 
-  writeTextAfterInlineMath(text: string, escape = true) {
+  writeTextAfterInlineMath(text: string, escape = true, semanticStart = false, preserveCurrency = false) {
     let rest = text;
     if (this.inlineMathClosePending && this.outputLastCode === 0x24 && rest.length > 0) {
       const first = rest.charCodeAt(0);
@@ -1064,7 +1192,7 @@ export class SerState {
       }
     }
     this.inlineMathClosePending = false;
-    if (rest) this.text(rest, escape);
+    if (rest) this.text(rest, escape, semanticStart, preserveCurrency);
   }
 
   closeBlock(node: PMNode) { this.closed = node; }
@@ -1096,6 +1224,25 @@ export class SerState {
   // ── rendering ──
 
   renderNode(node: PMNode, parent?: PMNode, index?: number) {
+    if (this.nativeFootnoteCarrier === node) {
+      this.nativeFootnoteCarrier = undefined;
+      this.write("<a>");
+      try { this.renderNode(node, parent, index); } finally { this.write("</a>"); this.nativeFootnoteCarrier = node; }
+      return;
+    }
+    if (node.type.name === "block_id" && tagNeedsBoundary(parent, index)) this.write("<span></span>");
+    if (node.type.name === "inline_math" && parent && index !== undefined && index > 0 &&
+      parent.child(index - 1).type.name === "inline_math") {
+      this.write("<span></span>");
+    }
+    if ((node.type.name === "obsidian_tag" || node.type.name === "block_id") && parent && index !== undefined && index > 0 &&
+      parent.child(index - 1).isText && /\s$/.test(parent.child(index - 1).text ?? "") &&
+      this.outputLastCode === 0x3b /* ; */) {
+      // Entity whitespace keeps the visible text but grants no native tag
+      // boundary. This exact empty HTML element starts a native syntax
+      // segment without adding a visible space or an editor mark.
+      this.write("<span></span>");
+    }
     // Inline-atom byte-preservation hook. Only fires inside an
     // edited-block synthesis path that set sourcePresBody +
     // sourcePresOriginalAtoms. The check is cheap (Set.has +
@@ -1116,29 +1263,21 @@ export class SerState {
         r.end >= r.start &&
         r.end <= this.sourcePresBody.length
       ) {
-        // Some inline atoms require a whitespace-or-start-of-line
-        // boundary to parse. When a block merge / inline edit puts
-        // the atom next to a non-whitespace inline sibling (or
-        // when mark-overlap serialization emits `</strong>` right
-        // before the `#`), markdown-it won't recognize the atom —
-        // it stays as literal text. Check the actual output buffer
-        // for the trailing char so we catch both PM-sibling and
-        // mark-boundary cases. Mirror the same check in
-        // nodeSer.obsidian_tag for the handler path.
-        if (node.type.name === "obsidian_tag") {
-          // Match the at-blank / pending-close guard in
-          // nodeSer.obsidian_tag so we don't inject a space at the
-          // start of a paragraph after a block close.
-          if (!this.closed && !this.atBlank()) {
-            const last = this.lastOutputCharacter();
-            if (last && !/\s/.test(last)) this.write(" ");
-          }
-        }
+        // Preserved atoms follow the same semantic boundary policy as
+        // canonical atoms. Formatting delimiters must not inject extra text.
+        if (node.type.name === "obsidian_tag" && tagNeedsBoundary(parent, index)) this.write("<span></span>");
         const source = this.sourcePresBody.slice(r.start, r.end);
-        this.write(source);
-        this.inlineMathClosePending =
-          node.type.name === "inline_math" && source.endsWith("$");
-        return;
+        // A multiline atom's contiguous original range includes physical
+        // container prefixes. Moving it into a list/quote needs the CURRENT
+        // prefixes, so reconstruct its opaque payload instead of copying
+        // prefixes from its previous owner. Unchanged whole blocks still
+        // retain their original bytes through the block preservation path.
+        if (!((node.type.name === "inline_math" || node.type.name === "inline_footnote") && /[\r\n]/.test(source))) {
+          this.write(source);
+          this.inlineMathClosePending =
+            node.type.name === "inline_math" && source.endsWith("$");
+          return;
+        }
       }
     }
     const handler = nodeSer[node.type.name];
@@ -1147,10 +1286,101 @@ export class SerState {
   }
 
   renderContent(parent: PMNode) {
+    if (parent.type.name === "doc" && this.nativeFootnoteDefinitions === undefined) this.nativeFootnoteDefinitions = linkOccurrenceFootnoteDefinitions(parent);
     parent.forEach((child, _, i) => this.renderNode(child, parent, i));
   }
 
+  nativeFootnoteDefinitions: ReadonlySet<string> | undefined;
+  private nativeFootnoteCarrier: PMNode | undefined;
+
+  /** Close/reopen local formatting at the native nested-anchor seam while
+   * retaining one complete source label and one cache occurrence. The closed
+   * targetless anchor carries no cache/navigation metadata of its own. */
+  renderOwnedLabel(parent: PMNode, children: readonly PMNode[], rawComments = false) {
+    const cut = children.findIndex(child => isNativeNestedLinkAnchor(child, this.nativeFootnoteDefinitions ?? new Set()));
+    const styledCut = cut >= 0 && children[cut].marks.some(mark => markSpecs[mark.type.name]);
+    const render = (nodes: readonly PMNode[]): void => {
+      if (!rawComments) { this.renderInline(parent.copy(Fragment.fromArray(nodes))); return; }
+      let ordinary: PMNode[] = [];
+      const emit = (): void => { if (ordinary.length) this.renderInline(parent.copy(Fragment.fromArray(ordinary))); ordinary = []; };
+      for (let index = 0; index < nodes.length;) {
+        if (!nodes[index].marks.some(mark => mark.type.name === "comment")) { ordinary.push(nodes[index++]); continue; }
+        let end = index + 1;
+        while (end < nodes.length && nodes[end].marks.some(mark => mark.type.name === "comment")) end++;
+        const hidden = nodes.slice(index, end), payload = nativeOwnedCommentLabel(hidden);
+        if (payload === null) ordinary.push(...hidden);
+        else { emit(); this.write(`%%${payload}%%`); }
+        index = end;
+      }
+      emit();
+    };
+    if (styledCut) {
+      render(children.slice(0, cut)); this.write("<a></a>");
+      const previous = this.nativeFootnoteCarrier;
+      this.nativeFootnoteCarrier = ["footnote_ref", "inline_footnote"].includes(children[cut].type.name) ? children[cut] : undefined;
+      try { render(children.slice(cut)); } finally { this.nativeFootnoteCarrier = previous; }
+    }
+    else render(children);
+  }
+
   renderInline(parent: PMNode) {
+    let hasOwner = false;
+    parent.forEach(node => { if (linkOccurrence(node)) hasOwner = true; });
+    if (hasOwner) {
+      let owner: Mark | undefined;
+      let run: PMNode[] = [];
+      const flush = (): void => {
+        if (!run.length) return;
+        // A mark spanning the complete occurrence surrounds its source
+        // wrapper. Opening it inside the anchor can let a native tag close
+        // the mark before the tag, losing the requested interval.
+        const owning = owner;
+        const surrounding = owning ? run[0].marks.filter(mark => markSpecs[mark.type.name] &&
+          !["link", "comment"].includes(mark.type.name) && run.every(child => mark.isInSet(child.marks)) &&
+          (owning.attrs.syntax !== "reference" || (owning.attrs.labelOuterMarks as readonly { type: string; attrs: Readonly<Record<string, unknown>> }[]).some(peer =>
+            peer.type === mark.type.name && JSON.stringify(peer.attrs) === JSON.stringify(mark.attrs)))) : [];
+        const clean = run.map(node => node.mark(node.marks.filter(mark => mark.type.name !== "link_occurrence" &&
+          (!owner || mark.type.name !== "link") && !surrounding.some(peer => peer.eq(mark)))));
+        for (const mark of surrounding) this.write(this.markOpen(mark, parent, 0, true));
+        if (owner) {
+          if (!isLinkOccurrence(owner.attrs)) throw new Error("Invalid link occurrence");
+          if (owner.attrs.syntax === "html") this.write(`<a href="${htmlAttribute(owner.attrs.href)}"${owner.attrs.title ? ` title="${htmlAttribute(owner.attrs.title)}"` : ""}>`);
+          else {
+            this.write("[");
+            // A leading wiki atom otherwise joins the external label opener
+            // into [[[...]], which native grammar assigns to a different
+            // wiki target. The qualified empty span separates source owners
+            // without changing visible text or the complete link occurrence.
+            if (owner.attrs.syntax === "inline" && clean[0]?.type.name === "wikilink") this.write("<span></span>");
+          }
+        }
+        if (owner?.attrs.syntax === "reference") this.write(owner.attrs.labelSource as string);
+        else if (owner?.attrs.syntax === "inline") {
+          // Genuine raw comments inside a Markdown label retain their opaque
+          // source grammar. A hidden HTML span at this seam can be interpreted
+          // as label syntax by the native host and lose hidden ownership.
+          this.renderOwnedLabel(parent, clean, true);
+        } else if (owner) this.renderOwnedLabel(parent, clean);
+        else this.renderInline(parent.copy(Fragment.fromArray(clean)));
+        if (owner) {
+          if (owner.attrs.syntax === "html") this.write("</a>");
+          else if (owner.attrs.syntax === "reference") this.write(owner.attrs.referenceForm === "shortcut" ? "]" : owner.attrs.referenceForm === "collapsed" ? "][]" : `][${owner.attrs.reference as string}]`);
+          else this.write(`](${markdownDestination(owner.attrs.href as string, Boolean(owner.attrs.title))}${owner.attrs.title ? ` "${markdownTitle(owner.attrs.title as string)}"` : ""})`);
+        }
+        for (let index = surrounding.length - 1; index >= 0; index--) this.write(this.markClose(surrounding[index], parent, parent.childCount, true));
+        run = [];
+      };
+      parent.forEach(node => {
+        const next = linkOccurrence(node);
+        if (Boolean(owner) !== Boolean(next) || owner && next && !owner.eq(next)) flush();
+        owner = next;
+        run.push(node);
+      });
+      flush();
+      return;
+    }
+    let preserveCurrency = true;
+    parent.forEach(node => { if (!node.isText || node.marks.length) preserveCurrency = false; });
     // Pre-pass: compute which mark instances overlap others within
     // this inline parent. A mark "overlaps" another when their text
     // ranges interleave but don't nest (e.g. `*two **three* four**`
@@ -1168,7 +1398,6 @@ export class SerState {
 
     type ActiveMark = { mark: Mark; forceHtml: boolean };
     let active: ActiveMark[] = [];
-    let trailing = "";
 
     const progress = (child: PMNode | null, _off: number, index: number) => {
       let marks = child
@@ -1186,44 +1415,6 @@ export class SerState {
           const rb = markSpecs[b.type.name]?.rank ?? 100;
           return ra - rb;
         });
-      }
-
-      // Whitespace expelling
-      let leading = trailing;
-      trailing = "";
-      if (child?.isText && child.text) {
-        const sharesOpaqueComment = marks.some(
-          (mark) => mark.type.name === "comment",
-        );
-        if (!sharesOpaqueComment && marks.some((m) => {
-          const expel = markSpecs[m.type.name]?.expel;
-          return typeof expel === "function" ? expel(m) : expel === true;
-        })) {
-          const match = /^(\s*)(.*?)(\s*)$/s.exec(child.text);
-          if (match && (match[1] || match[3])) {
-            leading += match[1];
-            trailing = match[3];
-            child = match[2]
-              ? schema.text(match[2], child.marks)
-              : null;
-            // When the expelled text has NO inner content (pure
-            // whitespace), keep `marks` as the child's original mark
-            // set - NOT active.slice(). The previous logic perpetuated
-            // active marks across the whitespace, which is wrong when
-            // the whitespace text node's actual mark set is NARROWER
-            // than what's currently active. That happens when the
-            // PM doc structure is e.g. `text[em,strong] · text[em] ·
-            // wikilink[em]` - the middle whitespace deliberately drops
-            // strong. Keeping strong open through the whitespace
-            // produces `**Note **[[link]]` where the closing `**` is
-            // preceded by whitespace and can't pair as right-flanking,
-            // so markdown-it can't re-pair the strong on reparse.
-            //
-            // With marks = child.marks, the close-marks loop below
-            // closes strong before the whitespace, producing
-            // `**Note** [[link]]` - clean and round-tripping.
-          }
-        }
       }
 
       // Close marks NOT in the target set. Uses set-membership, not
@@ -1287,29 +1478,25 @@ export class SerState {
         j = active.length;
       }
 
-      // Leading whitespace (between close and open). At the start of a
-      // textblock or immediately after a line break, Markdown would trim it
-      // or reinterpret it as indentation, so emit character references
-      // through the raw writer. Whitespace expelled from a mark stays outside
-      // that mark as intended.
       const previousSibling = index > 0 ? parent.child(index - 1) : null;
       const followsBreak = previousSibling?.type.name === "softbreak" ||
         previousSibling?.type.name === "hard_break";
-      if (leading) {
-        if (
-          (index === 0 || followsBreak) &&
-          !marks.some((m) => markSpecs[m.type.name]?.escape === false)
-        ) {
-          const boundary = /^[ \t]+/.exec(leading)?.[0] ?? "";
-          if (boundary) {
-            this.write(encodeBoundaryWhitespace(boundary));
-            leading = leading.slice(boundary.length);
-          }
-        }
-        if (leading) this.write(leading);
-      }
 
       // Open marks NOT currently active
+      // A newly added outer peer cannot open inside an opaque %% payload.
+      // Close the native comment before that transition and reopen it after
+      // the new peer's delimiter, keeping both exact semantic intervals.
+      const opaqueComment = active.findIndex(
+        (entry) => entry.mark.type.name === "comment" && !entry.forceHtml,
+      );
+      if (opaqueComment >= 0 && marks.some(
+        (mark) => !active.some((entry) => entry.mark.eq(mark)),
+      )) {
+        for (let at = active.length - 1; at >= opaqueComment; at--) {
+          this.write(this.markClose(active[at].mark, parent, index, active[at].forceHtml));
+        }
+        active.splice(opaqueComment);
+      }
       for (let j = 0; j < marks.length; j++) {
         if (!active.some((entry) => entry.mark.eq(marks[j]))) {
           const forceHtml = Boolean(
@@ -1325,7 +1512,8 @@ export class SerState {
 
       if (child.isText) {
         const noEsc = active.some(
-          (entry) => markSpecs[entry.mark.type.name]?.escape === false,
+          (entry) => markSpecs[entry.mark.type.name]?.escape === false &&
+            !entry.forceHtml && (entry.mark.type.name === "comment" || !this.isOverlap(entry.mark)),
         );
         let text = child.text!;
         if ((index === 0 || followsBreak) && !noEsc) {
@@ -1335,7 +1523,35 @@ export class SerState {
             text = text.slice(boundary.length);
           }
         }
-        if (text) this.writeTextAfterInlineMath(text, !noEsc);
+        // A native empty HTML boundary separates existing tag characters
+        // from literal suffix text without introducing visible whitespace.
+        if (previousSibling?.type.name === "obsidian_tag" && isObsidianTagCharacter(firstCodePoint(text) ?? "") && !noEsc) {
+          this.write("<span></span>");
+        }
+        const rawIdSeparator = child.marks.length === 0 && index + 1 < parent.childCount &&
+          parent.child(index + 1).type.name === "block_id" && text.charCodeAt(text.length - 1) > 0x7f &&
+          /\s$/u.test(text) ? text.slice(-1) : null;
+        if (rawIdSeparator) {
+          // Native ID scanning uses raw Unicode whitespace, not its decoded
+          // entity spelling. Retain the final actual separator character.
+          const last = rawIdSeparator.slice(-1);
+          const prefix = text.slice(0, -1);
+          if (prefix) this.writeTextAfterInlineMath(prefix, !noEsc, index === 0 || followsBreak, preserveCurrency);
+          this.write(last);
+        } else if (text && !noEsc && active.some((entry) => entry.forceHtml &&
+          (entry.mark.type.name === "code" || entry.mark.type.name === "comment"))) {
+          // Opaque text controls belong to the payload, not Markdown layout.
+          // Numeric references preserve them without introducing a new block
+          // or an unmarked break, and literal entity text remains escaped.
+          // URL/email punctuation is also literal here: native autolinking
+          // must not manufacture navigation inside an opaque HTML fallback.
+          let semanticStart = index === 0 || followsBreak;
+          for (const part of text.split(/([\r\n.:@])/)) {
+            if (/^[\r\n.:@]$/.test(part)) this.write(`&#${part.charCodeAt(0)};`);
+            else if (part) this.writeTextAfterInlineMath(part, !noEsc, semanticStart, preserveCurrency);
+            if (part) semanticStart = false;
+          }
+        } else if (text) this.writeTextAfterInlineMath(text, !noEsc, index === 0 || followsBreak, preserveCurrency);
       } else {
         this.renderNode(child, parent, index);
       }
@@ -1345,34 +1561,7 @@ export class SerState {
     const startLen = this.out.length;
     parent.forEach((child, off, idx) => progress(child, off, idx));
     progress(null, 0, parent.childCount);
-    if (trailing) this.write(trailing);
-
-    // Defensive: text content that ends with `^[A-Za-z0-9_-]+` at the
-    // end of a textblock parses back as a `block_id` atom under the
-    // markdown-it block-id rule (which fires when the rest-of-line
-    // after the id is whitespace-only). Round-trip then drops the
-    // characters of the would-be id from textContent - typically how
-    // a user typing `^foo` at the end of a line gets a save-failure
-    // round-trip rejection. Escape the `^` with a leading backslash
-    // so reparse treats it as plain text.
-    //
-    // Skip this when the parent's last inline child is an actual
-    // block_id node - that atom ALSO emits `^id` but we want it to
-    // round-trip as a block_id, not be turned into escaped text.
     const lastChild = parent.lastChild;
-    if (
-      lastChild?.isText &&
-      /\^[A-Za-z0-9_-]+$/.test(lastChild.text ?? "")
-    ) {
-      const tail = this.out.slice(startLen);
-      const m = /\^[A-Za-z0-9_-]+$/.exec(tail);
-      if (m) {
-        const insertAt = tail.length - m[0].length;
-        const escapedTail =
-          tail.slice(0, insertAt) + "\\" + tail.slice(insertAt);
-        this.replaceOutputSince(startOutput, escapedTail);
-      }
-    }
 
     // Markdown parsers discard ordinary trailing spaces/tabs at the end of a
     // textblock (and two spaces can acquire hard-break meaning). They are
@@ -1668,10 +1857,9 @@ export const nodeSer: Record<string, NodeSer> = {
     // middle. If we just `renderInline` it would emit `text^idmore_
     // text` and reparse as text — drift, save guard fires. Hoist
     // any block_id children to the END of the paragraph before
-    // rendering so they always land in the parseable position. If
-    // there are multiple block_ids, keep them all (each emits in
-    // order) — at worst, only the last is actually used by Obsidian
-    // but all the bytes survive round-trip.
+    // rendering so a single ID lands in the parseable position. Multiple
+    // IDs require a native metadata policy: merely emitting all their bytes
+    // does not preserve each ID's parsed identity or reference destination.
     let hasMidBlockId = false;
     const inlineChildren: PMNode[] = [];
     const tailBlockIds: PMNode[] = [];
@@ -1695,34 +1883,23 @@ export const nodeSer: Record<string, NodeSer> = {
     state.closeBlock(node);
   },
   heading(state, node) {
-    // Setext headings (`text\n---` / `text\n===`) parse to a heading
-    // node whose inline content carries a softbreak - i.e. multi-line
-    // text. ATX-style serialization (`## ` + inline) would emit the
-    // newline verbatim, and re-parse splits the second line into a
-    // paragraph. Collapse internal soft/hard breaks to spaces so the
-    // heading always lands on a single line, regardless of whether
-    // markdown-it produced it from setext or ATX form. Also clamp
-    // level into 1..6 so a malformed `level: 0 / NaN` (which would
-    // emit zero `#` chars and re-parse as a paragraph) still produces
-    // a valid `#`-prefixed heading.
+    // Ordinary heading breaks are normalized before serialization. Preserve
+    // opaque atom payloads here: an unsupported structural edit must fail exact
+    // preflight instead of flattening its formula/footnote to a different value.
     const level = Math.max(
       1,
       Math.min(6, Math.floor(Number(node.attrs.level) || 1)),
     );
     state.write("#".repeat(level) + " ");
-    // Capture the inline render output so we can scrub line breaks
-    // before flushing it into the main state buffer. `.out` is the
-    // internal accumulator on SerializerState — not in PM's public
-    // d.ts but stable in practice.
+    // Capture inline output to protect literal ATX suffixes and edge whitespace.
     const beforeOutput = state.snapshotOutput();
     const before = state.out.length;
     state.renderInline(node);
     const inline = state.out.slice(before);
-    const collapsed = inline.replace(/[ \t]*\n[ \t]*/g, " ");
     // A trailing hash run followed only by whitespace is ATX closing syntax.
     // Escape literal hashes, then encode trailing whitespace because Markdown
     // parsers otherwise trim it from the heading's inline text.
-    const safeInline = collapsed
+    const safeInline = inline
       .replace(/^[ \t]+/, (prefix) =>
         prefix.replace(/ /g, "&#32;").replace(/\t/g, "&#9;"),
       )
@@ -1815,13 +1992,31 @@ export const nodeSer: Record<string, NodeSer> = {
     state.delim += " ".repeat(contIndent);
     state.renderContent(node);
     state.delim = old;
-    state.closeBlock(node);
+    if (hasUnclosedHtmlCommentTail(node)) {
+      // Unlike quotes, a list item's unclosed HTML payload owns the bare
+      // trailing blank lines before an outdent. Ordinary close padding would
+      // append another opaque LF rather than create independent layout.
+      state.closed = false;
+    } else {
+      state.closeBlock(node);
+    }
   },
   code_block(state, node) {
     // Fence info strings are not inline HTML and markdown-it does not decode
     // entities in them. Emit the language literally; protecting `&copy;`
     // would change the stored language to `&amp;copy;` on reparse.
     const lang = (node.attrs.language as string | undefined) ?? "";
+    if (node.textContent.includes("\r")) {
+      // Fenced Markdown normalizes physical CR before tokenizing. Numeric
+      // references in native pre/code retain the exceptional opaque payload
+      // through file finalization and the strict HTML code-block bridge.
+      const language = lang ? ` class="language-${htmlAttribute(lang)}"` : "";
+      const body = node.textContent.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/\r/g, "&#13;").replace(/\n/g, "&#10;");
+      state.write(`<pre><code${language}>${body}</code></pre>`);
+      state.closeBlock(node);
+      return;
+    }
     const fence = safeCodeFence(
       node.textContent,
       lang,
@@ -1881,6 +2076,12 @@ export const nodeSer: Record<string, NodeSer> = {
     );
   },
   image(state, node) {
+    const reference = referenceImageSource(node);
+    if (reference !== null) { state.write(reference); return; }
+    if (node.attrs.sourceSyntax === "html") {
+      state.write(`<img src="${htmlAttribute(String(node.attrs.src))}" alt="${htmlAttribute(String(node.attrs.alt ?? ""))}"${node.attrs.title ? ` title="${htmlAttribute(String(node.attrs.title))}"` : ""}${node.attrs.width ? ` width="${String(node.attrs.width)}"` : ""}${node.attrs.height ? ` height="${String(node.attrs.height)}"` : ""}>`);
+      return;
+    }
     const attrs = node.attrs as {
       src?: string;
       title?: string;
@@ -2034,7 +2235,10 @@ export const nodeSer: Record<string, NodeSer> = {
     for (let r = 1; r < node.childCount; r++) {
       writeRow(renderedRows[r] ?? []);
     }
-    state.write("\n");
+    // Defer the next block's gap to the containing block/list owner. A fixed
+    // extra newline here would turn a tight nested-list edge into a loose
+    // outer list merely because its preceding block is a table.
+    state.closeBlock(node);
   },
   table_row() {},
   table_header() {},
@@ -2057,21 +2261,19 @@ export const nodeSer: Record<string, NodeSer> = {
     const tp = a.title ? ` ${a.title}` : "";
     state.wrapBlock("> ", null, node, () => {
       state.write(`[!${type}]${fold}${tp}\n`);
-      // Insert a blank line separator if the first body block could
-      // be interpreted by markdown-it as setext-heading underline of
-      // the `[!type]` opener line. `---` and `===` are the two
-      // setext-h underline markers; an HR (`---`) as the first child
-      // would otherwise re-parse as a level-2 heading "[!type]"
-      // INSIDE the callout (the callout itself still parses, but
-      // its first body block is the heading instead of the HR).
-      // Writing an explicit blank line breaks the setext attachment
-      // - `---` after a blank line is unambiguously a HR.
+      // The callout header is parsed as ordinary paragraph content before
+      // the callout rule lifts it. Separate any body block that cannot
+      // interrupt that paragraph: references, empty markers, and ordered
+      // lists whose first number is not 1. A rule also needs separation to
+      // avoid turning the header into a setext heading.
       const first = node.firstChild;
       if (
         first &&
         (first.type.name === "horizontal_rule" ||
           first.type.name === "reference_definition" ||
-          isEmptyListItem(first))
+          isEmptyListItem(first) ||
+          (first.type.name === "list_item" && listKind(first) === "ordered" &&
+            orderedListStart(first.attrs.start) !== 1))
       ) {
         state.write("\n");
       }
@@ -2083,7 +2285,7 @@ export const nodeSer: Record<string, NodeSer> = {
     state.closeBlock(node);
   },
   obsidian_embed_inline(state, node) {
-    state.write(`![[${(node.attrs.src as string | undefined) ?? ""}]]`);
+    state.write(commentNavigationSource(node) ?? `![[${(node.attrs.src as string | undefined) ?? ""}]]`);
   },
   math_block(state, node) {
     state.write("$$");
@@ -2093,64 +2295,20 @@ export const nodeSer: Record<string, NodeSer> = {
     state.write("$$");
     state.closeBlock(node);
   },
-  block_comment(state, node, parent, index) {
+  block_comment(state, node) {
     const value = ((node.attrs.value as string | undefined) ?? "");
-    const isEmpty = value.length === 0;
-    const isListBreak = value === "list-break";
-
-    // Stale-separator cleanup. Both empty (`%% %%`) and list-break
-    // (`%%list-break%%`) comments only serve a purpose between two
-    // adjacent same-type lists (where they prevent CommonMark from
-    // merging the lists on reparse). If the surrounding context
-    // isn't that, the comment is leftover noise - most commonly
-    // from a previous save where adjacent lists got dragged apart,
-    // leaving the separator stranded. Skip emitting it; the auto-
-    // injection in renderList will regenerate one if needed on the
-    // next save where adjacency returns.
-    //
-    // Non-empty comments OTHER than the `list-break` sentinel
-    // (user-authored notes inside `%%...%%`) are never dropped
-    // only the exact-shape separator forms.
-    if ((isEmpty || isListBreak) && parent != null && index != null) {
-      const prev = index > 0 ? parent.child(index - 1) : null;
-      const next =
-        index < parent.childCount - 1 ? parent.child(index + 1) : null;
-      // Flat-list model: two list_items at same kind+depth that the
-      // user wants visually separated (not a continuation) need this
-      // sentinel between them. Without it the markdown reparser would
-      // merge them into one list.
-      const isSeparator =
-        prev != null &&
-        next != null &&
-        prev.type.name === "list_item" &&
-        next.type.name === "list_item" &&
-        prev.attrs.kind === next.attrs.kind &&
-        prev.attrs.depth === next.attrs.depth;
-      if (!isSeparator) return; // drop stale separator
+    // Authored opaque nodes, including empty comments, remain durable. The
+    // shared codec protects percent seams/indentation/CR without interpreting
+    // Markdown or inventing native reference metadata inside hidden content.
+    const source = blockCommentSource(value, node.attrs.nativeSyntax as string);
+    if (node.attrs.nativeSyntax === "html-unclosed" && source.endsWith("\n")) {
+      // text() prefixes every split line, including its final empty segment.
+      // An unclosed value owns that last LF, but no extra container blank line.
+      state.text(source.slice(0, -1), false);
+      state.write("\n");
+    } else {
+      state.text(source, false);
     }
-
-    // Single-line forms for the two recognized separator shapes.
-    // Empty stays as `%% %%` (back-compat with anything saved before
-    // the labeled form shipped); list-break emits as the descriptive
-    // `%%list-break%%`. Both round-trip via the parser's single-line
-    // sentinel detection. Other content emits the traditional
-    // multi-line `%%\n<value>\n%%` form so user-authored notes keep
-    // their layout.
-    if (isEmpty) {
-      state.write("%% %%");
-      state.closeBlock(node);
-      return;
-    }
-    if (isListBreak) {
-      state.write("%%list-break%%");
-      state.closeBlock(node);
-      return;
-    }
-    state.write("%%");
-    state.write("\n");
-    state.text(value, false);
-    state.write("\n");
-    state.write("%%");
     state.closeBlock(node);
   },
 
@@ -2164,7 +2322,10 @@ export const nodeSer: Record<string, NodeSer> = {
     const content = (node.attrs.content as string | undefined) ?? "";
     const lines = content.split("\n");
     state.write(`[^${label}]: ${lines[0]}`);
-    for (let i = 1; i < lines.length; i++) state.write(`\n    ${lines[i]}`);
+    for (let i = 1; i < lines.length; i++) {
+      state.write("\n");
+      state.write(`    ${lines[i]}`);
+    }
     state.closeBlock(node);
   },
   reference_definition(state, node) {
@@ -2174,39 +2335,31 @@ export const nodeSer: Record<string, NodeSer> = {
   },
 
   // Obsidian inline
+  empty_link(state, node) {
+    state.write(emptyLinkSource(node.attrs));
+  },
+  comment_navigation(state, node) {
+    const source = commentMarkdownSource(node);
+    if (source === null) throw new Error("Invalid comment navigation ownership");
+    state.write(node.attrs.sourceKind === "percent" ? `%%${source}%%` : source);
+  },
   wikilink(state, node) {
     const a = node.attrs as { target?: string; alias?: string };
     const target = a.target ?? "";
     const alias = a.alias ?? "";
-    state.write(alias ? `[[${target}|${alias}]]` : `[[${target}]]`);
+    state.write(commentNavigationSource(node) ?? (alias || node.attrs.emptyAlias === true ? `[[${target}|${alias}]]` : `[[${target}]]`));
   },
-  obsidian_tag(state, node) {
-    // The tag plugin requires `#` to be at start-of-text or after
-    // whitespace. The reliable check is the actual emitted buffer's
-    // last char — PM-sibling checks miss inline-mark boundaries
-    // (e.g. `</strong>#tag` from an overlap-mark serialization),
-    // where the previous PM sibling is plain text but the emitted
-    // bytes have closing HTML tags between text and `#`.
-    //
-    // BUT: if a block close is PENDING (state.closed = true) or the
-    // buffer is already at a blank line, the tag will start on a
-    // fresh line after flushClose — no separator needed. Otherwise
-    // the buffer's stale last char (from the previous block's text)
-    // would falsely trigger separator injection at paragraph start
-    // (`intro\n\n#tag` became `intro\n\n #tag` — leading space drift).
-    const stateAny = state as unknown as { closed: unknown };
-    if (!stateAny.closed && !state.atBlank()) {
-      const last = state.lastOutputCharacter();
-      if (last && !/\s/.test(last)) state.write(" ");
-    }
+  obsidian_tag(state, node, parent, index) {
+    // Preserve adjacent literal content without making it part of the tag.
+    if (tagNeedsBoundary(parent, index)) state.write("<span></span>");
     state.write(`#${(node.attrs.tag as string | undefined) ?? ""}`);
   },
   inline_math(state, node) {
-    state.write(`$${(node.attrs.value as string | undefined) ?? ""}$`);
+    state.text(`$${(node.attrs.value as string | undefined) ?? ""}$`, false);
     state.inlineMathClosePending = true;
   },
   inline_footnote(state, node) {
-    state.write(`^[${(node.attrs.content as string | undefined) ?? ""}]`);
+    state.text(`^[${(node.attrs.content as string | undefined) ?? ""}]`, false);
   },
   block_id(state, node) {
     state.write(`^${(node.attrs.id as string | undefined) ?? ""}`);
@@ -2237,6 +2390,7 @@ function serializeBlock(
   context?: {
     originalBody: string;
     originalInlineAtoms: Set<PMNode>;
+    footnotes: ReadonlySet<string>;
   },
   options?: CanonicalFormOptions,
   listOverride?: {
@@ -2250,6 +2404,7 @@ function serializeBlock(
   if (context) {
     state.sourcePresBody = context.originalBody;
     state.sourcePresOriginalAtoms = context.originalInlineAtoms;
+    state.nativeFootnoteDefinitions = context.footnotes;
   }
   if (listOverride) {
     state.topLevelListOverride = { node: block, ...listOverride };
@@ -2350,7 +2505,7 @@ export function serializeWithSourcePreservation(
   // verbatim during block synthesis. This is the mechanism for
   // byte-level preservation WITHIN an edited block.
   const originalInlineAtoms = collectInlineAtoms(originalDoc);
-  const blockSynthCtx = { originalBody, originalInlineAtoms };
+  const blockSynthCtx = { originalBody, originalInlineAtoms, footnotes: linkOccurrenceFootnoteDefinitions(doc) };
 
   // Identify each current block: its origIdx (if any) and whether
   // it's still reference-identical (unchanged).
@@ -2366,7 +2521,7 @@ export function serializeWithSourcePreservation(
       r && typeof r.start === "number" && origIndexByStart.has(r.start)
         ? origIndexByStart.get(r.start)!
         : null;
-    ids.push({ origIdx, preserved: originalRefs.has(child) });
+    ids.push({ origIdx, preserved: originalRefs.has(child) || origIdx !== null && linkOccurrenceShapeEquals(child, originalBlocks[origIdx]) });
   }
 
   // A preserved list slice is safe only when its original absolute depth is
@@ -2555,9 +2710,17 @@ export function serializeWithSourcePreservation(
   ): boolean => {
     const current = doc.child(currentIndex);
     const original = originalBlocks[originalIndex];
+    // Looseness may come from an item's internal block gap instead of its
+    // nested-list gap. Removing that block or schema carrier moves the only
+    // representable loose edge, even when depth/kind/tight attrs are unchanged.
     return listKind(current) === listKind(original) &&
       current.attrs.start === original.attrs.start &&
-      listItemIsMarkerOnly(current) === listItemIsMarkerOnly(original);
+      listItemIsMarkerOnly(current) === listItemIsMarkerOnly(original) &&
+      current.childCount === original.childCount &&
+      listItemHasSyntheticLeadingParagraph(current) ===
+        listItemHasSyntheticLeadingParagraph(original) &&
+      listItemCanRepresentLooseNestedEdge(current) ===
+        listItemCanRepresentLooseNestedEdge(original);
   };
   const stableListStructureSpan = new Array<number>(n).fill(0);
   for (let index = n - 1; index >= 0; index--) {
@@ -2802,9 +2965,8 @@ export function serializeWithSourcePreservation(
       contents.push(originalBody.slice(range.start, range.end));
       contentWasPreserved.push(true);
     } else {
-      contents.push(normalizeBlockSynth(
-        serializeBlock(child, blockSynthCtx, options, listOverrides[i]),
-      ));
+      const synth = serializeBlock(child, blockSynthCtx, options, listOverrides[i]);
+      contents.push(hasUnclosedHtmlCommentTail(child) ? synth : normalizeBlockSynth(synth));
       contentWasPreserved.push(false);
     }
   }
@@ -3024,6 +3186,9 @@ export function serializeWithSourcePreservation(
     leftIndex: number,
     candidate: string,
   ): string => {
+    // An unclosed HTML comment owns every terminal newline inside its list
+    // source. Authored peer-list trivia cannot add a second copy of that tail.
+    if (hasUnclosedHtmlCommentTail(doc.child(leftIndex))) return "";
     if (contentWasPreserved[leftIndex]) return candidate;
     const originalIndex = ids[leftIndex]?.origIdx ?? null;
     const range = originalIndex === null
@@ -3058,6 +3223,11 @@ export function serializeWithSourcePreservation(
     // Preserve them at an unchanged adjacency; changed adjacencies receive
     // the structural fallback supplied by the caller.
     if (/\S/.test(candidate)) return candidate;
+    if (doc.child(leftIndex).type.name === "list_item" && hasUnclosedHtmlCommentTail(doc.child(leftIndex))) {
+      // Bare blanks before an outdent already belong to this opaque list
+      // payload; source-preserving gap synthesis cannot append another LF.
+      return "";
+    }
     const rightListLayout = currentListLayout[leftIndex + 1];
     const tightListEdge =
       doc.child(leftIndex).type.name === "list_item" &&
@@ -3207,3 +3377,20 @@ function normalizeBlockSynth(synth: string): string {
   while (s.endsWith("\n")) s = s.slice(0, -1);
   return s + "\n";
 }
+
+setLinkOccurrenceLabelCodec((children, footnotes) => {
+  const state = new SerState();
+  state.nativeFootnoteDefinitions = footnotes;
+  const clean = children.map(node => node.mark(node.marks.filter(mark => !["link", "link_occurrence"].includes(mark.type.name))));
+  state.renderOwnedLabel(schema.nodes.paragraph.create(null, Fragment.fromArray(clean)), clean, true);
+  return state.out;
+});
+
+setReferenceImageAltCodec(node => {
+  const raw = String(node.attrs.alt ?? "");
+  let alt = esc(raw);
+  if (node.attrs.displayMode === "full") alt += "|full";
+  else if (node.attrs.width) alt += `|${String(node.attrs.width)}${node.attrs.height ? `x${String(node.attrs.height)}` : ""}`;
+  else if (/\|(?:full|\d+(?:x\d+)?)$/i.test(raw)) { const index = alt.lastIndexOf("|"); alt = `${alt.slice(0, index)}\\|${alt.slice(index + 1)}`; }
+  return alt;
+});

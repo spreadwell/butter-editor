@@ -1,10 +1,14 @@
 import type { TranslationTable } from "../../i18n";
 import { recentJa } from "./release-copy";
 import { feedbackJa } from "./feedback-copy";
+import { recoveryJa } from "./recovery-copy";
+import { saveDiagnosticsJa } from "./save-diagnostics-copy";
 
 export const ja = {
   ...recentJa,
   ...feedbackJa,
+  ...recoveryJa,
+  ...saveDiagnosticsJa,
   "Abstract callout": "要約コールアウト",
   "Activated": "アクティブ化された",
   "Advanced": "高度な設定",
@@ -171,7 +175,7 @@ export const ja = {
   "Rich formatting": "リッチな書式設定",
   "Write and format your notes without seeing Markdown syntax.": "Markdown 記法を意識せずに、ノートを書いて書式設定できます。",
   "Adds text color, custom highlights, underline, superscript, subscript, and keyboard text to the toolbar.": "文字色、カスタムハイライト、下線、上付き、下付き、キーボード文字のツールを追加します。",
-  "Adds text color, custom highlights, underline, superscript, and subscript.": "文字色、カスタムハイライト、下線、上付き、下付きを追加します。",
+  "Adds text color, custom highlights, and underline.": "文字色、カスタムハイライト、下線を追加します。",
   "Uses HTML, which can make notes less portable and harder to read in source view.": "HTML を使用するため、他のアプリとの互換性が下がり、ソース表示が読みにくくなる場合があります。",
   "You can change rich formatting anytime in settings.": "リッチな書式設定はいつでも設定から変更できます。",
   "Rich paste and file drop": "リッチペーストとファイルドロップ",
@@ -404,7 +408,7 @@ export const ja = {
   "Preset colors": "プリセットカラー",
   "Mobile & Desktop": "モバイルとデスクトップ",
   "Colours are off": "カラーは無効です",
-  "Turn on rich formatting in the general tab to customize preset colours.": "プリセットの色を変更するには、一般タブでリッチな書式設定を有効にします。",
+  "Turn on rich formatting in the Editor tab to customize preset colours.": "プリセットの色を変更するには、エディタータブでリッチテキスト書式を有効にしてください。",
   "{label} preset {number}": "{label} プリセット {number}",
   "Preset {number}": "プリセット {number}",
   "Reset to defaults": "デフォルトに戻す",

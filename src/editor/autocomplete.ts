@@ -12,6 +12,7 @@ import type { Schema } from "prosemirror-model";
 import {
   getAutocompleteQuery,
   isTagAutocompleteQuery,
+  tagAutocompleteSuggestions,
   type AutocompleteMode,
 } from "./autocomplete-query";
 import { bindFloatingSurfaceReposition } from "../util/floating-surface";
@@ -105,25 +106,12 @@ export function autocompletePlugin(app: App, schema: Schema) {
       if (cache?.frontmatter?.tags) {
         const fmTags: unknown = cache.frontmatter.tags;
         if (Array.isArray(fmTags)) {
-          for (const t of fmTags) allTags.add(String(t));
+          for (const t of fmTags) allTags.add(String(t).replace(/^#/, ""));
         }
       }
     }
 
-    const lower = query.toLowerCase();
-    const suggestions: SuggestItem[] = Array.from(allTags)
-      .filter((t) => !query || t.toLowerCase().includes(lower))
-      .sort()
-      .slice(0, 20)
-      .map((t) => ({ text: t }));
-    if (
-      query &&
-      isTagAutocompleteQuery(query) &&
-      !Array.from(allTags).some((t) => t.toLowerCase() === lower)
-    ) {
-      suggestions.unshift({ text: query, create: true });
-    }
-    return suggestions;
+    return tagAutocompleteSuggestions(query, allTags);
   }
 
   // ── Popover lifecycle ──

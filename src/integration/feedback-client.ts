@@ -1,4 +1,5 @@
 import { Platform, apiVersion, requestUrl } from "obsidian";
+import type { SaveDiagnosticsReport } from "./save-diagnostics";
 
 const FEEDBACK_ENDPOINT = "https://api.buttereditor.com/feedback";
 const FEEDBACK_TIMEOUT_MS = 10_000;
@@ -24,6 +25,7 @@ export interface FeedbackSubmission {
   contactEmail?: string;
   accessStatus: FeedbackAccessStatus;
   diagnostics?: FeedbackDiagnostics;
+  saveDiagnostics?: SaveDiagnosticsReport;
 }
 
 function platformName(): FeedbackDiagnostics["platform"] {

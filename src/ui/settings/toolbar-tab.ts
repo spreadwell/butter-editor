@@ -128,7 +128,7 @@ export function renderPresetColorsSection(this: ButterSettingTab, root: HTMLElem
       new Setting(items)
         .setName(tx("Colours are off"))
         .setDesc(
-          tx("Turn on rich formatting in the general tab to customize preset colours."),
+          tx("Turn on rich formatting in the Editor tab to customize preset colours."),
         )
         .settingEl.addClass("butter-preset-colors-note");
     }

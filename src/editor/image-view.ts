@@ -27,13 +27,16 @@ import type {
   EditorView,
   NodeView,
 } from "prosemirror-view";
-import { openRichContextMenu } from "../ui/link-context-menu";
+import { openRichContextMenu, type RichMenuField } from "../ui/link-context-menu";
 import {
   attachImageBodyPlacementDrag,
   imageLayoutActions,
 } from "./image-placement";
 import { IMAGE_RESIZE_MIN_WIDTH } from "./embed-image-resize";
 import { attachImageEditButton } from "./image-edit-button";
+import { captureBlockMenuMutation } from "./block-menu-ownership";
+import { markBlockConversionRefusal } from "./native-block-id-conservation";
+import { prepareImageSourceEdit, referenceImageDisplayText } from "../core/link-occurrence";
 
 
 // External URL scheme - these load via the network or browser stack
@@ -164,7 +167,7 @@ function renderMissingPlaceholder(
   }
 }
 
-export function imageView(app: App, getSourcePath: () => string) {
+export function imageView(app: App, getSourcePath: () => string, validateEdit: (candidate: PMNode) => boolean) {
   return (
     node: PMNode,
     view: EditorView,
@@ -173,6 +176,42 @@ export function imageView(app: App, getSourcePath: () => string) {
     const wrap = activeWindow.createSpan();
     wrap.className = "butter-image";
     wrap.contentEditable = "false";
+
+    // A removed reference definition exposes literal native image syntax,
+    // rather than a broken image or a newly active inline destination.
+    const referenceText = referenceImageDisplayText(node);
+    if (referenceText !== null && node.attrs.resolved === false) {
+      wrap.className = "butter-image-reference-literal";
+      wrap.textContent = referenceText;
+      const openContextMenu = (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openImageContextMenu(app, view, getPos, node, event, wrap, validateEdit);
+      };
+      wrap.addEventListener("contextmenu", openContextMenu);
+      const detachEditButton = attachImageEditButton(wrap, openContextMenu);
+      return {
+        dom: wrap,
+        update(updated) {
+          if (updated.type.name !== "image" || updated.attrs.resolved !== false) return false;
+          const text = referenceImageDisplayText(updated);
+          if (text === null) return false;
+          // Keep the control and its event listeners while refreshing only
+          // the literal source presentation before that control.
+          if (node !== updated) {
+            wrap.firstChild!.textContent = text;
+            node = updated;
+          }
+          return true;
+        },
+        stopEvent: event => Boolean((event.target as Element | null)?.closest?.(".butter-image-edit-button")),
+        ignoreMutation: mutation => mutation.type !== "selection",
+        destroy() {
+          wrap.removeEventListener("contextmenu", openContextMenu);
+          detachEditButton();
+        },
+      };
+    }
 
     // Standalone and inline Markdown images share one schema node. Mark the
     // mixed-content form explicitly so its resize corner can sit on the image
@@ -240,6 +279,7 @@ export function imageView(app: App, getSourcePath: () => string) {
       fallToPlaceholder();
     }
 
+    const ownedImg = img;
     const handle = activeWindow.createSpan();
     handle.className = "butter-image-resize-handle";
     handle.setAttribute("aria-label", "Drag to resize");
@@ -248,7 +288,7 @@ export function imageView(app: App, getSourcePath: () => string) {
     // pull the image out of full-width and back to a fixed pixel
     // width, which is confusing UX. Users pick presets via the
     // right-click menu in that mode.
-    if (resolved !== null && (node.attrs as { displayMode?: string | null }).displayMode !== "full") {
+    if (resolved !== null && node.attrs.sourceSyntax !== "reference" && (node.attrs as { displayMode?: string | null }).displayMode !== "full") {
       wrap.appendChild(handle);
     }
 
@@ -260,7 +300,7 @@ export function imageView(app: App, getSourcePath: () => string) {
     const openContextMenu = (ev: MouseEvent) => {
       ev.preventDefault();
       ev.stopPropagation();
-      openImageContextMenu(app, view, getPos, node, ev, wrap);
+      openImageContextMenu(app, view, getPos, node, ev, wrap, validateEdit);
     };
     wrap.addEventListener("contextmenu", openContextMenu);
     const detachEditButton = attachImageEditButton(wrap, openContextMenu);
@@ -270,7 +310,10 @@ export function imageView(app: App, getSourcePath: () => string) {
     let startY = 0;
     let startW = 0;
     let startH = 0;
+    let startWidthAttribute: string | null = null;
+    let startHeightAttribute: string | null = null;
     let naturalRatio = 1;
+    let resizeCurrent: (() => boolean) | null = null;
     const resizeBody = wrap.ownerDocument.body;
 
     const onPointerMove = (e: PointerEvent) => {
@@ -286,7 +329,7 @@ export function imageView(app: App, getSourcePath: () => string) {
     };
 
     const finishResize = (e: PointerEvent, commit: boolean) => {
-      if (!dragging || !img) return;
+      if (!dragging) return;
       dragging = false;
       handle.classList.remove("is-resizing");
       resizeBody.classList.remove("butter-is-image-resizing");
@@ -294,21 +337,33 @@ export function imageView(app: App, getSourcePath: () => string) {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("pointercancel", onPointerCancel);
+      if (!img) return;
+
+      const restoreSize = () => {
+        if (!img) return;
+        if (startWidthAttribute === null) img.removeAttribute("width");
+        else img.setAttribute("width", startWidthAttribute);
+        if (startHeightAttribute === null) img.removeAttribute("height");
+        else img.setAttribute("height", startHeightAttribute);
+      };
 
       if (!commit) {
-        img.width = startW;
-        img.height = startH;
+        restoreSize();
         return;
       }
 
       const pos = getPos();
-      if (pos == null) return;
+      if (pos == null || !resizeCurrent?.()) {
+        restoreSize();
+        return;
+      }
       const width = img.width;
       const keepRatio = !e.shiftKey;
       const height = keepRatio ? null : img.height;
 
-      const attrs = { ...node.attrs, width, height, sourceRange: null };
-      view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, attrs));
+      if (!commitImageAttributes(view, pos, node, { ...node.attrs, width, height, sourceRange: null }, validateEdit)) {
+        restoreSize();
+      }
     };
 
     const onPointerUp = (e: PointerEvent) => finishResize(e, true);
@@ -316,6 +371,10 @@ export function imageView(app: App, getSourcePath: () => string) {
 
     const onPointerDown = (e: PointerEvent) => {
       if (!img) return;
+      const pos = getPos();
+      if (pos == null) return;
+      resizeCurrent = captureBlockMenuMutation(view, [{ pos, node }]);
+      if (!resizeCurrent()) return;
       e.preventDefault();
       e.stopPropagation();
       dragging = true;
@@ -325,6 +384,8 @@ export function imageView(app: App, getSourcePath: () => string) {
       startY = e.clientY;
       startW = img.offsetWidth || img.naturalWidth || 200;
       startH = img.offsetHeight || img.naturalHeight || 150;
+      startWidthAttribute = img.getAttribute("width");
+      startHeightAttribute = img.getAttribute("height");
       naturalRatio =
         img.naturalWidth && img.naturalHeight
           ? img.naturalWidth / img.naturalHeight
@@ -349,6 +410,10 @@ export function imageView(app: App, getSourcePath: () => string) {
         // updates don't see stale values and skip work.
         const ua = updated.attrs as { displayMode?: string | null; src?: string; alt?: string; title?: string; width?: number | null; height?: number | null };
         const na = node.attrs as { displayMode?: string | null; src?: string; width?: number | null; height?: number | null };
+        // Resolution/source changes own a fresh image and error handler. An
+        // old URL's error event must never render or cache the new target.
+        if (ua.src !== na.src || updated.attrs.resolved === false ||
+          updated.attrs.sourceSyntax !== node.attrs.sourceSyntax) return false;
         // displayMode flips between full / fixed change the resize-
         // handle attachment AND the wrap classes. Rebuild on change.
         if (ua.displayMode !== na.displayMode) {
@@ -358,13 +423,14 @@ export function imageView(app: App, getSourcePath: () => string) {
         // (no `<img>` to update inline). Rebuild so the placeholder
         // re-renders with the new declared footprint.
         const sizeChanged = ua.width !== na.width || ua.height !== na.height;
-        if (sizeChanged && !img) return false;
+        if (!img && (sizeChanged || ua.alt !== node.attrs.alt || ua.title !== node.attrs.title)) return false;
         // Cheap path: src unchanged, just refresh attrs on the
         // existing img if we have one.
         if (ua.src === na.src) {
-          if (!img) return true; // broken-state DOM is static (no size change either)
+          if (!img) { node = updated; return true; }
           img.alt = ua.alt ?? "";
-          if (ua.title) img.title = ua.title;
+          if (ua.title != null) img.title = ua.title;
+          else img.removeAttribute("title");
           applySize(img, updated);
           applyDisplayMode(wrap, updated);
           // Mutate the closure-captured node ref so the NEXT update
@@ -375,22 +441,7 @@ export function imageView(app: App, getSourcePath: () => string) {
           node = updated;
           return true;
         }
-        // Src changed - re-resolve. If the resolution outcome flips
-        // (was-broken → now-loadable, or vice versa) we have to
-        // rebuild the NodeView wholesale. Returning false tells PM
-        // to do that.
-        const nextResolved = resolveImageSrc(
-          app, ua.src ?? "", getSourcePath(),
-        );
-        if ((nextResolved === null) !== (resolved === null)) return false;
-        if (img && nextResolved !== null) {
-          img.src = nextResolved;
-          img.alt = ua.alt ?? "";
-          if (ua.title) img.title = ua.title;
-          applySize(img, updated);
-          applyDisplayMode(wrap, updated);
-        }
-        return true;
+        return false;
       },
       stopEvent(event) {
         const target = event.target as Node | null;
@@ -399,10 +450,9 @@ export function imageView(app: App, getSourcePath: () => string) {
             target.closest(".butter-image-edit-button"));
       },
       ignoreMutation(mutation) {
-        // Size mutations during drag are us, not the editor.
-        return mutation.target === img || mutation.target === handle ||
-          (mutation.target.instanceOf(Element) &&
-            Boolean(mutation.target.closest(".butter-image-edit-button")));
+        // This leaf's presentation is owned by its immutable PM node. Resize,
+        // loading/error and control DOM changes cannot become document input.
+        return mutation.type !== "selection";
       },
       destroy() {
         // If the NodeView tears down mid-drag, the window-level pointer
@@ -420,6 +470,7 @@ export function imageView(app: App, getSourcePath: () => string) {
         handle.classList.remove("is-resizing");
         handle.removeEventListener("pointerdown", onPointerDown);
         wrap.removeEventListener("contextmenu", openContextMenu);
+        ownedImg?.removeEventListener("error", fallToPlaceholder);
         detachEditButton();
         detachPlacementDrag?.();
       },
@@ -453,6 +504,24 @@ function applyDisplayMode(wrap: HTMLElement, node: PMNode) {
   }
 }
 
+function commitImageAttributes(
+  view: EditorView, pos: number, original: PMNode,
+  updated: Readonly<Record<string, unknown>>, validateEdit: (candidate: PMNode) => boolean,
+): boolean {
+  if (!captureBlockMenuMutation(view, [{ pos, node: original }])()) return false;
+  const attrs = prepareImageSourceEdit(original, updated);
+  const tr = view.state.tr.setNodeMarkup(pos, undefined, attrs);
+  if (!validateEdit(tr.doc)) {
+    const refused = view.state.tr;
+    markBlockConversionRefusal(refused);
+    view.dispatch(refused);
+    return false;
+  }
+  const before = view.state.doc;
+  view.dispatch(tr);
+  return view.state.doc !== before;
+}
+
 // ── Image edit context menu ────────────────────────────────
 //
 // Right-click on an image opens the shared rich-context menu (same
@@ -470,11 +539,17 @@ function openImageContextMenu(
   node: PMNode,
   e: MouseEvent,
   imageDom: HTMLElement,
+  validateEdit: (candidate: PMNode) => boolean,
 ): void {
   const currentSrc = (node.attrs.src as string) ?? "";
   const currentAlt = (node.attrs.alt as string) ?? "";
   const currentWidth = node.attrs.width as number | null;
   const currentHeight = node.attrs.height as number | null;
+  const followsReference = node.attrs.sourceSyntax === "reference";
+  const menuPos = getPos();
+  if (menuPos == null) return;
+  const ownsMenu = captureBlockMenuMutation(view, [{ pos: menuPos, node }]);
+  let initialControlValues: Readonly<Record<string, string>> | null = null;
   const renderedRect = imageDom.querySelector("img")?.getBoundingClientRect();
   const layoutActions = imageLayoutActions(
     view,
@@ -483,25 +558,31 @@ function openImageContextMenu(
   );
 
   const commit = (values: Record<string, string>): boolean => {
-    const newSrc = values.src.trim();
-    if (!newSrc) return false;
-    const parseDim = (raw: string): number | null => {
-      const n = parseInt(raw.trim(), 10);
-      return Number.isFinite(n) && n > 0 ? n : null;
+    if (!ownsMenu()) return false;
+    if (followsReference && values.src === currentSrc &&
+      ((values.width ?? "").trim() || (values.height ?? "").trim())) return false;
+    if (initialControlValues && Object.keys(initialControlValues).every(key => values[key] === initialControlValues![key])) return true;
+    const newSrc = values.src;
+    const parseDim = (raw: string = ""): number | null | undefined => {
+      const value = raw.trim();
+      if (!value) return null;
+      const n = Number(value);
+      return /^[0-9]+$/.test(value) && Number.isSafeInteger(n) && n > 0 ? n : undefined;
     };
     const newWidth = parseDim(values.width);
     const newHeight = parseDim(values.height);
-    const newAlt = values.alt.trim() || null;
+    if (newWidth === undefined || newHeight === undefined) return false;
+    const newAlt = values.alt || null;
     if (
       newSrc === currentSrc &&
       newAlt === (currentAlt || null) &&
       newWidth === currentWidth &&
       newHeight === currentHeight
-    ) return false;
+    ) return true;
     const pos = getPos();
     if (pos == null) return false;
     const liveNode = view.state.doc.nodeAt(pos);
-    if (!liveNode || liveNode.type.name !== "image") return false;
+    if (!liveNode || liveNode !== node) return false;
     const newAttrs: Record<string, unknown> = {
       ...liveNode.attrs,
       src: newSrc,
@@ -513,8 +594,7 @@ function openImageContextMenu(
       displayMode: newWidth != null ? null : liveNode.attrs.displayMode,
       sourceRange: null,
     };
-    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, newAttrs));
-    return true;
+    return commitImageAttributes(view, pos, node, newAttrs, validateEdit);
   };
 
   openRichContextMenu({
@@ -525,9 +605,11 @@ function openImageContextMenu(
     chrome: {
       icon: "image",
       title: "Image",
-      sub: truncateSrcForHeader(currentSrc),
+      sub: followsReference && node.attrs.resolved === true
+        ? "To resize, use the current image directly. It will stop following its reference definition."
+        : truncateSrcForHeader(currentSrc),
     },
-    fields: [
+    fields: ([
       {
         id: "src",
         label: "Source",
@@ -566,21 +648,43 @@ function openImageContextMenu(
         initial: currentHeight != null ? String(currentHeight) : "",
         placeholder: "aspect ratio",
       },
-    ],
-    actions: layoutActions.map((action) => ({
+    ] satisfies RichMenuField[]).filter(field => !followsReference || !["width", "height"].includes(field.id)),
+    actions: [
+      ...(followsReference && node.attrs.resolved === true ? [{
+        id: "image-use-direct",
+        label: "Use current image directly",
+        icon: "link",
+        separatorBefore: true,
+        receivesValues: false,
+        onClick: () => {
+          if (!ownsMenu()) return false;
+          const accepted = commitImageAttributes(view, menuPos, node, {
+            ...node.attrs, sourceSyntax: "inline", reference: null, referenceForm: null,
+            resolved: true, sourceAlt: null, altSignature: null, sourceRange: null,
+          }, validateEdit);
+          if (accepted) view.focus();
+          return accepted;
+        },
+      }] : []),
+      ...layoutActions.map((action) => ({
       id: `image-layout-${action.id}`,
       label: action.label,
       icon: action.icon,
       separatorBefore: action === layoutActions[0],
       receivesValues: false,
       onClick: () => {
-        action.run();
+        if (!ownsMenu()) return false;
+        const changed = action.run();
         view.focus();
+        return changed;
       },
-    })),
+      })),
+    ],
+    onFieldsReady: values => { initialControlValues = { ...values }; },
     onCommit: (values) => {
-      commit(values);
-      view.focus();
+      const accepted = commit(values);
+      if (accepted) view.focus();
+      return accepted;
     },
   });
 }

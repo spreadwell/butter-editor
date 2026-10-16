@@ -12,6 +12,7 @@ import {
   runClipboardCommand,
 } from "../util/dom-utils";
 import { keymap } from "prosemirror-keymap";
+import { isFormattingMarkAllowed } from "../ui/rich-formatting-actions";
 import {
   chainCommands,
   newlineInCode,
@@ -25,13 +26,11 @@ import {
   selectNodeForward,
   selectAll,
   toggleMark,
-  setBlockType,
   wrapIn,
 } from "prosemirror-commands";
 import {
   inputRules,
   wrappingInputRule,
-  textblockTypeInputRule,
   InputRule,
 } from "prosemirror-inputrules";
 import type { Mark, MarkType } from "prosemirror-model";
@@ -46,6 +45,9 @@ import {
 } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { Fragment, type Schema } from "prosemirror-model";
+import { isObsidianTagName } from "../core/tag-characters";
+import { allowsStructuralSaveTransaction, allowsDeclaredCodeTransaction, notifyCodeConversionRefusal } from "./structural-save-admission";
+import { setHeadingBlockType, setHeadingBlockTypeInTransaction, setParagraphBlockType, setLiteralCodeBlockInTransaction } from "./textblock-command";
 import type { Command } from "prosemirror-state";
 import { enterMovesDown } from "./table-editing";
 import {
@@ -67,6 +69,7 @@ import {
 import { undo, redo } from "prosemirror-history";
 import { clearFormatting } from "./formatting-actions";
 import { openUnifiedLinkEditor } from "../ui/link-editor";
+import { bindEditorMenuInteraction, inheritEditorMenuInteraction } from "./block-menu-ownership";
 import {
   emitEditorMenuContributions,
   type GeneralContextMenuHost,
@@ -397,7 +400,7 @@ const handleEnterInHeading: Command = (state, dispatch) => {
 //
 // Users expect Obsidian's native behavior: type "```" (optionally
 // followed by a language) and hit Enter to drop into a code block.
-// The space-triggered `textblockTypeInputRule` below handles the
+// The space-triggered literal-code input rule below handles the
 // "```lang " + space variant, but input rules don't fire on Enter
 // (Enter isn't a text-input event), so we need this keymap to cover
 // the muscle-memory case. It matches the current paragraph text
@@ -412,6 +415,7 @@ const handleEnterToCreateCodeFence: Command = (state, dispatch) => {
   // covers c++, c#, vega-lite, obsidian-chart, etc. Deliberately
   // rejects whitespace inside the lang spec - users typing real
   // prose that happens to start with ``` get a normal Enter.
+  if (parent.childCount !== 1 || !parent.firstChild?.isText) return false;
   const match = /^```([\w.+#-]*)$/.exec(parent.textContent);
   if (!match) return false;
   // Cursor must be at end of paragraph (don't trigger mid-line).
@@ -421,16 +425,10 @@ const handleEnterToCreateCodeFence: Command = (state, dispatch) => {
   if (!dispatch) return true;
 
   const language = match[1] || "";
-  const parentStart = $from.before();
-  const parentEnd = $from.after();
-  const tr = state.tr.replaceRangeWith(
-    parentStart,
-    parentEnd,
-    codeBlockType.create({ language }),
-  );
-  // Drop the cursor inside the new code block (parentStart + 1 = just
-  // inside the code_block's content).
-  tr.setSelection(TextSelection.near(tr.doc.resolve(parentStart + 1)));
+  const tr = setLiteralCodeBlockInTransaction(
+    state.tr.delete($from.start(), $from.end()), codeBlockType, { language });
+  if (!tr) { notifyCodeConversionRefusal(state); return true; }
+  if (!allowsDeclaredCodeTransaction(state, tr)) return true;
   dispatch(tr.scrollIntoView());
   return true;
 };
@@ -523,6 +521,28 @@ const liftEmptyBlockGuarded: Command = (state, dispatch) => {
   return liftEmptyBlock(state, dispatch);
 };
 
+/** Resolve a cross-block split against the document after selection deletion.
+ * The stock command retains the old heading position while deleting a range;
+ * a pasted container at that mapped position must not become a paragraph.
+ * Both operations still dispatch together, so history and data guards see the
+ * original edit as one transaction.
+ */
+const splitBlockAfterSelection: Command = (state, dispatch) => {
+  const selection = state.selection;
+  if (!(selection instanceof TextSelection) || selection.empty || selection.$from.sameParent(selection.$to)) {
+    return splitBlockKeepMarks(state, dispatch);
+  }
+  const tr = state.tr.deleteSelection();
+  const marks = state.storedMarks ?? (selection.$to.parentOffset ? selection.$from.marks() : null);
+  const afterDeletion = EditorState.create({ schema: state.schema, doc: tr.doc, selection: tr.selection, storedMarks: marks });
+  return splitBlockKeepMarks(afterDeletion, dispatch && (split => {
+    for (const step of split.steps) tr.step(step);
+    tr.setSelection(Selection.fromJSON(tr.doc, split.selection.toJSON()));
+    tr.setStoredMarks(split.storedMarks);
+    dispatch(tr.scrollIntoView());
+  }));
+};
+
 // ── Build keymaps ──
 
 export interface ButterKeymapOptions {
@@ -556,7 +576,7 @@ export function buildKeymap(
     newlineInCode,
     createParagraphNear,
     liftEmptyBlockGuarded,
-    splitBlockKeepMarks,
+    splitBlockAfterSelection,
   );
 
   keys["Mod-Enter"] = exitCode;
@@ -598,7 +618,7 @@ export function buildKeymap(
       newlineInCode,
       createParagraphNear,
       liftEmptyBlockGuarded,
-      splitBlockKeepMarks,
+      splitBlockAfterSelection,
     );
     // Tab / Shift-Tab are handled by listOperationsPlugin's
     // changeListItemDepth - flat-list schema needs depth-attr
@@ -636,9 +656,9 @@ export function buildKeymap(
 
   // Heading shortcuts Mod-Alt-1 through Mod-Alt-6
   for (let level = 1; level <= 6; level++) {
-    keys[`Mod-Alt-${level}`] = setBlockType(schema.nodes.heading, { level });
+    keys[`Mod-Alt-${level}`] = setHeadingBlockType(schema.nodes.heading, { level });
   }
-  keys["Mod-Alt-0"] = setBlockType(schema.nodes.paragraph);
+  keys["Mod-Alt-0"] = setParagraphBlockType(schema.nodes.paragraph);
 
   // Blockquote
   if (schema.nodes.blockquote) {
@@ -669,7 +689,10 @@ export function buildInputRules(
   if (shortcuts.headings) {
     for (let level = 1; level <= 6; level++) {
       const pattern = new RegExp(`^(#{${level}})\\s$`);
-      rules.push(textblockTypeInputRule(pattern, schema.nodes.heading, { level }));
+      rules.push(new InputRule(pattern, (state, match, start, end) => {
+        const tr = setHeadingBlockTypeInTransaction(state.tr.delete(start, end), schema.nodes.heading, { level });
+        return tr && allowsStructuralSaveTransaction(state, tr) ? tr : null;
+      }));
     }
   }
 
@@ -774,21 +797,21 @@ export function buildInputRules(
     }),
   );
 
-  // Bullet → task in-place: `[ ]` or `[x]` typed at the start of an
-  // EXISTING bullet list_item's paragraph flips the kind to task
-  // without restructuring. Matches the Notion/Linear typing flow:
+  // `[ ]` or `[x]` at an existing list item's first paragraph owns a
+  // native task marker. Convert the kind and clear ordered-only metadata
+  // together; checked state cannot be serialized on an ordered/bullet item.
+  // Matches the Notion/Linear typing flow:
   // user types `- ` (becomes bullet), then types `[ ] ` (becomes
   // task). Only fires when the parent paragraph is the FIRST child
-  // of a bullet list_item (not on subsequent paragraphs in a loose
+  // of a list_item (not on subsequent paragraphs in a loose
   // item, where the bracket text is just content).
   if (shortcuts.taskLists) rules.push(
     new InputRule(/^\[([ xX])\]\s$/, (state, match, start, end) => {
       const $start = state.doc.resolve(start);
       const parent = $start.parent;
-      if (parent.type.name !== "paragraph") return null;
+      if (parent.type.name !== "paragraph" || $start.parentOffset !== 0) return null;
       const grandparent = $start.node($start.depth - 1);
       if (!grandparent || grandparent.type.name !== "list_item") return null;
-      if (grandparent.attrs.kind !== "bullet") return null;
       // Only the FIRST paragraph of the list_item - subsequent ones
       // in a loose item shouldn't trigger a kind flip.
       const paraIndex = $start.index($start.depth - 1);
@@ -800,6 +823,7 @@ export function buildInputRules(
         ...grandparent.attrs,
         kind: "task",
         checked,
+        start: null,
         sourceRange: null,
       });
       return tr;
@@ -812,9 +836,12 @@ export function buildInputRules(
   // code-block processor for. The Enter-key variant is handled by
   // `handleEnterToCreateCodeFence` in the keymap above.
   if (shortcuts.codeBlocks) {
-    rules.push(textblockTypeInputRule(/^```([\w.+#-]*)\s$/, schema.nodes.code_block, (match) => ({
-      language: match[1] || "",
-    })));
+    rules.push(new InputRule(/^```([\w.+#-]*)\s$/, (state, match, start, end) => {
+      const tr = setLiteralCodeBlockInTransaction(state.tr.delete(start, end), schema.nodes.code_block,
+        { language: match[1] || "" });
+      if (!tr) { notifyCodeConversionRefusal(state); return null; }
+      return allowsDeclaredCodeTransaction(state, tr) ? tr : null;
+    }));
   }
 
   // Horizontal rule: --- at start of line.
@@ -836,70 +863,33 @@ export function buildInputRules(
   // Tag: #tagname followed by space - converts text to tag node + space
   if (shortcuts.tags && schema.nodes.obsidian_tag) {
     rules.push(new InputRule(
-      /(?:^|\s)#([a-zA-Z0-9_/-]*[a-zA-Z_/-][a-zA-Z0-9_/-]*)\s$/,
+      /(?:^|\s)#(\S+)\s$/u,
       (state, match, start, end) => {
         const tag = match[1];
+        if (!isObsidianTagName(tag)) return null;
         const hashStart = start + match[0].indexOf("#");
         const tagNode = schema.nodes.obsidian_tag.create({ tag });
-        const space = state.schema.text(" ");
+        const space = state.schema.text(match[0].slice(-1));
         return state.tr.replaceWith(hashStart, end, Fragment.from([tagNode, space]));
       },
     ));
   }
 
-  // Task toggle: typing `[ ] ` or `[x] ` at the start of a list_item's
-  // first paragraph sets the list_item's `checked` attr and deletes
-  // the typed characters. Lets users create tasks by typing, not just
-  // via Mod+L.
-  if (shortcuts.taskLists && schema.nodes.list_item) {
-    rules.push(
-      new InputRule(
-        /^\[([ xX])\]\s$/,
-        (state, match, start, end) => {
-          const $start = state.doc.resolve(start);
-          // Find enclosing list_item - must be the direct parent of
-          // the paragraph containing the caret, so the input only
-          // fires at the *start* of a list item, never mid-doc.
-          let liPos = -1;
-          let liNode = null;
-          for (let d = $start.depth; d > 0; d--) {
-            const n = $start.node(d);
-            if (n.type.name === "list_item") {
-              liPos = $start.before(d);
-              liNode = n;
-              break;
-            }
-          }
-          if (liPos < 0 || !liNode) return null;
-
-          // Only fire if the typed chars are literally at position 0
-          // of the paragraph (paragraph start is liPos + 2 in PM
-          // coordinates).
-          if (start !== liPos + 2) return null;
-
-          const checked = match[1].toLowerCase() === "x";
-          return state.tr
-            .delete(start, end)
-            .setNodeMarkup(liPos, undefined, {
-              ...liNode.attrs,
-              checked,
-              sourceRange: null,
-            });
-        },
-      ),
-    );
-  }
-
-  // Wikilink: typing ]] after [[target converts to wikilink node
+  // Native wiki syntax: consume the optional embed bang with its opener so
+  // typing ![[target]] cannot leave a bang beside a competing wikilink atom.
+  // A nested opener belongs to its own candidate, never to the earlier attrs.
   if (shortcuts.wikilinks && schema.nodes.wikilink) {
     rules.push(new InputRule(
-      /\[\[([^\]]+)\]\]$/,
+      /(!?)\[\[([^[\]]+)\]\]$/,
       (state, match, start, end) => {
-        const inner = match[1];
+        const inner = match[2];
+        if (match[1] && schema.nodes.obsidian_embed_inline) {
+          return state.tr.replaceWith(start, end, schema.nodes.obsidian_embed_inline.create({ src: inner }));
+        }
         const pipeIdx = inner.indexOf("|");
         const target = pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner;
         const alias = pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : "";
-        const node = schema.nodes.wikilink.create({ target, alias });
+        const node = schema.nodes.wikilink.create({ target, alias, emptyAlias: pipeIdx >= 0 && alias === "" });
         return state.tr.replaceWith(start, end, node);
       },
     ));
@@ -1338,7 +1328,7 @@ function addCanonicalTurnIntoSubmenu(
   if (!context || !item?.submenu) return false;
   menu.addItem((menuItem) => {
     menuItem.setTitle(tx(item.title)).setIcon(item.icon);
-    renderBlockMenuSubItems(menuItem.setSubmenu(), item, (subItem, activation) =>
+    renderBlockMenuSubItems(inheritEditorMenuInteraction(menu, menuItem.setSubmenu()), item, (subItem, activation) =>
       runCanonicalBlockItem(view, context.block, subItem, activation));
   });
   return true;
@@ -1449,7 +1439,7 @@ function addInsertSubmenu(
 ): void {
   menu.addItem((item) => {
     item.setTitle(tx("Insert")).setIcon("plus");
-    populateInsertMenu(item.setSubmenu(), schema, view, host);
+    populateInsertMenu(inheritEditorMenuInteraction(menu, item.setSubmenu()), schema, view, host);
   });
 }
 
@@ -1533,6 +1523,13 @@ export function populateGeneralContextMenu(
 
   const sourcePath = (): string => host?.getInfo().file?.path ?? "";
   const toolbarAction = (definition: BtnDef): ActionSpec | null => {
+    const formattingAllowed = (): boolean => {
+      const plugin = host?.app.plugins?.plugins["butter-editor"] as
+        | { settings?: { enableHtmlFormatting?: boolean } }
+        | undefined;
+      return isFormattingMarkAllowed(definition.markName, plugin?.settings?.enableHtmlFormatting);
+    };
+    if (!formattingAllowed()) return null;
     if (["insert", "turn-into", "block-actions", "text-color"].includes(definition.id)) {
       return null;
     }
@@ -1543,6 +1540,7 @@ export function populateGeneralContextMenu(
       ? "list_item"
       : definition.nodeName;
     const enabled = (): boolean => {
+      if (!formattingAllowed()) return false;
       if (!canExecuteConversion(definition, view.state)) return false;
       if (definition.markName) return Boolean(mark);
       if (nodeName) return Boolean(schema.nodes[nodeName]);
@@ -1557,6 +1555,7 @@ export function populateGeneralContextMenu(
         ? () => markIsActive(view.state, mark)
         : undefined,
       run: () => {
+        if (!formattingAllowed()) return;
         if (definition.id === "link") {
           if (!host) return;
           const coords = view.coordsAtPos(view.state.selection.head);
@@ -1609,11 +1608,12 @@ export function populateGeneralContextMenu(
   const addFormattingSubmenu = (target: Menu): void => {
     target.addItem((item) => {
       item.setTitle(tx("Formatting")).setIcon("paintbrush");
-      const submenu = item.setSubmenu();
+      const submenu = inheritEditorMenuInteraction(target, item.setSubmenu());
       submenu.setUseNativeMenu(false);
       attachMenuSurfaceMotion(submenu, "submenu");
-      for (const id of ["bold", "italic", "strikethrough", "highlight", "inline-code"] as const) {
-        addAction(submenu, actions.get(id)!);
+      for (const id of ["bold", "italic", "underline", "strikethrough", "highlight", "inline-code"] as const) {
+        const action = actions.get(id);
+        if (action) addAction(submenu, action);
       }
       submenu.addSeparator();
       addAction(submenu, actions.get("add-link")!);
@@ -1640,7 +1640,7 @@ export function populateGeneralContextMenu(
   const addTextColorSubmenu = (target: Menu): void => {
     target.addItem((item) => {
       item.setTitle(txKnown("Text color")).setIcon("palette");
-      populateTextColorMenu(item.setSubmenu());
+      populateTextColorMenu(inheritEditorMenuInteraction(target, item.setSubmenu()));
     });
   };
 
@@ -1671,7 +1671,7 @@ export function populateGeneralContextMenu(
     if (!canonicalBlockMenuContext(view, host, blockOverride)) return false;
     target.addItem((item) => {
       item.setTitle(txKnown("Block actions")).setIcon("square-menu");
-      populateBlockActionsMenu(item.setSubmenu());
+      populateBlockActionsMenu(inheritEditorMenuInteraction(target, item.setSubmenu()));
     });
     return true;
   };
@@ -1679,6 +1679,7 @@ export function populateGeneralContextMenu(
   const openQuickSurface = (id: string, anchor: HTMLElement): boolean => {
     if (!["insert", "turn-into", "block-actions", "text-color"].includes(id)) return false;
     const surface = new Menu();
+    bindEditorMenuInteraction(surface, view);
     let populated = true;
     if (id === "insert") populateInsertMenu(surface, schema, view, host);
     else if (id === "turn-into") populated = populateCanonicalTurnIntoMenu(surface, view, host, blockOverride);
@@ -1697,6 +1698,7 @@ export function populateGeneralContextMenu(
   ): boolean => {
     const children = configured
       .filter((item) => item.type === "button" || item.type === "command")
+      .filter((item) => item.type !== "button" || item.id !== "underline" || actions.has(item.id))
       .slice(0, 5);
     if (children.length === 0) return false;
     target.addItem((item) => {
@@ -1770,11 +1772,11 @@ export function populateGeneralContextMenu(
             if (child.type === "command" && host) {
               executeObsidianCommand(host.app, child.commandId);
             } else if (child.type === "button" && openQuickSurface(child.id, button)) {
-              menu.close();
+              menu.hide();
               return;
             } else action?.run();
           }
-          menu.close();
+          menu.hide();
         });
         buttons.push(button);
       }
@@ -1878,7 +1880,7 @@ export function populateGeneralContextMenu(
         }
         target.addItem((menuItem) => {
           menuItem.setTitle(item.label || txKnown("Submenu")).setIcon(item.icon || "more-horizontal");
-          const submenu = menuItem.setSubmenu();
+          const submenu = inheritEditorMenuInteraction(target, menuItem.setSubmenu());
           submenu.setUseNativeMenu(false);
           attachMenuSurfaceMotion(submenu, "submenu");
           renderItems(submenu, item.children);
@@ -2089,6 +2091,7 @@ function showContextMenu(
     dismissActiveGeneralContextMenu();
   }
   const menu = new Menu();
+  bindEditorMenuInteraction(menu, view);
   activeGeneralContextMenu = menu;
   menu.onHide(() => {
     if (activeGeneralContextMenu === menu) activeGeneralContextMenu = null;

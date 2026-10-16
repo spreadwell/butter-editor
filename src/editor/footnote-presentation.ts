@@ -1,5 +1,5 @@
 import { Plugin } from "prosemirror-state";
-import type { EditorView } from "prosemirror-view";
+import { Decoration, DecorationSet, type EditorView } from "prosemirror-view";
 import { setIcon } from "obsidian";
 import { planFootnotePresentation } from "./footnote-plan";
 
@@ -18,6 +18,7 @@ function referenceElements(view: EditorView): HTMLElement[] {
 }
 
 function revealTarget(target: HTMLElement): void {
+  target = target.closest<HTMLElement>("[data-comment-navigation], [data-block-comment]") ?? target;
   target.scrollIntoView({ block: "center", behavior: "smooth" });
   target.classList.remove("is-footnote-target");
   // Restart the animation even when navigating to the same target twice.
@@ -62,7 +63,9 @@ function refreshFootnotePresentation(view: EditorView): void {
 
   defs.forEach((dom) => {
     const label = dom.dataset.footnoteLabel ?? "";
-    const presentation = plan.definitions.get(label);
+    const virtualIndex = dom.dataset.virtualFootnoteReferenceIndex;
+    const virtual = virtualIndex === undefined ? null : plan.references[Number(virtualIndex)];
+    const presentation = virtual ? { ordinal: virtual.ordinal, referenceIndexes: [Number(virtualIndex)] } : plan.definitions.get(label);
     const labelEl = dom.querySelector<HTMLElement>(".butter-footnote-label");
     const backrefs = dom.querySelector<HTMLElement>(".butter-footnote-backrefs");
     if (!labelEl || !backrefs) return;
@@ -91,8 +94,34 @@ function refreshFootnotePresentation(view: EditorView): void {
 }
 
 /** View-only native-style numbering and navigation for footnotes. */
-export function footnotePresentationPlugin(): Plugin<void> {
+export function footnotePresentationPlugin(
+  renderVirtualFootnote?: (content: string, container: HTMLElement) => void | (() => void),
+): Plugin<void> {
   return new Plugin<void>({
+    props: {
+      decorations(state) {
+        const entries = planFootnotePresentation(state.doc).virtualInlineDefinitions;
+        if (!entries.length) return null;
+        const cleanups = new WeakMap<HTMLElement, () => void>();
+        return DecorationSet.create(state.doc, entries.map(entry => Decoration.widget(state.doc.content.size, view => {
+          const dom = view.dom.ownerDocument.win.createDiv();
+          dom.className = "butter-footnote-def-view butter-virtual-footnote-definition";
+          dom.dataset.virtualFootnoteReferenceIndex = String(entry.referenceIndex);
+          dom.dataset.butterViewOnly = "";
+          dom.contentEditable = "false";
+          const label = dom.ownerDocument.win.createSpan(); label.className = "butter-footnote-label";
+          label.textContent = `${entry.ordinal}.`;
+          const body = dom.ownerDocument.win.createDiv(); body.className = "butter-footnote-content";
+          body.textContent = entry.content;
+          const backrefs = dom.ownerDocument.win.createSpan(); backrefs.className = "butter-footnote-backrefs";
+          dom.append(label, body, backrefs);
+          const cleanup = renderVirtualFootnote?.(entry.content, body);
+          if (cleanup) cleanups.set(dom, cleanup);
+          return dom;
+        }, { side: 1, key: JSON.stringify([entry.referenceIndex, entry.ordinal, entry.content]),
+          ignoreSelection: true, stopEvent: () => true, destroy(dom) { cleanups.get(dom as HTMLElement)?.(); } })));
+      },
+    },
     view(view) {
       refreshFootnotePresentation(view);
 

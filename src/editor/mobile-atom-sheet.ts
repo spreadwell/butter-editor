@@ -25,10 +25,14 @@ import { App, Menu, Modal, setIcon } from "obsidian";
 import type { Node as PMNode } from "prosemirror-model";
 import type { EditorView } from "prosemirror-view";
 import type { AtomSpec, AtomField } from "./inline-atom-specs";
+import { prepareAtomFieldEdit } from "./atom-field-edit";
 import { applyVaultFilesSuggest } from "../ui/vault-files-suggest";
 import { suggestionScopeForEmbedSource } from "../ui/vault-file-scope";
 import { tx, txKnown } from "../i18n";
 import { dismissMenuOnScroll } from "../ui/menu-scroll-dismiss";
+import { bindEditorMenuInteraction } from "./block-menu-ownership";
+import { bindEditorModalInteraction, isEditorModalInteraction } from "./modal-selection-ownership";
+import { captureDeferredUiOwnership, type DeferredUiOwnership } from "./deferred-ui-ownership";
 
 /** A single action row in the bottom drawer. The drawer is built
  *  from an array of these so the caller can tailor the action set
@@ -55,6 +59,8 @@ export interface OpenMobileAtomDrawerOptions {
   pos: number;
   node: PMNode;
   spec: AtomSpec;
+  /** The owning Butter view's current production save policy. */
+  validateAtomEdit: (candidate: PMNode) => boolean;
   /** The atom DOM element that was tapped. Used to position the
    *  drawer relative to the tap point on desktop; on mobile the
    *  drawer slides up from the bottom regardless of position. */
@@ -78,6 +84,7 @@ export interface OpenMobileAtomDrawerOptions {
 }
 
 export interface OpenMobileActionDrawerOptions {
+  editorView: EditorView;
   anchor: HTMLElement;
   chrome: {
     icon: string;
@@ -93,6 +100,7 @@ export interface OpenMobileActionDrawerOptions {
 
 export function openMobileActionDrawer(opts: OpenMobileActionDrawerOptions): void {
   const menu = new Menu();
+  bindEditorMenuInteraction(menu, opts.editorView);
   let editItemEl: HTMLElement | null = null;
 
   const navActions = opts.actions.filter((a) => !a.warning);
@@ -159,6 +167,7 @@ export function openMobileActionDrawer(opts: OpenMobileActionDrawerOptions): voi
  *  native Obsidian `Menu` shell as other mobile link actions. */
 export function openMobileAtomDrawer(opts: OpenMobileAtomDrawerOptions): void {
   openMobileActionDrawer({
+    editorView: opts.editorView,
     anchor: opts.anchor,
     chrome: opts.chrome,
     actions: opts.actions,
@@ -214,12 +223,17 @@ function injectDrawerHeader(
  *  node (re-resolving by position so a stale reference after
  *  another transaction is handled gracefully). */
 export class MobileAtomEditModal extends Modal {
-  private inputs: Record<string, HTMLInputElement> = {};
+  private inputs: Record<string, HTMLInputElement | HTMLTextAreaElement> = {};
+  private initialControlValues: Record<string, string> = {};
   private opts: OpenMobileAtomDrawerOptions;
+  private readonly ownership: DeferredUiOwnership;
+  private suggestions: ReturnType<typeof applyVaultFilesSuggest>[] = [];
 
   constructor(opts: OpenMobileAtomDrawerOptions) {
     super(opts.app);
     this.opts = opts;
+    this.ownership = captureDeferredUiOwnership(opts.editorView);
+    bindEditorModalInteraction(this, opts.editorView);
   }
 
   onOpen(): void {
@@ -268,10 +282,10 @@ export class MobileAtomEditModal extends Modal {
       cls: "butter-mobile-edit-field-label",
       text: tx(field.label),
     });
-    const input = fieldEl.createEl("input", {
+    const input = fieldEl.createEl(field.multiline ? "textarea" : "input", {
       cls: "butter-mobile-edit-input",
       attr: {
-        type: "text",
+        ...(field.multiline ? { rows: "3" } : { type: "text" }),
         placeholder:
           typeof field.placeholder === "function"
             ? field.placeholder({ [field.name]: value })
@@ -279,8 +293,10 @@ export class MobileAtomEditModal extends Modal {
       },
     });
     input.value = value;
+    this.initialControlValues[field.name] = input.value;
     input.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") {
+      const keyboard = ev as KeyboardEvent;
+      if (keyboard.key === "Enter" && !(field.multiline && keyboard.shiftKey)) {
         ev.preventDefault();
         this.commit();
       }
@@ -289,13 +305,14 @@ export class MobileAtomEditModal extends Modal {
     // uses (Obsidian's native AbstractInputSuggest popup with fuzzy
     // match + folder paths). Note fields stay note-only; image/video
     // sources expose only their matching attachment family.
-    if (field.autocomplete === "vault-files") {
+    if (field.autocomplete === "vault-files" && !field.multiline) {
       const isEmbed = this.opts.spec.typeName === "obsidian_embed" ||
         this.opts.spec.typeName === "obsidian_embed_inline";
       const scope = isEmbed
         ? suggestionScopeForEmbedSource(String(this.opts.node.attrs.src ?? ""))
         : "markdown";
-      applyVaultFilesSuggest(this.opts.app, input, {
+      this.suggestions.push(applyVaultFilesSuggest(this.opts.app, input as HTMLInputElement, {
+        selectionOwner: this,
         scope,
         onSelect: (file) => {
           input.value = isEmbed
@@ -306,7 +323,7 @@ export class MobileAtomEditModal extends Modal {
           input.dispatchEvent(new Event("input"));
           input.focus();
         },
-      });
+      }));
     }
     this.inputs[field.name] = input;
   }
@@ -319,6 +336,8 @@ export class MobileAtomEditModal extends Modal {
 
   private commit(): void {
     const { spec, editorView, pos, node } = this.opts;
+    if (!isEditorModalInteraction(editorView, this.modalEl) ||
+      !this.ownership.canMutate({ explicit: true })) return;
     if (!spec.fromFields) {
       this.close();
       return;
@@ -327,23 +346,26 @@ export class MobileAtomEditModal extends Modal {
     for (const [k, input] of Object.entries(this.inputs)) {
       values[k] = input.value;
     }
-    const next = spec.fromFields(values, node);
-    if (!next) {
+    const live = editorView.state.doc.nodeAt(pos);
+    const edit = prepareAtomFieldEdit(spec, node, live, values, this.initialControlValues,
+      { doc: editorView.state.doc, pos, validate: this.opts.validateAtomEdit });
+    if (edit.status === "invalid") {
       // Parse failed — flash the inputs red briefly so the user
       // knows the input wasn't accepted, but keep the modal open
       // so they can fix it.
       this.flashError();
       return;
     }
-    const live = editorView.state.doc.nodeAt(pos);
-    if (!live || live.type.name !== spec.typeName) {
-      // Node moved or was deleted while the modal was open —
-      // nothing safe to commit against.
+    if (edit.status === "unchanged") {
       this.close();
       return;
     }
-    const tr = editorView.state.tr.replaceWith(pos, pos + live.nodeSize, next);
+    const tr = editorView.state.tr.replaceWith(pos, pos + live!.nodeSize, edit.node);
     editorView.dispatch(tr);
+    if (!editorView.state.doc.eq(tr.doc)) {
+      this.flashError();
+      return;
+    }
     editorView.focus();
     this.close();
   }
@@ -359,6 +381,13 @@ export class MobileAtomEditModal extends Modal {
   }
 
   onClose(): void {
-    this.contentEl.empty();
+    const suggestions = this.suggestions;
+    this.suggestions = [];
+    const errors: unknown[] = [];
+    for (const suggest of suggestions) {
+      try { suggest.close(); } catch (error) { errors.push(error); }
+    }
+    try { this.contentEl.empty(); } catch (error) { errors.push(error); }
+    if (errors.length) throw errors[0];
   }
 }

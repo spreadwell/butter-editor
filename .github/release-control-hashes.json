@@ -1,8 +1,8 @@
 {
   "version": 1,
   "controls": {
-    "candidateVerifier": "ea4a5804dcdd9c57c771161ad1f083afdffdb15c5bcf59182b1aae9fcb75c7af",
+    "candidateVerifier": "70e124ff6e39e61f4ab066034d72677add811f6037e71107ce12e06faea1b5d5",
     "publicExporter": "3309b2e3d6217a6bf182140796cff0c83749d7395aae984aa6f862e7e90c1ffa",
-    "releaseOrchestrator": "1110438a4b6b2f9779ba5da1eeb76ee29696da0f921421f479d8bc4cd985acb8"
+    "releaseOrchestrator": "889b26e05b3a1db0dca08f9f5f976b3a6791eafddb3ff18f46a0c5fa2d4b858e"
   }
 }

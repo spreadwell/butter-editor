@@ -1,7 +1,9 @@
 import type { Node as PMNode } from "prosemirror-model";
 import { Selection } from "prosemirror-state";
+import { Mapping as PositionMapping } from "prosemirror-transform";
 
 type Mapping = Parameters<Selection["map"]>[1];
+const unchangedMapping = new PositionMapping();
 
 type BlockPosition = {
   blockId: string;
@@ -75,23 +77,29 @@ export function selectionThroughRetainedBlocks(
   selection: Selection,
   fallbackMapping: Mapping,
 ): Selection {
-  const json = selection.toJSON() as Record<string, unknown>;
-  const mapped: Record<string, unknown> = { ...json };
-  const anchor = typeof json.anchor === "number" ? json.anchor : null;
-  const head = typeof json.head === "number" ? json.head : null;
-  const collapsed = anchor !== null && head !== null && anchor === head;
+  const retainedPosition = (position: number, association = 1): number | null => {
+    const block = retainedBlockPosition(previousDoc, position, association < 0 ? -1 : 1);
+    return block ? positionOfRetainedBlock(nextDoc, block) : null;
+  };
 
-  for (const key of ["anchor", "head", "pos"] as const) {
-    const position = json[key];
-    if (typeof position !== "number") continue;
-    const association: -1 | 1 = collapsed || key !== "anchor" ? 1 : -1;
-    const block = retainedBlockPosition(previousDoc, position, association);
-    const retained = block ? positionOfRetainedBlock(nextDoc, block) : null;
-    mapped[key] = retained ?? fallbackMapping.map(position, association);
-  }
+  // Let each selection class validate its endpoints and preserve its own
+  // semantics. Reconstructing mapped JSON can silently create a TextSelection
+  // at a document boundary, or retain a deleted node/cell selection.
+  const mapping: Mapping = {
+    map(position, association = 1) {
+      return retainedPosition(position, association) ??
+        fallbackMapping.map(position, association);
+    },
+    mapResult(position, association = 1) {
+      const retained = retainedPosition(position, association);
+      return retained === null
+        ? fallbackMapping.mapResult(position, association)
+        : unchangedMapping.mapResult(retained, association);
+    },
+  };
 
   try {
-    return Selection.fromJSON(nextDoc, mapped);
+    return selection.map(nextDoc, mapping);
   } catch {
     return selection.map(nextDoc, fallbackMapping);
   }

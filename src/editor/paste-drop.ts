@@ -6,7 +6,7 @@
  *   - HTML on clipboard       → run through MD converter, then parse + insert
  *   - File drop from OS       → save to vault, insert ![[name]]
  */
-import { App, TFile } from "obsidian";
+import { App, Notice, TFile } from "obsidian";
 import {
   Plugin as PMPlugin,
   NodeSelection,
@@ -23,8 +23,14 @@ import type { EditorView } from "prosemirror-view";
 import { Fragment, Slice, type Node as PMNode, type Schema } from "prosemirror-model";
 import type { Parser } from "../core/parser-types";
 import { htmlToMarkdown } from "./paste-html";
-import { dropEmptyTextblocks, stripOrphanTagText } from "./paste-cleanup";
+import { addExternalLinkMark } from "./link-mark-policy";
+import { dropEmptyTextblocks } from "./paste-cleanup";
 import { recordError } from "../integration/debug";
+import { INTERNAL_SLICE_ATTRIBUTE } from "./internal-clipboard";
+import { freshenLinkOccurrenceSlice } from "../core/link-occurrence";
+import { attachmentStillPresent, captureAttachmentOperation, retainUninsertedAttachments, saveOwnedAttachment, type OwnedAttachment } from "./owned-attachments";
+import { tx } from "../i18n";
+import { SOURCE_RELOAD_META } from "./source-generation";
 
 // True when the current selection is inside a table cell. Used to
 // recognize "paste into existing table cell" so PM-tables' native
@@ -46,14 +52,15 @@ function inTableCell(state: EditorState): boolean {
 const URL_RE = /^https?:\/\/\S+$/i;
 const isUrl = (s: string) => URL_RE.test(s.trim());
 
-type PendingAttachmentTarget =
+type PendingAttachmentTarget = { sourcePath: string } & (
   | { kind: "selection"; bookmark: SelectionBookmark }
   | {
       kind: "position";
       pos: number;
       activation: SelectionBookmark;
       intervened: boolean;
-    };
+    }
+);
 
 interface ResolvedAttachmentTarget {
   insertion: Selection | number;
@@ -75,6 +82,7 @@ function registerPendingAttachment(
   target: PendingAttachmentTarget,
   category: "paste" | "drop",
 ): string | null {
+  if (view.isDestroyed || view.editable === false) return null;
   const id = `attachment-${++pendingAttachmentSequence}`;
   try {
     view.dispatch(
@@ -103,10 +111,13 @@ function registerPendingAttachment(
 function resolvePendingAttachment(
   view: EditorView,
   id: string,
+  sourcePath: string,
 ): ResolvedAttachmentTarget | null {
-  if (view.isDestroyed) return null;
+  if (view.isDestroyed || view.editable === false) return null;
   const target = pasteDropKey.getState(view.state)?.get(id);
-  if (!target) return null;
+  // A native move can retain the same TFile, editor and source generation while
+  // changing the meaning of the relative link prepared for its original path.
+  if (!target || target.sourcePath !== sourcePath) return null;
   if (target.kind === "position") {
     let selectInserted = false;
     try {
@@ -156,9 +167,18 @@ function hostname(url: string): string {
 }
 
 function looksRich(html: string): boolean {
-  return /<(p|h[1-6]|ul|ol|table|blockquote|pre|strong|em|a |img |code)\b/i.test(
-    html,
-  );
+  // MIME ownership, rather than a list of familiar tag names, determines
+  // whether HTML needs visibility filtering. DOMParser keeps this inspection
+  // inert and does not mistake entity-escaped tag documentation for elements.
+  try {
+    const doc = new DOMParser().parseFromString(
+      `<!doctype html><html><body>${html}</body></html>`,
+      "text/html",
+    );
+    return doc.body.querySelector("*") !== null || doc.head.childElementCount > 0;
+  } catch {
+    return false;
+  }
 }
 
 export function shouldDeferToProseMirrorClipboard(html: string): boolean {
@@ -168,7 +188,7 @@ export function shouldDeferToProseMirrorClipboard(html: string): boolean {
   // string "data-pm-slice".
   try {
     const doc = new DOMParser().parseFromString(html, "text/html");
-    return doc.querySelector("[data-pm-slice]") !== null;
+    return doc.querySelector(`[data-pm-slice], [${INTERNAL_SLICE_ATTRIBUTE}]`) !== null;
   } catch {
     return false;
   }
@@ -181,20 +201,7 @@ export async function saveBlobAsAttachment(
   sourcePath: string,
   preserveExactName = false,
 ): Promise<TFile | null> {
-  const nameParts = preferredName.split(/[\\/]/);
-  const cleanName = nameParts[nameParts.length - 1]?.trim() || "attachment";
-  const ext = blob.type.split("/")[1]?.split("+")[0] || "bin";
-  const filename = preserveExactName ? cleanName : `${cleanName}.${ext}`;
-  // Obsidian owns attachment-folder semantics (`./`, vault root, named
-  // folders), parent creation, and collision handling. Keeping that policy in
-  // FileManager also makes popouts and source-relative paths agree with native
-  // paste/drop behavior.
-  const path = await app.fileManager.getAvailablePathForAttachment(
-    filename,
-    sourcePath,
-  );
-  const buf = await blob.arrayBuffer();
-  return await app.vault.createBinary(path, buf);
+  return (await saveOwnedAttachment(app, blob, preferredName, sourcePath, preserveExactName))?.file ?? null;
 }
 
 export function attachmentEmbed(
@@ -204,34 +211,6 @@ export function attachmentEmbed(
 ): string {
   const link = app.fileManager.generateMarkdownLink(file, sourcePath);
   return link.startsWith("!") ? link : `!${link}`;
-}
-
-async function rollbackAttachments(
-  app: App,
-  files: readonly TFile[],
-  category: "paste" | "drop",
-): Promise<void> {
-  for (const file of files) {
-    try {
-      // Only remove the exact file object this activation created. A path may
-      // have been deleted and recreated while the async write was pending;
-      // that replacement belongs to somebody else.
-      if (app.vault.getAbstractFileByPath(file.path) !== file) {
-        recordError(
-          category,
-          `Attachment rollback skipped because ${file.path} is no longer the created file`,
-        );
-        continue;
-      }
-      await app.fileManager.trashFile(file);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      recordError(
-        category,
-        `Attachment rollback failed for ${file.path}: ${message}`,
-      );
-    }
-  }
 }
 
 // ═══════════════════════════════════════════
@@ -258,8 +237,9 @@ function dispatchInsertion(
 ): boolean {
   const preserveLiveState =
     target !== undefined &&
-    typeof target !== "number" &&
-    !view.state.selection.eq(target);
+    (typeof target === "number"
+      ? !selectInserted
+      : !view.state.selection.eq(target));
   const liveBookmark = preserveLiveState
       ? view.state.selection.getBookmark()
       : null;
@@ -307,6 +287,9 @@ function dispatchInsertion(
       `Insertion committed, but its view update failed: ${message}`,
     );
   }
+  // filterTransaction can refuse without throwing. The pending marker is
+  // removed only by the accepted insertion, so a veto must roll back its file.
+  if (pendingAttachmentId && pasteDropKey.getState(view.state)?.has(pendingAttachmentId)) return false;
   if (pendingAttachmentId && !view.isDestroyed) {
     try {
       // The insertion transaction's closeHistory meta separates it from edits
@@ -339,6 +322,7 @@ function replaceInsertionTarget(
   target: InsertionTarget | undefined,
   selectInserted: boolean,
 ): Transaction {
+  slice = freshenLinkOccurrenceSlice(transaction.doc, slice);
   if (typeof target !== "number") return transaction.replaceSelection(slice);
 
   // Match ProseMirror's native drop geometry: first project the pointer hit to
@@ -483,11 +467,10 @@ function insertMarkdown(
   try {
     const rawDoc = parser.parse(md);
     if (rawDoc) {
-      // Strip orphan HTML-tag text first (e.g. literal `<strong>` from
-      // a clipboard that escaped unclosed-tag selection content as
-      // entities). After stripping, paragraphs that held only that
-      // orphan text become empty and dropEmptyTextblocks removes them.
-      doc = dropEmptyTextblocks(stripOrphanTagText(rawDoc));
+      // Every parsed literal is clipboard content, including escaped HTML
+      // documentation. No tag-shaped text or edge break may be inferred to
+      // be an orphan and discarded after conversion.
+      doc = dropEmptyTextblocks(rawDoc);
     }
   } catch {
     // Parser/converter failures have a deterministic plain-text fallback. Do
@@ -611,21 +594,6 @@ export function classifyPlainTextPaste(text: string): PlainTextPastePolicy {
   return "native-text";
 }
 
-// True when a plain-text payload looks like HTML - starts with a tag
-// and contains at least one structural / commonly-pasted element. Some
-// clipboard sources (especially copying from contenteditable elements
-// in browsers / Electron) write the rendered HTML to `text/plain`
-// without populating `text/html`. Without this fallback the paste
-// handler would return false, PM's default paste would dump the raw
-// HTML into a single text node, and the resulting doc fails save
-// round-trip (markdown-it transforms / strips tags on reparse,
-// producing a different doc shape).
-function looksLikeHtmlInPlain(text: string): boolean {
-  if (!/^\s*<\w+[\s>]/.test(text)) return false;
-  return /<\/?(p|h[1-6]|ul|ol|li|table|tr|td|th|div|span|strong|em|b|i|a|img|br|hr|font|u|sup|sub|kbd|mark|code|pre|blockquote)\b/i
-    .test(text);
-}
-
 function insertLink(
   view: EditorView,
   schema: Schema,
@@ -656,7 +624,7 @@ function wrapSelectionWithLink(
     return;
   }
   const { from, to } = view.state.selection;
-  view.dispatch(view.state.tr.addMark(from, to, linkMark.create({ href })));
+  view.dispatch(addExternalLinkMark(view.state.tr, from, to, linkMark.create({ href })));
 }
 
 // ═══════════════════════════════════════════
@@ -675,6 +643,9 @@ export function pasteDropPlugin(
     state: {
       init: () => new Map<string, PendingAttachmentTarget>(),
       apply(transaction, anchors) {
+        // A native file/source reload reuses the EditorView, but its bookmark
+        // belongs to the previous source. Same-file edits still map normally.
+        if (transaction.getMeta(SOURCE_RELOAD_META) === true) return new Map();
         let next = anchors;
         if (anchors.size > 0 && transaction.docChanged) {
           next = new Map();
@@ -682,8 +653,9 @@ export function pasteDropPlugin(
             next.set(
               id,
               target.kind === "selection"
-                ? { kind: "selection", bookmark: target.bookmark.map(transaction.mapping) }
+                ? { ...target, bookmark: target.bookmark.map(transaction.mapping) }
                 : {
+                    ...target,
                     kind: "position",
                     pos: transaction.mapping.map(target.pos, -1),
                     activation: target.activation.map(transaction.mapping),
@@ -715,6 +687,7 @@ export function pasteDropPlugin(
         : undefined,
       handleDOMEvents: {
         paste: (view, event) => {
+          if (view.isDestroyed || view.editable === false) return false;
           const e = event;
           if (!e.clipboardData) return false;
 
@@ -739,38 +712,46 @@ export function pasteDropPlugin(
             const pendingId = registerPendingAttachment(
               view,
               {
+                sourcePath,
                 kind: "selection",
                 bookmark: view.state.selection.getBookmark(),
               },
               "paste",
             );
             if (!pendingId) return false;
+            const operation = captureAttachmentOperation(app);
             e.preventDefault();
             void (async () => {
               let consumed = false;
-              let savedFile: TFile | null = null;
+              let saved: OwnedAttachment | null = null;
               try {
                 try {
-                  savedFile = await saveBlobAsAttachment(
+                  saved = await saveOwnedAttachment(
                     app,
                     blob,
                     "pasted-image",
                     sourcePath,
+                    false,
+                    operation,
                   );
                 } catch (error) {
                   const message =
                     error instanceof Error ? error.message : String(error);
                   recordError("paste", `Clipboard image save failed: ${message}`);
                 }
-                if (savedFile) {
-                  const target = resolvePendingAttachment(view, pendingId);
-                  if (target !== null) {
+                if (saved) {
+                  const target = resolvePendingAttachment(view, pendingId, getSourcePath());
+                  if (
+                    target !== null &&
+                    !saved.routing.isDisposed &&
+                    attachmentStillPresent(app, saved)
+                  ) {
                     try {
                       consumed = insertMarkdown(
                         view,
                         schema,
                         parser,
-                        attachmentEmbed(app, savedFile, sourcePath),
+                        attachmentEmbed(app, saved.file, sourcePath),
                         target.insertion,
                         pendingId,
                         target.selectInserted,
@@ -786,15 +767,15 @@ export function pasteDropPlugin(
                   } else {
                     recordError(
                       "paste",
-                      "Clipboard image was saved, but its editor target no longer exists",
+                      "Clipboard image was saved, but its editor target or created file is no longer owned",
                     );
                   }
                 }
               } finally {
                 if (!consumed) {
                   cancelPendingAttachment(view, pendingId, "paste");
-                  if (savedFile) {
-                    await rollbackAttachments(app, [savedFile], "paste");
+                  if (saved) {
+                    await retainUninsertedAttachments(app, [saved], "paste");
                   }
                 }
               }
@@ -832,7 +813,17 @@ export function pasteDropPlugin(
 
           if (html && looksRich(html)) {
             e.preventDefault();
-            const md = htmlToMarkdown(html);
+            let md: string;
+            try {
+              md = htmlToMarkdown(html);
+            } catch {
+              // Only conversion is inside this catch. Dispatch must never be
+              // retried after a potentially committed insertion, and an
+              // unsupported HTML occurrence cannot fall back to lossy text.
+              recordError("paste", "External HTML conversion declined to preserve clipboard content");
+              new Notice(tx("Butter kept this block unchanged because this conversion would lose content or block references."));
+              return true;
+            }
             insertMarkdown(view, schema, parser, md);
             return true;
           }
@@ -844,22 +835,6 @@ export function pasteDropPlugin(
           if (explicitMarkdown && !cursorInCell) {
             e.preventDefault();
             insertMarkdown(view, schema, parser, explicitMarkdown);
-            return true;
-          }
-
-          // text/html missing, but text/plain is shaped like HTML
-          // copy from a contenteditable / DOM-source-view source that
-          // didn't populate text/html. Recover by running the plain
-          // text through htmlToMarkdown.
-          if (
-            !html &&
-            plain &&
-            looksLikeHtmlInPlain(plain) &&
-            !cursorInCell
-          ) {
-            e.preventDefault();
-            const md = htmlToMarkdown(plain);
-            insertMarkdown(view, schema, parser, md);
             return true;
           }
 
@@ -880,6 +855,7 @@ export function pasteDropPlugin(
           return false;
         },
         drop: (view, event) => {
+          if (view.isDestroyed || view.editable === false) return false;
           const e = event;
           if (!e.dataTransfer) return false;
           const files = Array.from(e.dataTransfer.files);
@@ -894,31 +870,35 @@ export function pasteDropPlugin(
             view,
             hit
               ? {
+                  sourcePath,
                   kind: "position",
                   pos: hit.pos,
                   activation: view.state.selection.getBookmark(),
                   intervened: false,
                 }
               : {
+                  sourcePath,
                   kind: "selection",
                   bookmark: view.state.selection.getBookmark(),
                 },
             "drop",
           );
           if (!pendingId) return false;
+          const operation = captureAttachmentOperation(app);
           e.preventDefault();
           void (async () => {
             let consumed = false;
-            const savedFiles: TFile[] = [];
+            const savedFiles: OwnedAttachment[] = [];
             try {
               for (const f of files) {
                 try {
-                  const saved = await saveBlobAsAttachment(
+                  const saved = await saveOwnedAttachment(
                     app,
                     f,
                     f.name,
                     sourcePath,
                     true,
+                    operation,
                   );
                   if (saved) savedFiles.push(saved);
                 } catch (error) {
@@ -930,15 +910,19 @@ export function pasteDropPlugin(
                   );
                 }
               }
-              const target = resolvePendingAttachment(view, pendingId);
-              if (savedFiles.length && target !== null) {
+              const target = resolvePendingAttachment(view, pendingId, getSourcePath());
+              if (
+                savedFiles.length &&
+                target !== null &&
+                savedFiles.every(saved => !saved.routing.isDisposed && attachmentStillPresent(app, saved))
+              ) {
                 try {
                   consumed = insertMarkdown(
                     view,
                     schema,
                     parser,
                     savedFiles
-                      .map((file) => attachmentEmbed(app, file, sourcePath))
+                      .map((saved) => attachmentEmbed(app, saved.file, sourcePath))
                       .join("\n"),
                     target.insertion,
                     pendingId,
@@ -955,7 +939,7 @@ export function pasteDropPlugin(
               } else if (savedFiles.length) {
                 recordError(
                   "drop",
-                  "Dropped attachments were saved, but their editor target no longer exists",
+                  "Dropped attachments were saved, but their editor target or created files are no longer owned",
                 );
               }
             } catch (error) {
@@ -964,7 +948,7 @@ export function pasteDropPlugin(
             } finally {
               if (!consumed) {
                 cancelPendingAttachment(view, pendingId, "drop");
-                await rollbackAttachments(app, savedFiles, "drop");
+                await retainUninsertedAttachments(app, savedFiles, "drop");
               }
             }
           })().catch((error: unknown) => {

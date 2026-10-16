@@ -1,10 +1,14 @@
 import type { TranslationTable } from "../../i18n";
 import { recentKo } from "./release-copy";
 import { feedbackKo } from "./feedback-copy";
+import { recoveryKo } from "./recovery-copy";
+import { saveDiagnosticsKo } from "./save-diagnostics-copy";
 
 export const ko = {
   ...recentKo,
   ...feedbackKo,
+  ...recoveryKo,
+  ...saveDiagnosticsKo,
   "Abstract callout": "요약 콜아웃",
   "Activated": "활성화됨",
   "Advanced": "고급 설정",
@@ -171,7 +175,7 @@ export const ko = {
   "Rich formatting": "서식 확장",
   "Write and format your notes without seeing Markdown syntax.": "Markdown 문법을 보지 않고 노트를 작성하고 서식을 지정할 수 있습니다.",
   "Adds text color, custom highlights, underline, superscript, subscript, and keyboard text to the toolbar.": "툴바에 텍스트 색상, 사용자 지정 하이라이트, 밑줄, 위 첨자, 아래 첨자, 키보드 텍스트를 추가합니다.",
-  "Adds text color, custom highlights, underline, superscript, and subscript.": "텍스트 색상, 사용자 지정 하이라이트, 밑줄, 위 첨자 및 아래 첨자를 추가합니다.",
+  "Adds text color, custom highlights, and underline.": "텍스트 색상, 사용자 지정 하이라이트 및 밑줄을 추가합니다.",
   "Uses HTML, which can make notes less portable and harder to read in source view.": "HTML을 사용하므로 다른 앱과의 호환성이 낮아지고 소스 보기가 읽기 어려워질 수 있습니다.",
   "You can change rich formatting anytime in settings.": "서식 확장은 언제든지 설정에서 변경할 수 있습니다.",
   "Rich paste and file drop": "풍부한 붙여넣기 및 파일 드롭",
@@ -404,7 +408,7 @@ export const ko = {
   "Preset colors": "프리셋된 색상",
   "Mobile & Desktop": "모바일 및 데스크톱",
   "Colours are off": "색상 사용 안 함",
-  "Turn on rich formatting in the general tab to customize preset colours.": "프리셋 색상을 변경하려면 일반 탭에서 서식 확장을 켜세요.",
+  "Turn on rich formatting in the Editor tab to customize preset colours.": "프리셋 색상을 변경하려면 편집기 탭에서 서식 확장을 켜세요.",
   "{label} preset {number}": "{label} 프리셋 {number}",
   "Preset {number}": "프리셋 {number}",
   "Reset to defaults": "기본값으로 재설정",

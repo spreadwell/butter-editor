@@ -10,6 +10,7 @@ import {
 import { LINKS } from "../../integration/license/links";
 import { tx, txKnown } from "../../i18n";
 import { BUTTER_GITHUB_README, WelcomeModal } from "../welcome-modal";
+import type { SaveDiagnosticsReport } from "../../integration/save-diagnostics";
 
 const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
@@ -47,12 +48,17 @@ function diagnosticsPreview(diagnostics: FeedbackDiagnostics): DocumentFragment 
 export function renderSupportSection(this: ButterSettingTab, root: HTMLElement): void {
   const feedback = this.createSettingGroup(root, tx("Send feedback"));
   feedback.addClass("butter-feedback-form");
+  feedback.createEl("p", {
+    cls: "butter-feedback-privacy",
+    text: tx("You can report anonymously. Leave contact email blank and keep personal information out of your message."),
+  });
 
   let kind: FeedbackKind = "bug";
   let subject = "";
   let message = "";
   let contactEmail = "";
   let includeDiagnostics = false;
+  let saveDiagnostics: SaveDiagnosticsReport | undefined;
   const diagnostics = collectFeedbackDiagnostics(this.plugin.manifest.version);
 
   new Setting(feedback)
@@ -109,6 +115,29 @@ export function renderSupportSection(this: ButterSettingTab, root: HTMLElement):
     .setDesc(diagnosticsPreview(diagnostics));
   preview.settingEl.addClasses(["butter-feedback-diagnostics-row", "is-hidden"]);
 
+  let savePreview!: Setting;
+  let savePreviewInput!: HTMLTextAreaElement;
+  new Setting(feedback)
+    .setName(tx("Include recent save failures"))
+    .setDesc(tx("Adds save failure stages, counts, and recovery outcomes. No note text, names, paths, or raw error messages. Keeps up to 20 recent failure groups for 30 days with this plugin; your sync setup may sync this local history."))
+    .addToggle(toggle => toggle.setValue(false).onChange(value => {
+      // Freeze exactly the visible snapshot. Failures arriving while the form
+      // is open must not silently change the payload the person approved.
+      saveDiagnostics = value ? this.plugin.saveDiagnostics?.snapshot() : undefined;
+      savePreview.settingEl.toggleClass("is-hidden", !saveDiagnostics);
+      savePreviewInput.value = saveDiagnostics ? JSON.stringify(saveDiagnostics, null, 2) : "";
+    }));
+  savePreview = new Setting(feedback)
+    .setName(tx("Save details that will be included"))
+    .addTextArea(input => {
+      savePreviewInput = input.inputEl;
+      savePreviewInput.readOnly = true;
+      savePreviewInput.rows = 8;
+      savePreviewInput.addClass("butter-feedback-message");
+      savePreviewInput.setAttribute("aria-label", tx("Save details that will be included"));
+    });
+  savePreview.settingEl.addClasses(["butter-feedback-diagnostics-row", "is-hidden"]);
+
   const submitRow = new Setting(feedback)
     .setDesc(tx("No contact information required. To respect your privacy, nothing about your vault will be included in this report without your permission."));
   submitRow.settingEl.addClass("butter-feedback-submit-row");
@@ -150,6 +179,7 @@ export function renderSupportSection(this: ButterSettingTab, root: HTMLElement):
           contactEmail: trimmedEmail || undefined,
           accessStatus: accessStatus(this),
           diagnostics: includeDiagnostics ? diagnostics : undefined,
+          saveDiagnostics,
         });
         status.setText(tx("Feedback sent. Thank you."));
         status.addClass("is-success");

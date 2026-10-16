@@ -1,10 +1,14 @@
 import type { TranslationTable } from "../../i18n";
 import { recentFr } from "./release-copy";
 import { feedbackFr } from "./feedback-copy";
+import { recoveryFr } from "./recovery-copy";
+import { saveDiagnosticsFr } from "./save-diagnostics-copy";
 
 export const fr = {
   ...recentFr,
   ...feedbackFr,
+  ...recoveryFr,
+  ...saveDiagnosticsFr,
   "Abstract callout": "Mise en avant : Résumé",
   "Activated": "Activé",
   "Advanced": "Avancé",
@@ -171,7 +175,7 @@ export const fr = {
   "Rich formatting": "Mise en forme enrichie",
   "Write and format your notes without seeing Markdown syntax.": "Rédigez et mettez en forme vos notes sans voir la syntaxe Markdown.",
   "Adds text color, custom highlights, underline, superscript, subscript, and keyboard text to the toolbar.": "Ajoute à la barre d'outils la couleur du texte, les surlignages personnalisés, le soulignement, les exposants, les indices et le texte de clavier.",
-  "Adds text color, custom highlights, underline, superscript, and subscript.": "Ajoute la couleur du texte, les surlignages personnalisés, le soulignement, les exposants et les indices.",
+  "Adds text color, custom highlights, and underline.": "Ajoute la couleur du texte, les surlignages personnalisés et le soulignement.",
   "Uses HTML, which can make notes less portable and harder to read in source view.": "Utilise du HTML, ce qui peut rendre les notes moins compatibles et plus difficiles à lire en mode source.",
   "You can change rich formatting anytime in settings.": "Vous pouvez modifier la mise en forme enrichie à tout moment dans les paramètres.",
   "Rich paste and file drop": "Collage enrichi et dépôt de fichiers",
@@ -404,7 +408,7 @@ export const fr = {
   "Preset colors": "Couleurs prédéfinies",
   "Mobile & Desktop": "Mobiles et ordinateurs de bureau",
   "Colours are off": "Couleurs désactivées",
-  "Turn on rich formatting in the general tab to customize preset colours.": "Activez la mise en forme enrichie dans l'onglet Général pour personnaliser les couleurs prédéfinies.",
+  "Turn on rich formatting in the Editor tab to customize preset colours.": "Activez la mise en forme enrichie dans l’onglet Éditeur pour personnaliser les couleurs prédéfinies.",
   "{label} preset {number}": "{label} préréglage {number}",
   "Preset {number}": "Préréglage {number}",
   "Reset to defaults": "Rétablir les valeurs par défaut",

@@ -2,9 +2,9 @@
  * HTML → markdown conversion for the paste path.
  *
  * Walks an HTMLElement tree and produces a markdown string that our
- * markdown-it pipeline (with obsidian + html-inline-tags plugins) can
- * parse back into the same PM doc shape. Extracted from paste-drop.ts
- * so it's testable from Node without pulling in the obsidian module.
+ * production parser can load as editable content. Explicit visibility is
+ * resolved in inert DOM before conversion. Visible text uses the file's
+ * literal codec; code and table cells use the same model/serializer as saving.
  *
  * Form-choice rules (per inline mark):
  *   • <strong>, <em>           → emit HTML form. Reasons: overlap
@@ -13,9 +13,8 @@
  *     htmlInlineTagsPlugin's any-match close handles it on parse) and
  *     whitespace robustness (`<strong> foo </strong>` round-trips
  *     cleanly; `**foo **` runs into right-flanking pairing rules).
- *   • <del>, <s>               → markdown form `~~…~~`. No
- *     html_del_open / html_s_open token handler in our parser; HTML
- *     form would not round-trip.
+ *   • <del>, <s>               → qualified HTML strike codec. Adjacent
+ *     literal tildes must not enter native Markdown delimiter ownership.
  *   • <u>, <sup>, <sub>, <kbd>, <mark>, <font>
  *                              → HTML form. No markdown shorthand
  *     exists for these in CommonMark/GFM; HTML is the canonical
@@ -27,6 +26,11 @@
  * safer intermediate just maximizes the chance the parser produces
  * the structurally-correct PM doc on the way through.
  */
+
+import { escapeMarkdownText, htmlAttribute, serialize } from "../core/bridge/serializer";
+import { schema } from "../core/schema";
+import { parser } from "../core/parser";
+import type { Node as PMNode } from "prosemirror-model";
 
 export function htmlToMarkdown(html: string): string {
   // DOMParser parses into an inert document - scripts don't execute,
@@ -45,11 +49,50 @@ export function htmlToMarkdown(html: string): string {
   );
   const body = doc.body;
   if (!body) return "";
+  removeUnavailableContent(body);
+  // Pruning may join text split around a hidden element. Escape its complete
+  // lexical run, so '&' + hidden content + 'nbsp;' cannot become an entity.
+  body.normalize();
   return serializeNode(body).trim();
 }
 
+/** Read only inert clipboard DOM. Explicit display/hidden removes the whole
+ * subtree; inherited visibility still allows a child to become visible.
+ * Prune before any code/table textContent read can disclose hidden payload. */
+function removeUnavailableContent(node: Node, invisible = false): void {
+  if (node.nodeType === Node.TEXT_NODE) {
+    if (invisible) node.parentNode?.removeChild(node);
+    return;
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return;
+  const element = node as HTMLElement;
+  const display = (element.style.display ?? "").trim().toLowerCase();
+  const hiddenAttribute = element.getAttribute("hidden");
+  // Inline display overrides the UA's ordinary [hidden] display:none rule.
+  // until-found uses content visibility and is not this display codec.
+  const attributeHides = hiddenAttribute !== null &&
+    (hiddenAttribute.toLowerCase() === "until-found" || !display || ["none", "revert", "revert-layer"].includes(display));
+  if (["script", "style", "template", "noscript", "title", "head"].includes(element.tagName.toLowerCase()) ||
+    attributeHides || display === "none") {
+    element.parentNode?.removeChild(element);
+    return;
+  }
+  const visibility = (element.style.visibility ?? "").trim().toLowerCase();
+  const hidden = visibility === "visible" ? false
+    : visibility === "hidden" || visibility === "collapse" ? true : invisible;
+  for (const child of Array.from(element.childNodes)) removeUnavailableContent(child, hidden);
+}
+
+function serializeLiteralCode(text: string, language?: string): string {
+  const content = text ? schema.text(text) : undefined;
+  const block = language === undefined
+    ? schema.nodes.paragraph.create(null, text ? schema.text(text, [schema.marks.code.create()]) : undefined)
+    : schema.nodes.code_block.create({ language }, content);
+  return serialize(schema.nodes.doc.create(null, block));
+}
+
 export function serializeNode(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  if (node.nodeType === Node.TEXT_NODE) return escapeMarkdownText(node.textContent ?? "");
   if (node.nodeType !== Node.ELEMENT_NODE) return "";
   const el = node as HTMLElement;
   const children = Array.from(el.childNodes).map(serializeNode).join("");
@@ -63,8 +106,9 @@ export function serializeNode(node: Node): string {
       return `<em>${children}</em>`;
     case "del":
     case "s":
-      // No html_del_open / html_s_open in our parser - markdown form only.
-      return `~~${children}~~`;
+      // A literal tilde beside a strike delimiter changes native ownership.
+      // The qualified HTML codec preserves the exact requested interval.
+      return `<s>${children}</s>`;
     // HTML-only inline marks (no markdown shorthand exists).
     case "u":
       return `<u>${children}</u>`;
@@ -81,9 +125,9 @@ export function serializeNode(node: Node): string {
       const face = el.getAttribute("face");
       const size = el.getAttribute("size");
       const attrs: string[] = [];
-      if (color) attrs.push(`color="${color}"`);
-      if (face) attrs.push(`face="${face}"`);
-      if (size) attrs.push(`size="${size}"`);
+      if (color) attrs.push(`color="${htmlAttribute(color)}"`);
+      if (face) attrs.push(`face="${htmlAttribute(face)}"`);
+      if (size) attrs.push(`size="${htmlAttribute(size)}"`);
       const attrStr = attrs.length ? ` ${attrs.join(" ")}` : "";
       return `<font${attrStr}>${children}</font>`;
     }
@@ -96,22 +140,22 @@ export function serializeNode(node: Node): string {
         el.parentElement?.tagName.toLowerCase() === "pre";
       if (parentIsPre) return el.textContent ?? "";
       const text = el.textContent ?? "";
-      if (text.includes("\n")) {
-        const langMatch = el.className.match(/language-(\S+)/);
-        const lang = langMatch ? langMatch[1] : "";
-        const body = text.replace(/\n+$/, "");
-        return `\n\n\`\`\`${lang}\n${body}\n\`\`\`\n\n`;
-      }
-      return `\`${children}\``;
+      return serializeLiteralCode(text);
     }
     case "a": {
-      const href = el.getAttribute("href") || "";
-      return children ? `[${children}](${href})` : href;
+      const href = el.getAttribute("href");
+      // A targetless external anchor contributes its visible children only.
+      // Empty navigable anchors remain empty rather than exposing their URL.
+      if (href === null) return children;
+      const title = el.getAttribute("title");
+      return `<a href="${htmlAttribute(href)}"${title !== null ? ` title="${htmlAttribute(title)}"` : ""}>${children}</a>`;
     }
     case "img": {
       const src = el.getAttribute("src") || "";
       const alt = el.getAttribute("alt") || "";
-      return `![${alt}](${src})`;
+      const title = el.getAttribute("title");
+      const width = el.getAttribute("width"), height = el.getAttribute("height");
+      return `<img src="${htmlAttribute(src)}" alt="${htmlAttribute(alt)}"${title !== null ? ` title="${htmlAttribute(title)}"` : ""}${width !== null ? ` width="${htmlAttribute(width)}"` : ""}${height !== null ? ` height="${htmlAttribute(height)}"` : ""}>`;
     }
     case "h1":
       return `\n# ${children}\n`;
@@ -146,8 +190,7 @@ export function serializeNode(node: Node): string {
       const codeChild = el.querySelector("code");
       const langMatch = codeChild?.className.match(/language-(\S+)/);
       const lang = langMatch ? langMatch[1] : "";
-      const body = (el.textContent ?? "").replace(/\n+$/, "");
-      return `\n\n\`\`\`${lang}\n${body}\n\`\`\`\n\n`;
+      return `\n\n${serializeLiteralCode(el.textContent ?? "", lang)}\n\n`;
     }
     case "table":
       return htmlTableToMd(el);
@@ -157,25 +200,41 @@ export function serializeNode(node: Node): string {
 }
 
 function htmlTableToMd(table: HTMLElement): string {
-  const rows = Array.from(table.querySelectorAll("tr"));
+  const rows = Array.from(table.querySelectorAll("tr")).filter(row => row.closest("table") === table);
   if (!rows.length) return "";
-  const cells = rows.map((tr) =>
-    Array.from(tr.querySelectorAll("th,td")).map(
-      (c) => (c.textContent ?? "").trim().replace(/\|/g, "\\|"),
-    ),
-  );
-  const colCount = Math.max(...cells.map((r) => r.length));
-  const header = cells[0];
-  while (header.length < colCount) header.push("");
-  const sep = Array.from({ length: colCount }, () => "---");
-
-  const fmt = (r: string[]) => "| " + r.join(" | ") + " |";
-  return [
-    fmt(header),
-    fmt(sep),
-    ...cells.slice(1).map((r) => {
-      while (r.length < colCount) r.push("");
-      return fmt(r);
-    }),
-  ].join("\n");
+  // Use the actual Markdown parser and table serializer for rich cell
+  // content. textContent/trim destroys code padding, formatting and links
+  // before the save oracle can compare anything.
+  const cells = rows.map(row => Array.from(row.children).filter(cell => /^(TH|TD)$/.test(cell.tagName)));
+  const colCount = Math.max(...cells.map(row => row.length));
+  if (!colCount) return "";
+  const parsedRows = cells.map((row, index) => {
+    const type = index === 0 ? schema.nodes.table_header : schema.nodes.table_cell;
+    const parsedCells = row.map(cell => {
+      if (["colspan", "rowspan"].some(name => cell.hasAttribute(name) && cell.getAttribute(name) !== "1")) {
+        throw new Error("Rich clipboard table spans have no supported cell projection");
+      }
+      const content = Array.from(cell.childNodes).map(serializeNode).join("");
+      const doc = parser.parse(content);
+      const inline: PMNode[] = [];
+      const appendBlock = (block: PMNode): void => {
+        if (["blockquote", "list_item", "callout"].includes(block.type.name)) {
+          block.forEach(appendBlock);
+          return;
+        }
+        if (inline.length) inline.push(schema.nodes.softbreak.create());
+        if (block.inlineContent) block.forEach(child => inline.push(child));
+        else if (block.type.name === "code_block" && block.textContent) {
+          inline.push(schema.text(block.textContent, [schema.marks.code.create()]));
+        } else if (block.type.name !== "code_block") {
+          throw new Error("Rich clipboard block has no supported cell projection");
+        }
+      };
+      doc?.forEach(appendBlock);
+      return type.create(null, inline);
+    });
+    while (parsedCells.length < colCount) parsedCells.push(type.create());
+    return schema.nodes.table_row.create(null, parsedCells);
+  });
+  return serialize(schema.nodes.doc.create(null, schema.nodes.table.create(null, parsedRows)));
 }

@@ -21,13 +21,16 @@
  * shouldn't suggest notes when the user is typing a URL.
  */
 
-import { AbstractInputSuggest, App, TFile, prepareFuzzySearch } from "obsidian";
+import { AbstractInputSuggest, App, TFile, prepareFuzzySearch, type Modal } from "obsidian";
+import { bindEditorModalSuggestInteraction } from "../editor/modal-selection-ownership";
 import {
   extensionMatchesVaultSuggestionScope,
   type VaultFileSuggestionScope,
 } from "./vault-file-scope";
 
 export interface VaultFilesSuggestOptions {
+  /** Exact selected-editor dialog; its lifetime owns the sibling popup. */
+  selectionOwner?: Modal;
   /** File family exposed by this field. Note/link fields default to
    *  `markdown`; media editors opt into their matching attachment family and
    *  generic embed fields use `all`. */
@@ -71,6 +74,7 @@ class VaultFilesSuggest extends AbstractInputSuggest<TFile> {
     this.inputEl = inputEl;
     this.opts = opts;
     this.limit = opts.limit ?? 50;
+    if (opts.selectionOwner) bindEditorModalSuggestInteraction(opts.selectionOwner, this, inputEl);
   }
 
   open(): void {

@@ -13,21 +13,27 @@
  * double-click handler) without creating a circular dependency.
  */
 
-import { App, Modal, Platform } from "obsidian";
+import { App, Modal, Notice, Platform } from "obsidian";
 import { tx } from "../i18n";
+import type { EditorView } from "prosemirror-view";
+import { bindEditorModalInteraction } from "./modal-selection-ownership";
 
 export class MathEditModal extends Modal {
   private text = "";
-  private saved = false;
+  private closed = false;
+  private focusTimer: number | null = null;
   constructor(
     app: App,
     private initial: string,
-    private onSave: (next: string) => void,
+    private onSave: (next: string) => boolean | void,
+    view: EditorView,
   ) {
     super(app);
     this.text = initial;
+    bindEditorModalInteraction(this, view);
   }
   onOpen() {
+    this.closed = false;
     if (Platform.isMobile) this.modalEl.addClass("mod-lg");
     const { contentEl, titleEl } = this;
     titleEl.setText(tx("Edit math source"));
@@ -42,7 +48,10 @@ export class MathEditModal extends Modal {
         this.commit();
       }
     });
-    window.setTimeout(() => ta.focus(), 0);
+    this.focusTimer = window.setTimeout(() => {
+      this.focusTimer = null;
+      if (!this.closed && this.contentEl.contains(ta)) ta.focus();
+    }, 0);
 
     const btnRow = contentEl.createDiv({ cls: "modal-button-container" });
     const cancelBtn = btnRow.createEl("button", { text: tx("Cancel") });
@@ -54,11 +63,23 @@ export class MathEditModal extends Modal {
     saveBtn.addEventListener("click", () => this.commit());
   }
   private commit() {
-    this.saved = true;
-    this.onSave(this.text);
+    if (this.closed) return;
+    try {
+      if (this.onSave(this.text) === false) return;
+    } catch {
+      // A host/plugin callback can throw. Keep the editable draft without
+      // exposing its formula through an exception message or discarding it.
+      new Notice(tx("Something went wrong. Try again in a moment."));
+      return;
+    }
     this.close();
   }
   onClose() {
+    this.closed = true;
+    if (this.focusTimer !== null) {
+      window.clearTimeout(this.focusTimer);
+      this.focusTimer = null;
+    }
     this.contentEl.empty();
   }
 }

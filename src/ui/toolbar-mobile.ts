@@ -16,6 +16,8 @@
 import { App, Modal, setIcon } from "obsidian";
 import type { EditorView } from "prosemirror-view";
 import type { Schema } from "prosemirror-model";
+import { captureDeferredUiOwnership } from "../editor/deferred-ui-ownership";
+import { bindEditorModalInteraction, isEditorModalInteraction } from "../editor/modal-selection-ownership";
 import type { Layout, LayoutItem } from "./toolbar-layout";
 import {
   BUTTON_REGISTRY,
@@ -42,6 +44,7 @@ import {
 } from "./insert-drawer";
 import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
 import { tx, txKnown, type MessageKey } from "../i18n";
+import { isFormattingMarkAllowed } from "./rich-formatting-actions";
 import { openUnifiedLinkEditor } from "./link-editor";
 import {
   commandActionIcon,
@@ -186,6 +189,7 @@ export function installMobileToolbarOverflowIndicators(
  *  existing `insertTable` command - just feeds it concrete integers
  *  instead of grid coordinates. */
 function openMobileInsertTableModal(app: App, schema: Schema, view: EditorView) {
+  const ownership = captureDeferredUiOwnership(view);
   const modal = new (class extends Modal {
     private rows = 3;
     private cols = 3;
@@ -217,12 +221,15 @@ function openMobileInsertTableModal(app: App, schema: Schema, view: EditorView) 
         text: tx("Insert"),
       });
       insert.addEventListener("click", () => {
+        if (!isEditorModalInteraction(view, this.modalEl) ||
+          !ownership.canMutate({ explicit: true })) return;
+        if (!insertTable(schema, view, this.rows, this.cols)) return;
         this.close();
-        insertTable(schema, view, this.rows, this.cols);
         view.focus();
       });
     }
   })(app);
+  bindEditorModalInteraction(modal, view);
   modal.open();
 }
 
@@ -246,7 +253,9 @@ function openMobileInsertImageDialog(
   schema: Schema,
   view: EditorView,
   sourcePath: string,
+  getSourcePath: () => string = () => sourcePath,
 ) {
+  const ownership = captureDeferredUiOwnership(view, getSourcePath);
   const modal = new (class extends Modal {
     onOpen() {
       this.titleEl.setText(tx("Insert image"));
@@ -264,8 +273,14 @@ function openMobileInsertImageDialog(
         input.addEventListener("change", () => {
           const file = input.files?.[0];
           if (!file) return;
+          if (!isEditorModalInteraction(view, this.modalEl) ||
+            !ownership.canMutate({ explicit: true })) {
+            input.remove();
+            return;
+          }
           this.close();
-          void insertPickedAttachment(app, schema, view, file, sourcePath, "image");
+          void insertPickedAttachment(app, schema, view, file, sourcePath, "image", ownership);
+          input.remove();
         });
         activeDocument.body.appendChild(input);
         input.click();
@@ -282,16 +297,19 @@ function openMobileInsertImageDialog(
       urlBtn.addEventListener("click", () => {
         const src = urlInput.value.trim();
         if (!src) return;
-        this.close();
-        view.dispatch(
-          view.state.tr.replaceSelectionWith(
-            schema.nodes.image.create({ src, alt: "" }),
-          ),
+        if (!isEditorModalInteraction(view, this.modalEl) ||
+          !ownership.canMutate({ explicit: true })) return;
+        const tr = view.state.tr.replaceSelectionWith(
+          schema.nodes.image.create({ src, alt: "" }),
         );
+        view.dispatch(tr);
+        if (!tr.docChanged || !view.state.doc.eq(tr.doc)) return;
+        this.close();
         view.focus();
       });
     }
   })(app);
+  bindEditorModalInteraction(modal, view);
   modal.open();
 }
 
@@ -402,7 +420,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   // user disables HTML formatting in settings. Same setting check;
   // applyToolbarButtonVisibility rebuilds the mobile bar on toggle.
   const htmlOk = isMobileHtmlFormattingEnabled(ctx);
-  if (def.id === "text-color" && !htmlOk) return;
+  if (!isFormattingMarkAllowed(def.markName, htmlOk)) return;
   const el = createMobileActionButton(
     true,
     "mobile-toolbar-option",
@@ -422,6 +440,8 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
     e.preventDefault();
     const view = ctx.getView();
     if (!view || !view.editable) return;
+    const currentHtmlOk = isMobileHtmlFormattingEnabled(ctx);
+    if (!isFormattingMarkAllowed(def.markName, currentHtmlOk)) return;
     // Mobile-specific insert flows replace the desktop hover-grid /
     // prompt-dialog UI with thumb-friendly modals.
     if (def.id === "link" || def.id === "insert-link-md") {
@@ -433,7 +453,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
       return;
     }
     if (def.id === "image" || def.nodeName === "image") {
-      openMobileInsertImageDialog(ctx.app, ctx.schema, view, ctx.getSourcePath());
+      openMobileInsertImageDialog(ctx.app, ctx.schema, view, ctx.getSourcePath(), ctx.getSourcePath);
       return;
     }
     if (def.id === "text-color") {
@@ -454,7 +474,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
         ? isMarkActive(view.state, highlightMark)
         : false;
       execMarkCmd(def, ctx.schema, view);
-      if (!wasActive && htmlOk) {
+      if (!wasActive && currentHtmlOk) {
         openMobileColorSheet(ctx.app, ctx.schema, view, "highlight");
       }
       return;
@@ -577,6 +597,7 @@ function openMobileVariantsPopover(
     }
     const def = BUTTON_REGISTRY.get(child.id);
     if (!def) continue;
+    if (!isFormattingMarkAllowed(def.markName, isMobileHtmlFormattingEnabled(ctx))) continue;
     const row = createMobileActionButton(false, "butter-mobile-variant-row");
     const icon = activeWindow.createSpan();
     icon.classList.add("butter-mobile-variant-icon");
@@ -593,6 +614,7 @@ function openMobileVariantsPopover(
       ctx.closePopover();
       const view = ctx.getView();
       if (!view || !view.editable) return;
+      if (!isFormattingMarkAllowed(def.markName, isMobileHtmlFormattingEnabled(ctx))) return;
       if (def.id === "link" || def.id === "insert-link-md") {
         openMobileAddLinkModal(ctx.app, view, ctx.getSourcePath());
       } else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
@@ -678,6 +700,7 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
   const dispatchDef = (def: BtnDef) => {
     const view = ctx.getView();
     if (!view || !view.editable) return;
+    if (!isFormattingMarkAllowed(def.markName, isMobileHtmlFormattingEnabled(ctx))) return;
     if (def.id === "link" || def.id === "insert-link-md") {
       openMobileAddLinkModal(ctx.app, view, ctx.getSourcePath());
     } else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
@@ -745,6 +768,7 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
       }
       const def = BUTTON_REGISTRY.get(item.id);
       if (!def) continue;
+      if (!isFormattingMarkAllowed(def.markName, isMobileHtmlFormattingEnabled(ctx))) continue;
       if (def.markName && !ctx.schema.marks[def.markName]) continue;
       if (def.nodeName && !ctx.schema.nodes[def.nodeName]) continue;
       addRow(def);
@@ -979,7 +1003,8 @@ function renderButterMain(
   setIcon(closeBtn, "x");
   closeBtn.addEventListener("click", (e) => {
     e.preventDefault();
-    const closeDelay = closeMobileInsertDrawer({ returningKeyboard: true });
+    const closeDelay = closeMobileInsertDrawer({ returningKeyboard: true, explicit: true });
+    if (closeDelay < 0) return;
     const view = ctx.getView();
     if (view) window.setTimeout(() => view.focus(), closeDelay);
   });

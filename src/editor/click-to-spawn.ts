@@ -316,6 +316,24 @@ export function canSpawnAfterLastBlock(doc: PMNode): boolean {
   return Boolean(doc.lastChild && !isEmptyParagraph(doc.lastChild));
 }
 
+/** The ordinary second-click action for a selected leaf. Image body gestures
+ * defer this until release, so a drag does not also become a caret action. */
+export function deselectSelectedLeaf(view: EditorView, selection = view.state.selection): boolean {
+  if (
+    view.state.selection !== selection ||
+    !(selection instanceof NodeSelection) ||
+    !(selection.node.isAtom || selection.node.isLeaf)
+  ) return false;
+  const $pos = view.state.doc.resolve(selection.from);
+  let textSelection = Selection.near($pos);
+  if (textSelection instanceof NodeSelection && textSelection.from === selection.from) {
+    textSelection = Selection.near($pos, -1);
+  }
+  view.dispatch(view.state.tr.setSelection(textSelection));
+  view.focus();
+  return true;
+}
+
 /** True iff `target` is nested inside one of the editor's top-level
  *  child DOMs (i.e., the click hit content, not editor margin). */
 function isInsideTopLevelBlock(target: Element, editorDOM: Element): boolean {
@@ -730,14 +748,7 @@ export function clickToSpawnPlugin(
             const selDom = view.nodeDOM(view.state.selection.from);
             if (selDom instanceof HTMLElement && selDom.contains(event.target as Node)) {
               event.preventDefault();
-              const $pos = view.state.doc.resolve(view.state.selection.from);
-              let textSel = Selection.near($pos);
-              if (textSel instanceof NodeSelection && textSel.from === view.state.selection.from) {
-                textSel = Selection.near($pos, -1);
-              }
-              view.dispatch(view.state.tr.setSelection(textSel));
-              view.focus();
-              return true;
+              return deselectSelectedLeaf(view);
             }
           }
 

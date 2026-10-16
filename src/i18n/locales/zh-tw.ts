@@ -1,10 +1,14 @@
 import type { TranslationTable } from "../../i18n";
 import { recentZhTW } from "./release-copy";
 import { feedbackZhTW } from "./feedback-copy";
+import { recoveryZhTW } from "./recovery-copy";
+import { saveDiagnosticsZhTW } from "./save-diagnostics-copy";
 
 export const zhTW = {
   ...recentZhTW,
   ...feedbackZhTW,
+  ...recoveryZhTW,
+  ...saveDiagnosticsZhTW,
   "Abstract callout": "摘要標註塊",
   "Activated": "已啟用",
   "Advanced": "進階",
@@ -171,7 +175,7 @@ export const zhTW = {
   "Rich formatting": "豐富格式",
   "Write and format your notes without seeing Markdown syntax.": "撰寫和設定筆記格式時，不必看到 Markdown 語法。",
   "Adds text color, custom highlights, underline, superscript, subscript, and keyboard text to the toolbar.": "在工具列中加入文字顏色、自訂醒目提示、底線、上標、下標和鍵盤文字。",
-  "Adds text color, custom highlights, underline, superscript, and subscript.": "加入文字顏色、自訂醒目提示、底線、上標和下標。",
+  "Adds text color, custom highlights, and underline.": "加入文字顏色、自訂醒目提示和底線。",
   "Uses HTML, which can make notes less portable and harder to read in source view.": "使用 HTML，可能會降低筆記的可攜性，並使原始碼檢視較難閱讀。",
   "You can change rich formatting anytime in settings.": "您可以隨時在設定中變更豐富格式。",
   "Rich paste and file drop": "豐富的貼上和檔案放置",
@@ -404,7 +408,7 @@ export const zhTW = {
   "Preset colors": "預設顏色",
   "Mobile & Desktop": "行動裝置與桌面裝置",
   "Colours are off": "顏色已停用",
-  "Turn on rich formatting in the general tab to customize preset colours.": "在「一般」分頁中開啟豐富格式，即可自訂預設顏色。",
+  "Turn on rich formatting in the Editor tab to customize preset colours.": "在「編輯器」分頁中開啟豐富格式，即可自訂預設顏色。",
   "{label} preset {number}": "{label} 預設 {number}",
   "Preset {number}": "預設{number}",
   "Reset to defaults": "恢復預設值",

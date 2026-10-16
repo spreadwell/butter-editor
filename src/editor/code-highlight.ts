@@ -18,6 +18,8 @@ import {
   type EditorState,
 } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
+import type { Schema } from "prosemirror-model";
+import { codeBlockRenderSource } from "../core/code-block-render-source";
 
 // Which blocks to skip? None explicitly. `codeBlockView` (see
 // src/nodeviews.ts) now delegates every non-editable language to
@@ -174,7 +176,7 @@ function collectLangs(doc: EditorState["doc"]): string[] {
  * has tokenized - at which point `Prism.languages[lang]` is populated
  * and our `tokenize()` will succeed.
  */
-async function loadGrammars(app: App, langs: string[]): Promise<void> {
+async function loadGrammars(app: App, langs: string[], schema: Schema): Promise<void> {
   if (!langs.length) return;
   const hidden = activeWindow.createDiv();
   hidden.addClass("butter-prism-loader");
@@ -183,12 +185,15 @@ async function loadGrammars(app: App, langs: string[]): Promise<void> {
   comp.load();
   try {
     for (const lang of langs) {
+      // An opaque HTML-code info attribute may contain physical newlines;
+      // it is not a Prism grammar name or a representable fence info line.
+      if (/[\r\n]/.test(lang)) continue;
       const prism = getPrism();
       if (prism?.languages[lang]) continue;
       try {
         await MarkdownRenderer.render(
           app,
-          "```" + lang + "\nx\n```",
+          codeBlockRenderSource(schema.nodes.code_block.create({ language: lang }, schema.text("x"))),
           hidden,
           "",
           comp,
@@ -259,7 +264,7 @@ export function codeHighlightPlugin(app?: App): PMPlugin<DecorationSet> {
         const fresh = all.filter((lang) => !seenLangs.has(lang));
         if (!fresh.length) return;
         for (const lang of fresh) seenLangs.add(lang);
-        await loadGrammars(app, fresh);
+        await loadGrammars(app, fresh, view.state.schema);
         if (cancelled) return;
         // Trigger a re-decorate with the now-loaded grammars.
         view.dispatch(view.state.tr.setMeta(key, "refresh"));

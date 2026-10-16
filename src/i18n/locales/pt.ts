@@ -1,10 +1,14 @@
 import type { TranslationTable } from "../../i18n";
 import { recentPt } from "./release-copy";
 import { feedbackPt } from "./feedback-copy";
+import { recoveryPt } from "./recovery-copy";
+import { saveDiagnosticsPt } from "./save-diagnostics-copy";
 
 export const pt = {
   ...recentPt,
   ...feedbackPt,
+  ...recoveryPt,
+  ...saveDiagnosticsPt,
   "Abstract callout": "Bloco de destaque: Resumo",
   "Activated": "Ativado",
   "Advanced": "Avançadas",
@@ -171,7 +175,7 @@ export const pt = {
   "Rich formatting": "Formatação avançada",
   "Write and format your notes without seeing Markdown syntax.": "Escreva e formate as suas notas sem ver a sintaxe Markdown.",
   "Adds text color, custom highlights, underline, superscript, subscript, and keyboard text to the toolbar.": "Adiciona à barra de ferramentas cor do texto, destaques personalizados, sublinhado, sobrescrito, subscrito e texto de teclado.",
-  "Adds text color, custom highlights, underline, superscript, and subscript.": "Adiciona cor ao texto, destaques personalizados, sublinhado, sobrescrito e subscrito.",
+  "Adds text color, custom highlights, and underline.": "Adiciona cor ao texto, destaques personalizados e sublinhado.",
   "Uses HTML, which can make notes less portable and harder to read in source view.": "Utiliza HTML, o que pode tornar as notas menos portáteis e mais difíceis de ler na vista de código-fonte.",
   "You can change rich formatting anytime in settings.": "Pode alterar a formatação avançada a qualquer momento nas definições.",
   "Rich paste and file drop": "Colagem rica e queda de arquivo",
@@ -404,7 +408,7 @@ export const pt = {
   "Preset colors": "Cores predefinidas",
   "Mobile & Desktop": "Dispositivos móveis e computadores",
   "Colours are off": "Cores desativadas",
-  "Turn on rich formatting in the general tab to customize preset colours.": "Ative a formatação avançada no separador Geral para personalizar as cores predefinidas.",
+  "Turn on rich formatting in the Editor tab to customize preset colours.": "Ative a formatação avançada no separador Editor para personalizar as cores predefinidas.",
   "{label} preset {number}": "{label} predefinido {number}",
   "Preset {number}": "Predefinição {number}",
   "Reset to defaults": "Repor predefinições",

@@ -3,10 +3,17 @@ import { REVEAL_CALLOUT_EVENT } from "./fold-reveal";
  * ProseMirror NodeViews that delegate rendering to Obsidian's MarkdownRenderer.
  */
 import { App, Component, MarkdownRenderer, Notice, setIcon } from "obsidian";
-import type { Node as PMNode } from "prosemirror-model";
+import { DOMSerializer, type Node as PMNode } from "prosemirror-model";
 import type { EditorView, NodeView, ViewMutationRecord } from "prosemirror-view";
 import { Selection } from "prosemirror-state";
+import { closeHistory } from "prosemirror-history";
 import { MathEditModal } from "./math-edit-modal";
+import { captureBlockMenuMutation } from "./block-menu-ownership";
+import { allowsPreparedSaveTransaction } from "./structural-save-admission";
+import { sourceGeneration } from "./source-generation";
+import { codeBlockRenderSource } from "../core/code-block-render-source";
+import { CodeEditContainment } from "./code-edit-containment";
+import { isNativeHtmlSourceKind } from "../core/native-html-block-source";
 import {
   canResizeEmbedSource,
   findRenderedImageAttachment,
@@ -70,6 +77,13 @@ function calloutFileGeneration(viewOwner: unknown): string {
     calloutFileGenerationByObject.set(file, generation);
   }
   return String(generation);
+}
+
+/** An explicit widget edit may reopen the mobile keyboard-down lock. The
+ * owning view still applies licensing when it recomputes PM editability. */
+function requestOwnedMobileEditing(view: EditorView, viewOwner: unknown): void {
+  const owner = viewOwner as { pmView?: EditorView; requestMobileEditing?: () => void } | undefined;
+  if (owner?.pmView === view) owner.requestMobileEditing?.();
 }
 
 /** Safe wrapper around MarkdownRenderer.render. Buggy third-party
@@ -220,6 +234,7 @@ function attrStr(node: PMNode, key: string): string {
 
 export class NodeViewManager {
   private components: Component[] = [];
+  readonly codeEditContainment = new CodeEditContainment();
 
   createComponent(): Component {
     const comp = new Component();
@@ -235,6 +250,7 @@ export class NodeViewManager {
   }
 
   destroy() {
+    this.codeEditContainment.destroy();
     for (const c of this.components) c.unload();
     this.components.length = 0;
   }
@@ -410,6 +426,26 @@ export function codeBlockView(
     view: EditorView,
     getPos: () => number | undefined,
   ): NodeView => {
+    let destroyed = false;
+    let activeNode = node;
+    const generation = sourceGeneration(view.state);
+    const sourcePath = getSourcePath();
+    const fileGeneration = calloutFileGeneration(butterView);
+    const blockId = attrStr(node, "blockId");
+    const ownsSession = () => {
+      try {
+        if (destroyed || view.isDestroyed || sourceGeneration(view.state) !== generation ||
+          getSourcePath() !== sourcePath || calloutFileGeneration(butterView) !== fileGeneration) return false;
+        if (butterView && (butterView as { pmView?: EditorView }).pmView !== view) return false;
+        const pos = getPos();
+        return pos != null && view.state.doc.nodeAt(pos) === activeNode;
+      } catch {
+        return false;
+      }
+    };
+    const refuseSession = () => {
+      new Notice(tx("Butter kept this block unchanged because this conversion would lose content or block references."));
+    };
     const rawLanguage = attrStr(node, "language");
     // Fenced-code language is interpolated into a `\`\`\`${lang}\\n…`
     // template before being passed to MarkdownRenderer. Backticks /
@@ -504,7 +540,9 @@ export function codeBlockView(
       editToolbar.appendChild(divider);
       editToolbar.appendChild(cancelBtn);
       editToolbar.appendChild(saveBtn);
-      editWrap.appendChild(editToolbar);
+      // The code canvas clips highlighted content; floating controls belong
+      // to the unclipped outer shell so their negative top stays clickable.
+      dom.appendChild(editToolbar);
 
       // Ensure PM doesn't steal focus / move the selection when the
       // user presses the toolbar buttons - mousedown is the event
@@ -573,12 +611,20 @@ export function codeBlockView(
 
     // ── Mode state ──
     let mode: "view" | "edit" = editable ? "edit" : "view";
+    const releaseContainment = manager.codeEditContainment.register(
+      // This is paint occupancy, not permission to edit. A refused stale draft
+      // can remain visible until PM retires it; its controls must stay unclipped.
+      view, dom, () => mode === "edit" && !destroyed && !view.isDestroyed,
+    );
     const comp = manager.createComponent();
     let currentSource = node.textContent;
+    let renderGeneration = 0;
+    let focusFrame: number | null = null;
 
     const renderWidget = (source: string) => {
+      const renderedGeneration = ++renderGeneration;
       mount.innerHTML = "";
-      const md = "```" + language + "\n" + source + "\n```";
+      const md = codeBlockRenderSource(activeNode, source);
       const result = safeMarkdownRender(
         app,
         md,
@@ -598,6 +644,7 @@ export function codeBlockView(
       //                  KEEP the shell chrome so it still reads as a
       //                  code block, not bare inline-looking text.
       const finalize = () => {
+        if (destroyed || renderedGeneration !== renderGeneration) return;
         const first = mount.firstElementChild as HTMLElement | null;
         const isFallback = first?.tagName === "PRE";
         dom.dataset.butterWidget = isFallback ? "fallback" : "widget";
@@ -605,7 +652,7 @@ export function codeBlockView(
       void result.then(finalize, finalize);
     };
 
-    const applyMode = () => {
+    const applyMode = (refreshContainment = true) => {
       dom.dataset.butterMode = mode;
       if (mode === "view") {
         viewWrap.removeClass("butter-hidden");
@@ -615,6 +662,7 @@ export function codeBlockView(
         viewWrap.addClass("butter-hidden");
         editWrap.removeClass("butter-hidden");
       }
+      if (refreshContainment) manager.codeEditContainment.refresh(view);
       if (editToolbar) repositionToolbar();
     };
 
@@ -633,9 +681,9 @@ export function codeBlockView(
     // the toolbar to be in-flow (adding 34px to the block's top
     // content) and would rely on an ancestor being the scroll
     // container - not a given across Obsidian's layout.
-    let rafPending = false;
+    let repositionFrame: number | null = null;
     const repositionToolbar = () => {
-      if (!editToolbar) return;
+      if (destroyed || !editToolbar) return;
       if (mode !== "edit") {
         // CSS default (absolute top:-42px) takes over when the
         // toolbar isn't being shown.
@@ -671,10 +719,9 @@ export function codeBlockView(
       }
     };
     const scheduleReposition = () => {
-      if (rafPending) return;
-      rafPending = true;
-      window.requestAnimationFrame(() => {
-        rafPending = false;
+      if (destroyed || repositionFrame !== null) return;
+      repositionFrame = window.requestAnimationFrame(() => {
+        repositionFrame = null;
         repositionToolbar();
       });
     };
@@ -688,6 +735,15 @@ export function codeBlockView(
 
     const enterEditMode = () => {
       if (mode === "edit") return;
+      if (!ownsSession()) {
+        refuseSession();
+        return;
+      }
+      requestOwnedMobileEditing(view, butterView);
+      if (view.editable === false) {
+        refuseSession();
+        return;
+      }
       snapshotSource = currentSource;
       mode = "edit";
       applyMode();
@@ -696,7 +752,9 @@ export function codeBlockView(
       // immediately after the display swap, was racing with PM's
       // mutation observer and causing the NodeView to be torn down
       // + recreated - which reset mode back to "view" (the flicker).
-      window.requestAnimationFrame(() => {
+      focusFrame = window.requestAnimationFrame(() => {
+        focusFrame = null;
+        if (mode !== "edit" || view.editable === false || !ownsSession()) return;
         try {
           code.focus();
           // Place the caret at the start of the code content (if any)
@@ -721,32 +779,41 @@ export function codeBlockView(
      */
     const exitToView = (restoreSource: string | null) => {
       if (mode !== "edit") return;
+      if (!ownsSession()) {
+        refuseSession();
+        return;
+      }
+      requestOwnedMobileEditing(view, butterView);
+      if (view.editable === false) {
+        refuseSession();
+        return;
+      }
       if (restoreSource !== null) {
         try {
           const pos = getPos();
-          if (pos != null) {
-            const currentNode = view.state.doc.nodeAt(pos);
-            if (currentNode && currentNode.type.name === "code_block") {
-              const from = pos + 1;
-              const to = pos + 1 + currentNode.content.size;
-              if (restoreSource.length > 0) {
-                view.dispatch(
-                  view.state.tr.replaceWith(
-                    from,
-                    to,
-                    view.state.schema.text(restoreSource),
-                  ),
-                );
-              } else if (from < to) {
-                view.dispatch(view.state.tr.delete(from, to));
-              }
+          if (pos == null) return;
+          if (restoreSource !== activeNode.textContent) {
+            const from = pos + 1;
+            const to = from + activeNode.content.size;
+            const tr = closeHistory(view.state.tr);
+            if (restoreSource.length > 0) tr.replaceWith(from, to, view.state.schema.text(restoreSource));
+            else if (from < to) tr.delete(from, to);
+            if (!allowsPreparedSaveTransaction(view.state, tr)) return;
+            view.dispatch(tr);
+            if (!view.state.doc.eq(tr.doc)) {
+              refuseSession();
+              return;
             }
+            activeNode = view.state.doc.nodeAt(pos) ?? activeNode;
+            currentSource = activeNode.textContent;
           }
         } catch {
-          /* swallow - if the restore fails, fall through to just
-             exiting edit mode with whatever text the user left. */
+          new Notice(tx("Something went wrong. Try again in a moment."));
+          return;
         }
       }
+      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame);
+      focusFrame = null;
       snapshotSource = null;
       mode = "view";
       applyMode();
@@ -766,16 +833,22 @@ export function codeBlockView(
       }
     });
 
-    applyMode();
+    // Construction precedes DOM insertion. Initial attach/the post-update
+    // plugin reconciles all new shells once, instead of once per code block.
+    applyMode(false);
 
     return {
       dom,
       contentDOM: code,
       update(updatedNode) {
+        if (destroyed || sourceGeneration(view.state) !== generation ||
+          getSourcePath() !== sourcePath || calloutFileGeneration(butterView) !== fileGeneration ||
+          attrStr(updatedNode, "blockId") !== blockId) return false;
         if (updatedNode.type.name !== "code_block") return false;
         // Language change → recreate so the new NodeView picks up the
         // right editable/delegated shape. setNodeMarkup fires this.
         if (updatedNode.attrs.language !== language) return false;
+        activeNode = updatedNode;
         const newSource = updatedNode.textContent;
         if (newSource !== currentSource) {
           currentSource = newSource;
@@ -813,6 +886,11 @@ export function codeBlockView(
         return false;
       },
       destroy() {
+        if (destroyed) return;
+        destroyed = true;
+        releaseContainment();
+        if (focusFrame !== null) window.cancelAnimationFrame(focusFrame);
+        if (repositionFrame !== null) window.cancelAnimationFrame(repositionFrame);
         manager.removeComponent(comp);
         if (editToolbar) {
           window.removeEventListener("scroll", scheduleReposition, true);
@@ -1202,6 +1280,21 @@ export function calloutView(
     view: EditorView,
     getPos: () => number | undefined,
   ): NodeView => {
+    let destroyed = false;
+    let activeNode = node;
+    const generation = sourceGeneration(view.state);
+    const sourcePath = getSourcePath();
+    const ownerFileGeneration = calloutFileGeneration(butterView);
+    const blockId = attrStr(node, "blockId");
+    const editorDOM = view.dom;
+    const ownsGeneration = () => {
+      try {
+        return !destroyed && !view.isDestroyed && view.dom === editorDOM &&
+          sourceGeneration(view.state) === generation && getSourcePath() === sourcePath &&
+          calloutFileGeneration(butterView) === ownerFileGeneration &&
+          (!butterView || (butterView as { pmView?: EditorView }).pmView === view);
+      } catch { return false; }
+    };
     const dom = activeWindow.createDiv();
     // Add Obsidian's native callout classes + data attrs alongside
     // our own. Theme CSS targeting `.callout[data-callout="note"]`
@@ -1255,9 +1348,59 @@ export function calloutView(
     // dispatch a selection-into-body transaction before the user
     // got to type. (stopPropagation is enough; don't preventDefault
     // so the browser still places the caret at the click point.)
-    label.addEventListener("mousedown", (e) => e.stopPropagation());
+    const ownsTitle = () => {
+      try {
+        if (!ownsGeneration() || !editorDOM.isConnected || !dom.isConnected ||
+          !label.isConnected || label.ownerDocument !== editorDOM.ownerDocument ||
+          !editorDOM.contains(dom) || !header.contains(label)) return false;
+        const pos = getPos();
+        return pos != null && view.state.doc.nodeAt(pos) === activeNode;
+      } catch { return false; }
+    };
+    const plainTitleClick = (e: MouseEvent) => e.button === 0 && !e.shiftKey &&
+      !e.altKey && !e.ctrlKey && !e.metaKey && e.detail <= 1;
+    const focusTitleEnd = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      requestOwnedMobileEditing(view, butterView);
+      if (!ownsTitle() || !view.editable) return;
+      label.focus({ preventScroll: true });
+      // Focus can commit another title's blur and rebuild this occurrence.
+      if (!ownsTitle() || !view.editable || label.ownerDocument.activeElement !== label) return;
+      const selection = label.ownerDocument.defaultView?.getSelection();
+      if (!selection) return;
+      const range = label.ownerDocument.createRange();
+      range.selectNodeContents(label);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    };
+    const onTitleMouseDown = (e: MouseEvent) => {
+      e.stopPropagation();
+      if (!plainTitleClick(e) || !ownsTitle()) return;
+      // Themes can stretch the editable label itself across the header. Hit
+      // test its actual text, so blank label space gets the same end-caret
+      // behavior as blank header space while text clicks stay native.
+      const text = label.ownerDocument.createRange();
+      text.selectNodeContents(label);
+      const rects = Array.from(text.getClientRects());
+      const line = rects.filter(rect => e.clientY >= rect.top && e.clientY <= rect.bottom);
+      const right = Math.max(...(line.length ? line : rects).map(rect => rect.right));
+      if (!rects.length || e.clientX >= right) focusTitleEnd(e);
+    };
+    label.addEventListener("mousedown", onTitleMouseDown);
+    const onTitleInput = (e: Event) => {
+      if (ownsTitle() && view.editable) return;
+      // This chrome is an independent contenteditable island. The editor's
+      // read-only setting alone cannot suppress native typing or paste here.
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    label.addEventListener("beforeinput", onTitleInput);
+    label.addEventListener("paste", onTitleInput);
 
-    label.addEventListener("keydown", (e) => {
+    const onTitleKeyDown = (e: KeyboardEvent) => {
+      if (!ownsTitle() || !view.editable) return;
       if (e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
@@ -1266,13 +1409,15 @@ export function calloutView(
         if (pos == null) return;
         const currentNode = view.state.doc.nodeAt(pos);
         if (!currentNode || currentNode.type.name !== "obsidian_callout") return;
-        const raw = (label.textContent ?? "").trim();
+        const text = label.textContent ?? "";
+        const displayed = attrStr(currentNode, "title") || defaultLabel(attrStr(currentNode, "calloutType"));
+        const raw = text.trim();
         const isDefault = raw === defaultLabel(attrStr(currentNode, "calloutType"));
         const newTitle = raw && !isDefault ? raw : undefined;
         const schema = view.state.schema;
         const paraType = schema.nodes.paragraph;
         const tr = view.state.tr;
-        if (newTitle !== attrStr(currentNode, "title")) {
+        if (text !== displayed && newTitle !== (attrStr(currentNode, "title") || undefined)) {
           tr.setNodeMarkup(pos, undefined, {
             ...currentNode.attrs,
             title: newTitle,
@@ -1316,20 +1461,27 @@ export function calloutView(
           e.stopPropagation();
         }
       }
-    });
+    };
+    label.addEventListener("keydown", onTitleKeyDown);
 
-    label.addEventListener("blur", () => {
+    const onTitleBlur = () => {
+      if (!ownsTitle() || !view.editable) return;
       const pos = getPos();
       if (pos == null) return;
       const currentNode = view.state.doc.nodeAt(pos);
       if (!currentNode || currentNode.type.name !== "obsidian_callout") return;
-      const raw = (label.textContent ?? "").trim();
+      const text = label.textContent ?? "";
+      const displayed = attrStr(currentNode, "title") || defaultLabel(attrStr(currentNode, "calloutType"));
+      // Focusing and leaving an unchanged title is not an edit, including an
+      // authored title that happens to equal its default display label.
+      if (text === displayed) return;
+      const raw = text.trim();
       // Store undefined when the user either left the default text
       // or blanked it out - the NodeView regenerates the default at
       // paint time, so the DOM text won't be empty in either case.
       const isDefault = raw === defaultLabel(attrStr(currentNode, "calloutType"));
       const newTitle = raw && !isDefault ? raw : undefined;
-      if (newTitle === attrStr(currentNode, "title")) return;
+      if (newTitle === (attrStr(currentNode, "title") || undefined)) return;
       view.dispatch(
         view.state.tr.setNodeMarkup(pos, undefined, {
           ...currentNode.attrs,
@@ -1341,7 +1493,8 @@ export function calloutView(
           sourceRange: null,
         }),
       );
-    });
+    };
+    label.addEventListener("blur", onTitleBlur);
 
     header.appendChild(label);
 
@@ -1368,6 +1521,7 @@ export function calloutView(
       return [
         fileGeneration,
         getSourcePath(),
+        attrStr(value, "blockId"),
         pos,
         attrStr(value, "calloutType"),
         attrStr(value, "title"),
@@ -1431,12 +1585,12 @@ export function calloutView(
     };
     foldButton.addEventListener("keydown", onFoldKeyDown);
 
-    // Clicking the header area OUTSIDE the title label (icon, empty
-    // header space) places the caret into the first editable
-    // position of the callout's body - the "focus the card"
-    // affordance. Clicking the title itself is excluded because the
-    // title's own mousedown handler stopPropagation()s up.
+    // The icon area retains the card's body-focus affordance. Title text and
+    // the blank space after it are handled separately below.
     const focusInside = (e: Event) => {
+      if (!ownsTitle()) return;
+      requestOwnedMobileEditing(view, butterView);
+      if (!ownsTitle() || !view.editable) return;
       e.preventDefault();
       if (collapsed) {
         collapsed = false;
@@ -1464,7 +1618,19 @@ export function calloutView(
       view.dispatch(tr);
       view.focus();
     };
-    header.addEventListener("mousedown", focusInside);
+    const onHeaderMouseDown = (e: MouseEvent) => {
+      if (!plainTitleClick(e)) return;
+      if (!ownsTitle()) return;
+      // Title text keeps native click/caret placement. Its surrounding blank
+      // header area is the same editing target, including the right padding.
+      // Icons retain the body-focus action; disclosure owns its own events.
+      if (e.target === header && e.clientX >= label.getBoundingClientRect().left) {
+        focusTitleEnd(e);
+        return;
+      }
+      focusInside(e);
+    };
+    header.addEventListener("mousedown", onHeaderMouseDown);
 
     dom.appendChild(header);
 
@@ -1491,7 +1657,8 @@ export function calloutView(
       dom,
       contentDOM,
       update(updated) {
-        if (updated.type.name !== "obsidian_callout") return false;
+        if (updated.type.name !== "obsidian_callout" || attrStr(updated, "blockId") !== blockId || !ownsGeneration()) return false;
+        activeNode = updated;
         const type = attrStr(updated, "calloutType");
         dom.setAttribute("data-callout-type", type);
         dom.setAttribute("data-callout", type);
@@ -1516,17 +1683,15 @@ export function calloutView(
           // view-only cache entry wins immediately after the transaction.
           collapsed = foldStateChanged
             ? foldState === "-"
-            : foldCache?.get(foldKey) ?? foldState === "-";
-          if (foldStateChanged) {
-            rememberCalloutFold(foldCache, foldKey, collapsed);
-          }
+            : collapsed;
+          rememberCalloutFold(foldCache, foldKey, collapsed);
         }
         syncFoldUi();
         // Don't overwrite the label while the user is typing in it
         // that would yank their caret. The commit flow on blur
         // brings the attribute + DOM back into sync.
         const expected = attrStr(updated, "title") || defaultLabel(type);
-        if (activeDocument.activeElement !== label && label.textContent !== expected) {
+        if (label.ownerDocument.activeElement !== label && label.textContent !== expected) {
           label.textContent = expected;
         }
         icon.empty();
@@ -1553,6 +1718,13 @@ export function calloutView(
         );
       },
       destroy() {
+        destroyed = true;
+        header.removeEventListener("mousedown", onHeaderMouseDown);
+        label.removeEventListener("mousedown", onTitleMouseDown);
+        label.removeEventListener("beforeinput", onTitleInput);
+        label.removeEventListener("paste", onTitleInput);
+        label.removeEventListener("keydown", onTitleKeyDown);
+        label.removeEventListener("blur", onTitleBlur);
         foldButton.removeEventListener("pointerdown", preserveFoldSelection);
         foldButton.removeEventListener("mousedown", preserveFoldSelection);
         foldButton.removeEventListener("click", toggleFold);
@@ -1587,6 +1759,7 @@ export function mathBlockView(
     const comp = manager.createComponent();
     const md = `$$\n${attrStr(node, "value")}\n$$`;
     void safeMarkdownRender(app, md, mount, getSourcePath(), comp, "math_block");
+    let destroyed = false;
 
     // Double-click opens the same edit modal the drag-handle "Edit
     // source" item uses. Without this, the block can only be edited
@@ -1595,19 +1768,33 @@ export function mathBlockView(
     // "click to edit" to work like every other rich-text editor.
     const openEdit = () => {
       const pos = getPos();
-      if (pos == null) return;
+      if (pos == null || destroyed || view.isDestroyed) return;
+      if (view.state.doc.nodeAt(pos) === node) requestOwnedMobileEditing(view, butterView);
+      const mayMutate = captureBlockMenuMutation(view, [{ pos, node }]);
+      if (!mayMutate()) return;
+      const sourcePath = getSourcePath();
+      const sourceGeneration = calloutFileGeneration(butterView);
+      const owner = butterView as { pmView?: EditorView } | undefined;
       const current = attrStr(node, "value");
       new MathEditModal(app, current, (next) => {
-        const fresh = view.state.doc.nodeAt(pos);
-        if (!fresh || fresh.type.name !== "math_block") return;
-        view.dispatch(
-          view.state.tr.setNodeMarkup(pos, undefined, {
-            ...fresh.attrs,
-            value: next,
-            sourceRange: null,
-          }),
-        );
-      }).open();
+        if (destroyed || view.isDestroyed || getPos() !== pos ||
+          getSourcePath() !== sourcePath || calloutFileGeneration(butterView) !== sourceGeneration ||
+          (owner?.pmView !== undefined && owner.pmView !== view)) {
+          new Notice(tx("Butter kept this block unchanged because this conversion would lose content or block references."));
+          return false;
+        }
+        requestOwnedMobileEditing(view, butterView);
+        if (!mayMutate()) return false;
+        if (next === current) return true;
+        const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+          ...node.attrs,
+          value: next,
+          sourceRange: null,
+        });
+        if (!allowsPreparedSaveTransaction(view.state, tr)) return false;
+        view.dispatch(tr);
+        return view.state.doc.eq(tr.doc);
+      }, view).open();
     };
     dom.addEventListener("dblclick", (e) => {
       e.preventDefault();
@@ -1627,7 +1814,7 @@ export function mathBlockView(
     return {
       dom,
       stopEvent: () => true,
-      destroy() { manager.removeComponent(comp); },
+      destroy() { destroyed = true; manager.removeComponent(comp); },
     };
   };
 }
@@ -1693,7 +1880,7 @@ export function wikilinkView(app: App, getSourcePath: () => string) {
     const dom = activeWindow.createEl("a");
     dom.classList.add("butter-wikilink", "internal-link");
     dom.contentEditable = "false";
-    dom.textContent = alias || target;
+    dom.textContent = node.attrs.emptyAlias === true ? "" : alias || target;
     dom.href = target;
     dom.dataset.href = target;
 
@@ -1751,22 +1938,47 @@ export function tagView(app: App) {
 
 export function blockCommentView() {
   return (node: PMNode): NodeView => {
-    const dom = activeWindow.createDiv();
+    // Keep the source-owned hidden reference markers and lossless private
+    // payload attributes from the schema. The presentation plugin numbers
+    // references in DOM order, including those inside opaque comments.
+    const dom = DOMSerializer.fromSchema(node.type.schema).serializeNode(node, {
+      document: activeDocument,
+    }) as HTMLElement;
     dom.classList.add("butter-block-comment-view");
-    dom.textContent = `%%${node.attrs.value ?? ""}%%`;
+    dom.setAttribute("contenteditable", "false");
+    const payload = dom.firstChild;
+    if (payload?.nodeType === 3) payload.textContent = `%%${node.attrs.value ?? ""}%%`;
     return { dom };
   };
 }
 
 /**
- * Raw-block NodeView. Shows a diagnostic banner + the raw source
- * inside a pre block so users can SEE that Butter couldn't parse
- * this region but also that the bytes are preserved. Atomic (not
- * editable through PM); save emits the raw attr verbatim.
+ * Atomic source view. Known native HTML uses the host preview; diagnostic
+ * fallback shows a banner and its retained raw source. Save emits raw bytes.
  */
-export function rawBlockView() {
+export function rawBlockView(
+  app: App,
+  getSourcePath: () => string,
+  manager: NodeViewManager,
+) {
   return (node: PMNode): NodeView => {
     const dom = activeWindow.createDiv();
+    // A recognized HTML source artifact is valid native content, not a parser
+    // failure. Delegate its atomic preview to the host so hidden comment text
+    // remains hidden and the visible suffix retains its native interpretation.
+    if (isNativeHtmlSourceKind(node.attrs.sourceKind, node.attrs.raw)) {
+      dom.classList.add("butter-native-html-block", "markdown-rendered");
+      dom.setAttribute("contenteditable", "false");
+      const comp = manager.createComponent();
+      void safeMarkdownRender(app, attrStr(node, "raw"), dom, getSourcePath(), comp, "native_html_source_block");
+      return {
+        dom,
+        ignoreMutation: () => true,
+        stopEvent: () => true,
+        destroy() { manager.removeComponent(comp); },
+      };
+    }
+
     dom.classList.add("butter-raw-block-view");
 
     const banner = activeWindow.createDiv();

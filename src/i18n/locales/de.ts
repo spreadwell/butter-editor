@@ -1,10 +1,14 @@
 import type { TranslationTable } from "../../i18n";
 import { recentDe } from "./release-copy";
 import { feedbackDe } from "./feedback-copy";
+import { recoveryDe } from "./recovery-copy";
+import { saveDiagnosticsDe } from "./save-diagnostics-copy";
 
 export const de = {
   ...recentDe,
   ...feedbackDe,
+  ...recoveryDe,
+  ...saveDiagnosticsDe,
   "Abstract callout": "Hinweisblock: Zusammenfassung",
   "Activated": "Aktiviert",
   "Advanced": "Erweitert",
@@ -171,7 +175,7 @@ export const de = {
   "Rich formatting": "Erweiterte Formatierung",
   "Write and format your notes without seeing Markdown syntax.": "Schreiben und formatieren Sie Notizen, ohne Markdown-Syntax zu sehen.",
   "Adds text color, custom highlights, underline, superscript, subscript, and keyboard text to the toolbar.": "Fügt Textfarbe, benutzerdefinierte Hervorhebungen, Unterstreichung, Hoch- und Tiefstellung sowie Tastaturtext zur Symbolleiste hinzu.",
-  "Adds text color, custom highlights, underline, superscript, and subscript.": "Fügt Textfarbe, benutzerdefinierte Hervorhebungen, Unterstreichung sowie Hoch- und Tiefstellung hinzu.",
+  "Adds text color, custom highlights, and underline.": "Fügt Textfarbe, benutzerdefinierte Hervorhebungen und Unterstreichung hinzu.",
   "Uses HTML, which can make notes less portable and harder to read in source view.": "Verwendet HTML. Dadurch können Notizen weniger kompatibel und in der Quellansicht schwerer lesbar sein.",
   "You can change rich formatting anytime in settings.": "Die erweiterte Formatierung kann jederzeit in den Einstellungen geändert werden.",
   "Rich paste and file drop": "Reichhaltiges Einfügen und Datei-Drop",
@@ -404,7 +408,7 @@ export const de = {
   "Preset colors": "Voreingestellte Farben",
   "Mobile & Desktop": "Mobil und Desktop",
   "Colours are off": "Farben deaktiviert",
-  "Turn on rich formatting in the general tab to customize preset colours.": "Aktivieren Sie die erweiterte Formatierung im Tab „Allgemein“, um die voreingestellten Farben anzupassen.",
+  "Turn on rich formatting in the Editor tab to customize preset colours.": "Aktiviere die erweiterte Formatierung im Tab „Editor“, um voreingestellte Farben anzupassen.",
   "{label} preset {number}": "{label} voreingestellt {number}",
   "Preset {number}": "Voreingestellter {number}",
   "Reset to defaults": "Auf Standardwerte zurücksetzen",

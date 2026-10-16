@@ -11,9 +11,11 @@
  *
  * This module rewrites those shapes into their canonical equivalents
  * BEFORE serialization. The normalizer itself is pure (input doc, output
- * doc). Its explicit presentation mode applies every durable, visible rewrite
- * while retaining editing ephemera that Markdown cannot encode: transient
- * empty paragraphs and emphasis-edge whitespace marks. The view reconciles
+ * doc). Its explicit presentation mode retains transient empty paragraphs and
+ * the editable paragraph around a sole inline embed. Persisted mode still
+ * projects that embed to the parser's block form. This preserves the live
+ * caret and the originating text edit's Undo mapping. All supplied mark
+ * intervals remain durable. The view reconciles
  * that presentation target before a successful write, while the default
  * persisted target remains the sole serializer/fingerprint input.
  *
@@ -21,33 +23,28 @@
  * class that motivated it.
  *
  * Apply rules (in order):
- *   1. Block_id mid-paragraph → hoist all block_ids to the end of
- *      their containing paragraph.
+ *   1. Block_id mid-inline-content block → hoist to that block's end.
+ *      The serializer preserves native boundaries without adding visible text.
  *   2. List_item with depth>0 and no preceding depth-(N-1) sibling
  *      → clamp depth to whatever has a real ancestor chain (down to
  *      0). Round-trip-safe: orphan reparses as list_item depth=0
  *      instead of code_block.
- *   3. Paragraph containing ONLY an obsidian_embed_inline → replace
- *      with a top-level obsidian_embed block node. Markdown-it
- *      auto-promotes the inline form when isolated, so we make the
- *      tree match.
- *   4. Text node with embedded `\n` → split into text + softbreak
+ *   3. Paragraph containing ONLY an unmarked obsidian_embed_inline →
+ *      obsidian_embed block wherever the parser lifts it: top level,
+ *      blockquotes and callouts, outside list/table inline contexts, in
+ *      persisted mode. Presentation mode retains the inline paragraph.
+ *   4. Ordinary text with embedded CR/LF → split into text + softbreak
  *      + text alternations. Round-trips cleanly; the original
- *      shape reparses with the softbreak as an explicit node.
- *   5. Plain text `$...$` that matches Butter's inline math delimiter
- *      rules -> inline_math atom. Currency-shaped dollars stay text.
- *   6. Top-level empty paragraphs -> dropped. Blank lines are markdown
- *      gaps, not durable empty paragraph blocks.
+ *      shape reparses with the softbreak as an explicit node. Code/comment
+ *      payload remains opaque, including its literal line endings.
+ *   5. Extra top-level empty paragraphs -> dropped. An entirely blank doc
+ *      retains one persisted paragraph; presentation retains cursor blocks.
  *
  * All other PM shapes pass through unchanged.
  */
 
 import { Fragment, Node as PMNode } from "prosemirror-model";
 import type { Schema } from "prosemirror-model";
-import {
-  findInlineMathClose,
-  isValidInlineMathOpenAt,
-} from "./inline-math-delimiters";
 import {
   flatListLayoutFor,
   listItemCanRepresentLooseNestedEdge,
@@ -58,6 +55,8 @@ import {
   orderedListStart,
 } from "./list-layout";
 import { __mdit } from "./bridge/common";
+import { allowsInlineMark } from "./inline-mark-policy";
+import { canonicalizeLinkOccurrences, projectLinkOccurrences } from "./link-occurrence";
 
 export interface NormalizeDocForSaveOptions {
   /**
@@ -87,26 +86,19 @@ function hoistBlockIdsToEnd(children: PMNode[]): PMNode[] {
   return hasMid ? [...main, ...tail] : children;
 }
 
-function insertRequiredTagBoundaries(node: PMNode, schema: Schema): PMNode {
-  if (!node.inlineContent || node.childCount < 2) return node;
-  const children: PMNode[] = [];
-  let changed = false;
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (child.type.name === "obsidian_tag" && children.length > 0) {
-      const previous = children[children.length - 1];
-      const hasBoundary =
-        previous.type.name === "softbreak" ||
-        previous.type.name === "hard_break" ||
-        (previous.isText && /\s$/.test(previous.text ?? ""));
-      if (!hasBoundary) {
-        children.push(schema.text(" "));
-        changed = true;
-      }
-    }
-    children.push(child);
-  }
-  return changed ? node.copy(Fragment.fromArray(children)) : node;
+function normalizeBlockIdCarrier(parent: PMNode): PMNode {
+  if (!parent.inlineContent || parent.childCount < 2) return parent;
+  const ids: PMNode[] = [];
+  let metadataCarrierOnly = true;
+  parent.forEach(child => {
+    if (child.type.name === "block_id") ids.push(child);
+    else if (!child.isText || child.marks.length || !/^[ \t]+$/.test(child.text ?? "")) metadataCarrierOnly = false;
+  });
+  // A bare ID owns an otherwise empty block. ASCII indentation around that
+  // metadata is a source carrier, not visible paragraph content; retaining a
+  // one-space carrier would be impossible when Markdown consumes indentation.
+  if (metadataCarrierOnly && ids.length === 1) return parent.copy(Fragment.from(ids[0]));
+  return parent;
 }
 
 function canonicalizeDestinationValue(value: unknown): string {
@@ -125,11 +117,23 @@ function normalizeLinkAndImageAttrs(node: PMNode): PMNode {
     const child = node.child(index);
     let next = child;
 
+    if (child.type.name === "empty_link") {
+      const attrs = { ...child.attrs, href: canonicalizeDestinationValue(child.attrs.href),
+        title: child.attrs.title ? String(child.attrs.title) : null };
+      if (JSON.stringify(attrs) !== JSON.stringify(child.attrs)) {
+        next = child.type.create(attrs);
+        changed = true;
+      }
+    }
+
     if (child.type.name === "image") {
       const width = Number.isFinite(child.attrs.width) && child.attrs.width > 0
         ? Math.floor(child.attrs.width as number)
         : null;
-      const height = width !== null &&
+      // HTML owns width and height independently. Native Markdown's size
+      // suffix needs a width, but applying that limitation to loaded HTML
+      // would silently erase a qualified height-only image before comparison.
+      const height = (width !== null || child.attrs.sourceSyntax === "html") &&
           Number.isFinite(child.attrs.height) && child.attrs.height > 0
         ? Math.floor(child.attrs.height as number)
         : null;
@@ -165,47 +169,6 @@ function normalizeLinkAndImageAttrs(node: PMNode): PMNode {
     children.push(next);
   }
 
-  return changed ? node.copy(Fragment.fromArray(children)) : node;
-}
-
-const WHITESPACE_EXPELLING_MARKS = new Set([
-  "strong",
-  "em",
-  "strikethrough",
-]);
-
-const markExpelsWhitespace = (mark: PMNode["marks"][number]): boolean =>
-  WHITESPACE_EXPELLING_MARKS.has(mark.type.name) ||
-  (mark.type.name === "highlight" && !mark.attrs.color && !mark.attrs.html);
-
-function normalizeExpelledMarkWhitespace(node: PMNode, schema: Schema): PMNode {
-  if (!node.inlineContent || node.childCount === 0) return node;
-  const children: PMNode[] = [];
-  let changed = false;
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (
-      !child.isText ||
-      !child.text ||
-      child.marks.some((mark) => mark.type.name === "comment") ||
-      !child.marks.some(markExpelsWhitespace)
-    ) {
-      children.push(child);
-      continue;
-    }
-    const match = /^(\s*)(.*?)(\s*)$/s.exec(child.text);
-    if (!match || (!match[1] && !match[3])) {
-      children.push(child);
-      continue;
-    }
-    const outerMarks = child.marks.filter(
-      (mark) => !markExpelsWhitespace(mark),
-    );
-    if (match[1]) children.push(schema.text(match[1], outerMarks));
-    if (match[2]) children.push(schema.text(match[2], child.marks));
-    if (match[3]) children.push(schema.text(match[3], outerMarks));
-    changed = true;
-  }
   return changed ? node.copy(Fragment.fromArray(children)) : node;
 }
 
@@ -315,8 +278,18 @@ function normalizeFlatListChildren(
     // and reparses tight even when sibling items are loose. A task checkbox is
     // source paragraph content, so task items retain the run-derived value.
     // Marker-only non-task items can still own a tight nested edge.
-    const normalizedTight = listItemIsMarkerOnly(child) &&
-        !hasRepresentableNestedEdgeByOwner[index]
+    // Markdown-it assigns tightness through this item's direct paragraph
+    // tokens. A block-first item with only a schema carrier has no such token,
+    // even when its code/quote/table blocks or neighboring items are loose.
+    let hasSourceParagraph = false;
+    child.forEach((block, _offset, childIndex) => {
+      if (block.type.name === "paragraph" &&
+        !(childIndex === 0 && listItemHasSyntheticLeadingParagraph(child))) {
+        hasSourceParagraph = true;
+      }
+    });
+    const normalizedTight = !hasSourceParagraph || (listItemIsMarkerOnly(child) &&
+        !hasRepresentableNestedEdgeByOwner[index])
       ? true
       : !(
           stats.hasMultipleBlocks ||
@@ -360,8 +333,11 @@ function dropTopLevelEmptyParagraphs(doc: PMNode): PMNode | null {
     }
     kids.push(c);
   }
-  if (!changed || kids.length === 0) return null;
-  return doc.copy(Fragment.fromArray(kids));
+  if (!changed) return null;
+  // An entirely blank document has one durable empty paragraph. Repeated
+  // Enter leaves extra cursor-bearing paragraphs in presentation mode, but
+  // source blank lines cannot encode additional top-level paragraph nodes.
+  return doc.copy(Fragment.fromArray(kids.length ? kids : [doc.firstChild!]));
 }
 
 function splitTextOnNewlines(
@@ -369,62 +345,21 @@ function splitTextOnNewlines(
   schema: Schema,
 ): PMNode[] | null {
   if (!text.isText) return null;
+  // Opaque inline code/comments own their complete payload, including actual
+  // line endings decoded from HTML. An unmarked softbreak would expose hidden
+  // comment text or remove the newline from the code payload.
+  if (text.marks.some(mark => mark.type.name === "comment" || mark.type.name === "code")) return null;
   const s = text.text!;
-  if (!s.includes("\n")) return null;
+  if (!/[\r\n]/.test(s)) return null;
   const softbreak = schema.nodes.softbreak;
   if (!softbreak) return null;
-  const lines = s.split(/\r?\n/);
+  const lines = s.split(/\r\n?|\n/);
   const out: PMNode[] = [];
   lines.forEach((line, i) => {
     if (i > 0) out.push(softbreak.create());
     // Preserve the original marks on each split text segment.
     if (line) out.push(schema.text(line, text.marks));
   });
-  return out;
-}
-
-function splitTextOnInlineMathSyntax(
-  text: PMNode,
-  schema: Schema,
-): PMNode[] | null {
-  if (!text.isText) return null;
-  if (text.marks.some((mark) => mark.type.name === "code")) return null;
-  const s = text.text!;
-  if (!s.includes("$")) return null;
-  const inlineMath = schema.nodes.inline_math;
-  if (!inlineMath) return null;
-
-  let changed = false;
-  const out: PMNode[] = [];
-  let plainStart = 0;
-  let pos = 0;
-  while (pos < s.length) {
-    if (!isValidInlineMathOpenAt(s, pos)) {
-      pos++;
-      continue;
-    }
-    const close = findInlineMathClose(s, pos);
-    if (close < 0) {
-      pos++;
-      continue;
-    }
-    const value = s.slice(pos + 1, close);
-    if (!value.trim() || value !== value.trim()) {
-      pos++;
-      continue;
-    }
-    if (plainStart < pos) {
-      out.push(schema.text(s.slice(plainStart, pos), text.marks));
-    }
-    out.push(inlineMath.create({ value, sourceRange: null }, null, text.marks));
-    changed = true;
-    pos = close + 1;
-    plainStart = pos;
-  }
-  if (!changed) return null;
-  if (plainStart < s.length) {
-    out.push(schema.text(s.slice(plainStart), text.marks));
-  }
   return out;
 }
 
@@ -443,17 +378,12 @@ function normalizeTextNodesInInline(
   const out: PMNode[] = [];
   for (let i = 0; i < parent.childCount; i++) {
     const c = parent.child(i);
-    if (c.isText && c.text!.includes("\n")) {
+    if (c.isText && /[\r\n]/.test(c.text!)) {
       const split = splitTextOnNewlines(c, schema);
       if (split) {
-        out.push(...split);
-        changed = true;
-        continue;
-      }
-    }
-    if (c.isText && c.text!.includes("$")) {
-      const split = splitTextOnInlineMathSyntax(c, schema);
-      if (split) {
+        // Splitting physical line endings changes representation only.
+        // Delimiter-looking text remains literal; the source parser and
+        // explicit editor input rules own the creation of math atoms.
         out.push(...split);
         changed = true;
         continue;
@@ -473,6 +403,8 @@ function promoteSoleEmbedInline(
   if (paragraph.childCount !== 1) return null;
   const only = paragraph.child(0);
   if (only.type.name !== "obsidian_embed_inline") return null;
+  // Marked embeds have inline delimiters and are not lifted by the parser.
+  if (only.marks.length > 0) return null;
   const blockType = schema.nodes.obsidian_embed;
   if (!blockType) return null;
   // Block-embed accepts the same attrs subset (src, alt, width,
@@ -672,14 +604,21 @@ export function normalizeDocForSave(
   // Walk inner nodes recursively so deep block_id-mid-paragraph or
   // softbreak-in-heading shapes inside containers (blockquote,
   // callout, list_item body) also get normalized.
-  const walk = (node: PMNode): PMNode => {
+  const walk = (node: PMNode, inlineEmbedContext: boolean): PMNode => {
+    // Retain native metadata/navigation ownership for imported legacy states
+    // as well as new commands. Allowed formatting and all attrs remain exact.
+    if (node.isInline && node.marks.some(mark => !allowsInlineMark(node, mark))) {
+      node = node.mark(node.marks.filter(mark => allowsInlineMark(node, mark)));
+    }
     if (node.isLeaf) return node;
     // First recurse into children.
     let childrenChanged = false;
     const newChildren: PMNode[] = [];
     for (let i = 0; i < node.childCount; i++) {
       const c = node.child(i);
-      const w = walk(c);
+      const w = walk(c, inlineEmbedContext ||
+        node.type.name === "list_item" || node.type.name === "table_cell" ||
+        node.type.name === "table_header");
       if (w !== c) childrenChanged = true;
       newChildren.push(w);
     }
@@ -698,24 +637,31 @@ export function normalizeDocForSave(
     //    (bare `- ` is interpreted differently per context).
     // 1. Canonicalize link/image attrs to values CommonMark can represent.
     current = normalizeLinkAndImageAttrs(current);
-    // 2. CommonMark emphasis-like marks cannot own edge whitespace.
-    if (!presentation) {
-      current = normalizeExpelledMarkWhitespace(current, schema);
-    }
-    // 3. Inline Obsidian tags require a whitespace/start boundary.
-    current = insertRequiredTagBoundaries(current, schema);
-    // 4. Textblock text-with-newline split into softbreak runs. Heading
+    // 2. Textblock text-with-newline split into softbreak runs. Heading
     // whitespace is preserved by numeric-entity encoding in the serializer.
     const textSplit = normalizeTextNodesInInline(current, schema);
     if (textSplit) current = textSplit;
-    // 6. Paragraph block_id hoist.
-    if (current.type.name === "paragraph" && current.childCount > 1) {
+    // Supplied mark intervals, including edge whitespace, are durable. The
+    // serializer selects a native-qualified HTML spelling when delimiter
+    // syntax cannot represent them; persistence never trims their coverage.
+    // 6. Native block IDs must end their inline block, including headings
+    // produced by an ordinary paragraph-to-heading conversion.
+    if (current.inlineContent && current.childCount > 1) {
       const kids: PMNode[] = [];
       for (let i = 0; i < current.childCount; i++) kids.push(current.child(i));
       const hoisted = hoistBlockIdsToEnd(kids);
       if (hoisted !== kids) {
         current = current.copy(Fragment.fromArray(hoisted));
       }
+    }
+    current = normalizeBlockIdCarrier(current);
+    // Persist the parser's contextual lift without replacing the live editable
+    // paragraph at save time: that replacement would consume the previous text
+    // edit's Undo mapping and caret. List/table descendants remain inline in
+    // both projections, matching the parser's paragraph-token lift boundary.
+    if (!presentation && !inlineEmbedContext) {
+      const promoted = promoteSoleEmbedInline(current, schema);
+      if (promoted) return promoted;
     }
     // 8. Resolve flat-list ancestry in one linear pass. Explicit ordered-run
     //    boundaries remain in the `start` attr; the shared serializer layout
@@ -727,14 +673,13 @@ export function normalizeDocForSave(
     return current;
   };
 
-  // Top-level pass: walk + apply container-level transforms (orphan-
-  // li clamp needs parent context; embed-inline promote replaces the
-  // node entirely).
+  // Top-level pass: walk + apply container-level transforms. Orphan-list
+  // clamping requires sibling context; embed lifting uses ancestry in walk.
   const topChildren: PMNode[] = [];
   let topChildrenChanged = false;
   for (let i = 0; i < doc.childCount; i++) {
     const child = doc.child(i);
-    const walked = walk(child);
+    const walked = walk(child, false);
     topChildrenChanged ||= walked !== child;
     topChildren.push(walked);
   }
@@ -743,30 +688,13 @@ export function normalizeDocForSave(
     ? doc.copy(Fragment.fromArray(topChildren))
     : doc;
 
-  // 4. Embed-inline-alone-in-paragraph → embed block.
-  const promoted: PMNode[] = [];
-  let promoteChanged = false;
-  for (let i = 0; i < tempDoc.childCount; i++) {
-    const c = tempDoc.child(i);
-    const p = promoteSoleEmbedInline(c, schema);
-    if (p) {
-      promoted.push(p);
-      promoteChanged = true;
-    } else {
-      promoted.push(c);
-    }
-  }
-  const afterPromote = promoteChanged
-    ? doc.copy(Fragment.fromArray(promoted))
-    : tempDoc;
-
   // 5. Drop transient top-level empty paragraphs before deriving list runs.
   // Markdown blank lines are separators, not paragraph nodes; once removed,
   // formerly separated list items may become one run and must be normalized in
   // that final adjacency rather than against the transient editor tree.
   const withoutEmptyParagraphs = presentation
-    ? afterPromote
-    : dropTopLevelEmptyParagraphs(afterPromote) ?? afterPromote;
+    ? tempDoc
+    : dropTopLevelEmptyParagraphs(tempDoc) ?? tempDoc;
 
   // 6. Resolve top-level flat-list structure after every order-changing
   // normalization. Inner containers were handled by `walk`; this is the same
@@ -774,5 +702,5 @@ export function normalizeDocForSave(
   const normalizedTopLists = presentation
     ? normalizeFlatListChildrenForPresentation(withoutEmptyParagraphs, schema)
     : normalizeFlatListChildren(withoutEmptyParagraphs);
-  return normalizedTopLists ?? withoutEmptyParagraphs;
+  return canonicalizeLinkOccurrences(projectLinkOccurrences(normalizedTopLists ?? withoutEmptyParagraphs));
 }

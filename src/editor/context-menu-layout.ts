@@ -51,7 +51,7 @@ export const CONTEXT_MENU_NATIVE_AVAILABLE_DEFS = CONTEXT_MENU_ENTRY_DEFS
 // normalization.
 const TOOLBAR_ENTRY_IDS = [
   "paragraph", "heading-1", "heading-2", "heading-3", "heading-4", "heading-5", "heading-6",
-  "bold", "italic", "strikethrough", "code", "highlight", "text-color", "link",
+  "bold", "italic", "underline", "strikethrough", "code", "highlight", "text-color", "link",
   "clear-formatting", "bullet-list", "ordered-list", "task-list",
   "indent-list", "outdent-list", "blockquote", "code-block", "hr", "table", "image", "video",
   "insert-base-inline", "insert-base-embed", "callout-note", "callout-abstract", "callout-info",
@@ -103,6 +103,7 @@ export function contextMenuFormattingGroup(
     children: [
       contextButton("bold"),
       contextButton("italic"),
+      contextButton("underline"),
       contextButton("strikethrough"),
       contextButton("highlight"),
       contextButton("code"),
@@ -173,7 +174,7 @@ export function contextMenuFullLayout(): Layout {
     ["undo", "redo"],
     ["cut", "copy", "paste", "paste-plain", "select-all"],
     ["paragraph", "heading-1", "heading-2", "heading-3", "heading-4", "heading-5", "heading-6"],
-    ["bold", "italic", "strikethrough", "code", "highlight", "text-color", "link", "clear-formatting"],
+    ["bold", "italic", "underline", "strikethrough", "code", "highlight", "text-color", "link", "clear-formatting"],
     ["bullet-list", "ordered-list", "task-list", "indent-list", "outdent-list", "blockquote", "code-block", "hr"],
     ["table", "image", "video", "insert-base-inline", "insert-base-embed"],
     [

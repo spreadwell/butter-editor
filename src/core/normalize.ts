@@ -10,11 +10,11 @@
  *
  * Currently supported:
  *   - `condenseBlankLines`: cap runs of 2+ blank lines between blocks
- *     at 1 blank line. Respects fenced code blocks (their internal
- *     whitespace is content, not inter-block whitespace).
+ *     at 1 blank line. The live parser identifies content ranges so opaque
+ *     payload whitespace is never mistaken for an inter-block gap.
  *   - `normalizeHeadingGap`: ensure at least 1 blank line separates
  *     an ATX heading from a following non-blank block. Respects
- *     fenced code blocks. Setext headings (underline style) are not
+ *     parser-identified headings. Setext headings (underline style) are not
  *     handled - they're rare in Obsidian and require multi-line
  *     pattern recognition.
  *
@@ -22,6 +22,37 @@
  * through the same normalizer produces the same bytes. Tests verify
  * this so we can trust them on every save without drift.
  */
+
+import type Token from "markdown-it/lib/token.mjs";
+import { __mdit } from "./bridge/common";
+
+// Containers carry maps spanning both content and layout gaps. Every other
+// mapped token owns content, including opaque syntax supplied by extensions.
+const GAP_CONTAINERS = new Set([
+  "blockquote_open", "obsidian_callout_open", "bullet_list_open",
+  "ordered_list_open", "list_item_open",
+]);
+
+function sourceTokens(source: string): Token[] | null {
+  try {
+    return __mdit.parse(source, {});
+  } catch {
+    // Formatting is optional; if the live parser cannot classify the source,
+    // retain its bytes rather than guess where content ends.
+    return null;
+  }
+}
+
+function contentLineMask(tokens: Token[], lineCount: number): boolean[] {
+  const covered = new Array<boolean>(lineCount).fill(false);
+  for (const token of tokens) {
+    if (!token.map || GAP_CONTAINERS.has(token.type)) continue;
+    for (let line = token.map[0]; line < token.map[1] && line < lineCount; line++) {
+      covered[line] = true;
+    }
+  }
+  return covered;
+}
 
 export interface NormalizeOptions {
   /** Force at least 1 blank line after every ATX heading. */
@@ -51,18 +82,18 @@ export function normalize(source: string, opts: NormalizeOptions): string {
 }
 
 /**
- * Cap consecutive blank lines at 1 outside fenced code blocks.
+ * Cap consecutive blank lines at 1 in parser-approved layout gaps.
  *
  * A "blank line" here means an empty line between content lines or
- * between content and EOF. Inside ``` or ~~~ fenced code blocks, all
- * whitespace is part of the code - skipped.
+ * between content and EOF. Mapped content includes code, math, comments,
+ * definitions and extension payloads, irrespective of their spelling.
  *
  * Algorithm:
- *   - walk line by line; maintain a fence state flag.
- *   - outside fences, whenever we encounter a run of N empty lines,
+ *   - use the live parser's content ranges, then walk the unowned gaps.
+ *   - in a gap, whenever we encounter a run of N empty lines,
  *     emit at most 1 (or 2 if the run reaches EOF, so a trailing
  *     blank line + final \n both survive).
- *   - inside fences, emit every line unchanged.
+ *   - inside content, emit every line unchanged.
  *
  * The "EOF trailing special case" keeps files that end with "foo\n\n"
  * (content + 1 blank + final newline) stable after normalization,
@@ -70,28 +101,15 @@ export function normalize(source: string, opts: NormalizeOptions): string {
  */
 export function condenseBlankLines(source: string): string {
   const lines = source.split("\n");
+  const tokens = sourceTokens(source);
+  if (!tokens) return source;
+  const content = contentLineMask(tokens, lines.length);
   const out: string[] = [];
-  let inFence = false;
-  let fenceMarker = "";
   let i = 0;
 
   while (i < lines.length) {
     const line = lines[i];
-    const fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})(.*)$/);
-
-    if (fenceMatch) {
-      if (!inFence) {
-        inFence = true;
-        fenceMarker = fenceMatch[2];
-      } else if (line.replace(/^\s+/, "").startsWith(fenceMarker)) {
-        inFence = false;
-      }
-      out.push(line);
-      i++;
-      continue;
-    }
-
-    if (inFence) {
+    if (content[i]) {
       out.push(line);
       i++;
       continue;
@@ -100,7 +118,7 @@ export function condenseBlankLines(source: string): string {
     if (line === "") {
       // Count the run of consecutive blanks starting at i.
       let j = i;
-      while (j < lines.length && lines[j] === "") j++;
+      while (j < lines.length && !content[j] && lines[j] === "") j++;
       const blankCount = j - i;
       const isTrailing = j === lines.length;
       // Split-of-"foo\n\n\n\n" yields ["foo","","","",""] - the last
@@ -128,8 +146,8 @@ export function condenseBlankLines(source: string): string {
  * Only ATX-style headings (`#` through `######`) are handled. Setext
  * headings (`Title\n====`) are untouched.
  *
- * Respects fenced code blocks - `#` lines inside a fence are code,
- * not headings.
+ * Only actual parser heading tokens are eligible. Heading-like payload in
+ * math, comments, code or extension blocks is retained exactly.
  *
  * Idempotent: if a heading is already followed by a blank line, no
  * change. Inserting a blank line after a heading doesn't create a
@@ -137,35 +155,26 @@ export function condenseBlankLines(source: string): string {
  */
 export function normalizeHeadingGap(source: string): string {
   const lines = source.split("\n");
+  const tokens = sourceTokens(source);
+  if (!tokens) return source;
+  const headings = new Set<number>();
+  for (const token of tokens) {
+    if (token.type === "heading_open" && token.map && /^#{1,6}$/.test(token.markup)) {
+      // Existing policy applies to top-level ATX source lines only. Nested
+      // containers own their prefix and spacing; never insert a bare gap.
+      const line = token.map[1] - 1;
+      if (/^#{1,6}(\s|$)/.test(lines[line] ?? "")) headings.add(line);
+    }
+  }
   const out: string[] = [];
-  let inFence = false;
-  let fenceMarker = "";
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})(.*)$/);
-
-    if (fenceMatch) {
-      if (!inFence) {
-        inFence = true;
-        fenceMarker = fenceMatch[2];
-      } else if (line.replace(/^\s+/, "").startsWith(fenceMarker)) {
-        inFence = false;
-      }
-      out.push(line);
-      continue;
-    }
-
-    if (inFence) {
-      out.push(line);
-      continue;
-    }
-
     out.push(line);
 
     // ATX heading check: `#` through `######`, followed by a space
     // OR end-of-line (empty heading like `####` is valid CommonMark).
-    if (!/^#{1,6}(\s|$)/.test(line)) continue;
+    if (!headings.has(i)) continue;
 
     // Look at the next line. If it exists AND has non-empty content,
     // insert a blank line.
@@ -206,21 +215,16 @@ export function normalizeHeadingGap(source: string): string {
  */
 export function closeUnclosedFences(source: string): string {
   const lines = source.split("\n");
-  let inFence = false;
-  let fenceMarker = "";
-
-  for (const line of lines) {
-    const m = line.match(/^(\s*)(`{3,}|~{3,})(.*)$/);
-    if (!m) continue;
-    if (!inFence) {
-      inFence = true;
-      fenceMarker = m[2];
-    } else if (line.replace(/^\s+/, "").startsWith(fenceMarker)) {
-      inFence = false;
-    }
-  }
-
-  if (!inFence) return source;
+  const tokens = sourceTokens(source);
+  if (!tokens) return source;
+  const lineCount = source.endsWith("\n") ? lines.length - 1 : lines.length;
+  const fence = tokens.find((token) => token.type === "fence" && token.level === 0 &&
+    token.map?.[1] === lineCount);
+  if (!fence?.map) return source;
+  const fenceMarker = fence.markup;
+  const finalLine = lines[fence.map[1] - 1] ?? "";
+  const closingPattern = new RegExp(`^ {0,3}${fenceMarker[0]}{${fenceMarker.length},}[\\t ]*$`);
+  if (fence.map[1] - fence.map[0] > 1 && closingPattern.test(finalLine)) return source;
 
   // Append a close marker at end-of-file. Strip only ONE trailing
   // newline (the file's final newline, if any) so any preceding

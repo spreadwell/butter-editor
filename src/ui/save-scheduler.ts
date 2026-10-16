@@ -42,8 +42,8 @@ export interface SaveSchedulerConfig {
   ceilingMs: number;
 }
 
-/** Balanced defaults - kind to sync plugins and file watchers,
- *  while keeping crash-loss bounded at ~10s of unsaved work. */
+/** Balance idle saves with a request after 10s of continuous editing.
+ * Durability still depends on the native writer completing successfully. */
 export const DEFAULT_SAVE_CONFIG: SaveSchedulerConfig = {
   idleMs: 1500,
   ceilingMs: 10_000,

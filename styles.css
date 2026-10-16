@@ -214,8 +214,10 @@ body.is-android .butter-editor-view::-webkit-scrollbar {
    content-visibility:auto blocks aggressively enough that taps
    land on "not-yet-painted" content and get ignored. Mobile docs
    aren't typically large enough for the perf savings to matter,
-   so the trade-off favors reliable tap-to-edit. */
-body:not(.is-mobile) .butter-editor-view .ProseMirror > :not(.butter-list-a11y-owner) {
+   so the trade-off favors reliable tap-to-edit. Blocks containing an
+   active code editor need floating controls outside their paint box.
+   The owning editor marks those top-level blocks explicitly. */
+body:not(.is-mobile) .butter-editor-view .ProseMirror > :not(.butter-list-a11y-owner):not(.butter-code-block-shell[data-butter-mode="edit"]):not([data-butter-code-editing="true"]) {
   content-visibility: auto;
   contain-intrinsic-size: auto 24px;
 }
@@ -562,11 +564,11 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   padding-right: 0;
 }
 
-.butter-editor-view .ProseMirror pre {
+.butter-editor-view .ProseMirror pre:not(:where(.butter-native-html-block *)) {
   white-space: pre-wrap;
 }
 
-.butter-editor-view .ProseMirror li {
+.butter-editor-view .ProseMirror li:not(:where(.butter-native-html-block *)) {
   position: relative;
 }
 
@@ -683,11 +685,11 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    diverged from native rhythm. This section fixes both. */
 
 /* ── Inline marks ── */
-:where(.butter-editor-view .ProseMirror strong) { font-weight: var(--bold-weight, 700); }
-:where(.butter-editor-view .ProseMirror em) { font-style: italic; }
-:where(.butter-editor-view .ProseMirror s),
-:where(.butter-editor-view .ProseMirror del) { text-decoration: line-through; color: var(--text-faint); }
-:where(.butter-editor-view .ProseMirror :not(pre) > code) {
+:where(.butter-editor-view .ProseMirror strong):not(:where(.butter-native-html-block *)) { font-weight: var(--bold-weight, 700); }
+:where(.butter-editor-view .ProseMirror em):not(:where(.butter-native-html-block *)) { font-style: italic; }
+:where(.butter-editor-view .ProseMirror s):not(:where(.butter-native-html-block *)),
+:where(.butter-editor-view .ProseMirror del):not(:where(.butter-native-html-block *)) { text-decoration: line-through; color: var(--text-faint); }
+:where(.butter-editor-view .ProseMirror :not(pre) > code):not(:where(.butter-native-html-block *)) {
   font-family: var(--font-monospace);
   font-size: var(--code-size, 0.9em);
   color: var(--code-normal, var(--text-accent));
@@ -717,7 +719,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    that explicitly want to retune Butter headings can still override
    by targeting `.butter-editor-view h2` directly or using any
    0,3,0+ selector. */
-.butter-editor-view h1 {
+.butter-editor-view h1:not(:where(.butter-native-html-block *)) {
   font-size: var(--h1-size, 2em);
   font-weight: var(--h1-weight, 700);
   line-height: var(--h1-line-height, 1.2);
@@ -728,7 +730,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   margin-top: var(--heading-spacing, 2.5rem);
   margin-bottom: 0;
 }
-.butter-editor-view h2 {
+.butter-editor-view h2:not(:where(.butter-native-html-block *)) {
   font-size: var(--h2-size, 1.6em);
   font-weight: var(--h2-weight, 700);
   line-height: var(--h2-line-height, 1.2);
@@ -739,7 +741,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   margin-top: var(--heading-spacing, 2.5rem);
   margin-bottom: 0;
 }
-.butter-editor-view h3 {
+.butter-editor-view h3:not(:where(.butter-native-html-block *)) {
   font-size: var(--h3-size, 1.37em);
   font-weight: var(--h3-weight, 600);
   line-height: var(--h3-line-height, 1.3);
@@ -750,7 +752,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   margin-top: var(--heading-spacing, 2.5rem);
   margin-bottom: 0;
 }
-.butter-editor-view h4 {
+.butter-editor-view h4:not(:where(.butter-native-html-block *)) {
   font-size: var(--h4-size, 1.17em);
   font-weight: var(--h4-weight, 600);
   line-height: var(--h4-line-height, 1.4);
@@ -761,7 +763,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   margin-top: var(--heading-spacing, 2.5rem);
   margin-bottom: 0;
 }
-.butter-editor-view h5 {
+.butter-editor-view h5:not(:where(.butter-native-html-block *)) {
   font-size: var(--h5-size, 1em);
   font-weight: var(--h5-weight, 600);
   line-height: var(--h5-line-height, 1.5);
@@ -771,7 +773,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   margin-top: var(--heading-spacing, 2.5rem);
   margin-bottom: 0;
 }
-.butter-editor-view h6 {
+.butter-editor-view h6:not(:where(.butter-native-html-block *)) {
   font-size: var(--h6-size, 0.87em);
   font-weight: var(--h6-weight, 600);
   line-height: var(--h6-line-height, 1.5);
@@ -787,7 +789,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    between adjacent blocks means the visible gap is still just
    --p-spacing - but first-child-inside-container and last-child
    both flush correctly because margins exist on both sides. */
-:where(.butter-editor-view p) {
+:where(.butter-editor-view p):not(:where(.butter-native-html-block *)) {
   margin-top: var(--p-spacing, 1em);
   margin-bottom: var(--p-spacing, 1em);
 }
@@ -909,14 +911,14 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   background-origin: padding-box;
   background-position: 0 0;
 }
-:where(.butter-editor-view input[type="checkbox"]) {
+:where(.butter-editor-view input[type="checkbox"]):not(:where(.butter-native-html-block *)) {
   margin-left: -1.5em;
   margin-right: 0.5em;
   cursor: pointer;
 }
 
 /* ── Blockquotes ── */
-:where(.butter-editor-view blockquote) {
+:where(.butter-editor-view blockquote):not(:where(.butter-native-html-block *)) {
   display: flex;
   flex-direction: column;
   border-left: var(--blockquote-border-thickness, 3px) solid var(--blockquote-border-color, var(--interactive-accent));
@@ -927,21 +929,21 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 }
 /* Quotes use the same top-owned direct-child flow as the editor root. This
    removes margin collapse from drag geometry while preserving native rhythm. */
-.butter-editor-view blockquote > :not(.butter-list-a11y-owner) {
+.butter-editor-view blockquote:not(:where(.butter-native-html-block *)) > :not(.butter-list-a11y-owner) {
   margin-bottom: 0 !important;
 }
-.butter-editor-view blockquote > :nth-child(1 of :not(.butter-list-a11y-owner)) {
+.butter-editor-view blockquote:not(:where(.butter-native-html-block *)) > :nth-child(1 of :not(.butter-list-a11y-owner)) {
   margin-top: 0 !important;
 }
-.butter-editor-view blockquote > :is(h1, h2, h3, h4, h5, h6):not(
+.butter-editor-view blockquote:not(:where(.butter-native-html-block *)) > :is(h1, h2, h3, h4, h5, h6):not(
   :nth-child(1 of :not(.butter-list-a11y-owner))
 ) {
   margin-top: var(--heading-spacing, 2.5rem) !important;
 }
-.butter-editor-view blockquote > .butter-list-item {
+.butter-editor-view blockquote:not(:where(.butter-native-html-block *)) > .butter-list-item {
   margin-top: 0 !important;
 }
-.butter-editor-view blockquote > .butter-list-item:not(.butter-list-item + .butter-list-item):not(
+.butter-editor-view blockquote:not(:where(.butter-native-html-block *)) > .butter-list-item:not(.butter-list-item + .butter-list-item):not(
   :nth-child(1 of :not(.butter-list-a11y-owner))
 ) {
   margin-top: var(--p-spacing, 1em) !important;
@@ -962,7 +964,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 }
 
 /* ── Code blocks ── */
-:where(.butter-editor-view pre) {
+:where(.butter-editor-view pre):not(:where(.butter-native-html-block *)) {
   font-family: var(--font-monospace);
   font-size: var(--code-size, 0.9em);
   background: var(--code-background, var(--background-secondary));
@@ -973,7 +975,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   margin: var(--p-spacing, 1em) 0;
   line-height: var(--line-height-tight, 1.4);
 }
-:where(.butter-editor-view pre code) {
+:where(.butter-editor-view pre code):not(:where(.butter-native-html-block *)) {
   font-family: inherit;
   font-size: inherit;
   background: none;
@@ -990,26 +992,26 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    inside the table's border-box (the red-border diagnostic made
    this visible). Explicit `padding: 0` + `border-spacing: 0` to
    zero out any table-level padding a theme might inject. */
-.butter-editor-view table {
+.butter-editor-view table:not(:where(.butter-native-html-block *)) {
   border-collapse: collapse;
   border-spacing: 0;
   padding: 0;
   width: 100%;
   margin: var(--p-spacing, 1em) 0;
 }
-:where(.butter-editor-view th),
-:where(.butter-editor-view td) {
+:where(.butter-editor-view th):not(:where(.butter-native-html-block *)),
+:where(.butter-editor-view td):not(:where(.butter-native-html-block *)) {
   border: 1px solid var(--table-border-color, var(--background-modifier-border));
   padding: var(--size-2-3, 6px) var(--size-4-2, 8px);
   text-align: left;
 }
-:where(.butter-editor-view th) {
+:where(.butter-editor-view th):not(:where(.butter-native-html-block *)) {
   font-weight: var(--bold-weight, 600);
   background: var(--table-header-background, var(--background-secondary));
 }
 
 /* ── Horizontal Rule ── */
-:where(.butter-editor-view hr) {
+:where(.butter-editor-view hr):not(:where(.butter-native-html-block *)) {
   border: none;
   border-top: var(--hr-thickness, 1px) solid var(--hr-color, var(--background-modifier-border));
   /* Obsidian core uses 2rem block margins. Root flow converts the collapsed
@@ -1019,23 +1021,23 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 }
 
 /* ── Links ── */
-:where(.butter-editor-view a) {
+:where(.butter-editor-view a):not(:where(.butter-native-html-block *)) {
   color: var(--link-color, var(--text-accent));
   text-decoration: var(--link-decoration, underline);
 }
-:where(.butter-editor-view a:hover) {
+:where(.butter-editor-view a:hover):not(:where(.butter-native-html-block *)) {
   color: var(--link-color-hover, var(--text-accent-hover));
   text-decoration: var(--link-decoration-hover, underline);
 }
 
 /* ── Images ── */
-:where(.butter-editor-view img) {
+:where(.butter-editor-view img):not(:where(.butter-native-html-block *)) {
   max-width: 100%;
   height: auto;
 }
 
 /* ── Highlights (==text==) ── */
-:where(.butter-editor-view mark),
+:where(.butter-editor-view mark):not(:where(.butter-native-html-block *)),
 :where(.butter-editor-view .butter-highlight) {
   background: var(--text-highlight-bg, rgba(255, 208, 0, 0.4));
   color: inherit;
@@ -1044,12 +1046,12 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 }
 
 /* ── Strikethrough ── */
-:where(.butter-editor-view del) {
+:where(.butter-editor-view del):not(:where(.butter-native-html-block *)) {
   color: var(--text-faint);
 }
 
 /* ── Tags ── */
-:where(.butter-editor-view a.tag),
+:where(.butter-editor-view a.tag):not(:where(.butter-native-html-block *)),
 :where(.butter-editor-view .butter-tag) {
   display: inline-block;
   background: var(--tag-background, var(--background-secondary));
@@ -1097,6 +1099,13 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
    Shown when Butter's parser couldn't make sense of some source
    bytes. Displays a warning banner + the raw text; bytes still
    round-trip byte-for-byte on save. */
+.butter-native-html-block {
+  margin: var(--p-spacing, 0.75em) 0;
+  /* Native HTML uses reading-mode whitespace, independently of the editor's
+     caret-preserving break-spaces. Authored child styles and native pre/table
+     rules retain their own whitespace policy. */
+  white-space: normal;
+}
 .butter-raw-block-view {
   margin: var(--p-spacing, 0.75em) 0;
   border: 1px solid var(--background-modifier-error,
@@ -1206,6 +1215,14 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
      and change the content width during a block drop. Callouts grow with their
      contents, so vertical scrolling is never the correct ownership model. */
   overflow-y: clip;
+}
+
+/* Active code controls float above their block. Only callout ancestors owned
+   by that editor may let them cross the native shell/content clipping edges.
+   Normal importance preserves the callout fold animation's clipping. */
+.butter-editor-view .butter-callout-view[data-butter-code-editing="true"],
+.butter-editor-view .butter-callout-view[data-butter-code-editing="true"] > .butter-callout-content {
+  overflow: visible;
 }
 
 /* ── Heading folding ──
@@ -3564,6 +3581,37 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
 }
 .is-mobile .butter-settings-scroll-safe-slider {
   touch-action: pan-y;
+}
+
+.butter-save-failure-notice {
+  max-width: 360px;
+  overflow-wrap: anywhere;
+}
+.butter-save-failure-notice p {
+  margin: var(--size-4-2) 0;
+}
+.butter-save-failure-report-hint {
+  font-size: var(--font-ui-small);
+}
+.butter-save-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-3);
+}
+.butter-save-failure-actions button {
+  white-space: normal;
+  height: auto;
+  min-height: 36px;
+  padding: var(--size-4-2) var(--size-4-3);
+}
+.is-mobile .butter-save-failure-actions button {
+  min-height: 44px;
+}
+.butter-feedback-privacy {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
 }
 
 .butter-feedback-form .setting-item-control input[type="text"],
@@ -6210,7 +6258,7 @@ body.butter-status-bar-hide .status-bar {
   );
   left: 0;
   z-index: 40;
-  display: flex;
+  display: none;
   align-items: center;
   gap: var(--size-2-1, 2px);
   padding: var(--size-2-2, 4px);
@@ -6219,6 +6267,10 @@ body.butter-status-bar-hide .status-bar {
   border-radius: var(--radius-m, 6px);
   box-shadow: var(--shadow-m, 0 4px 12px rgba(0, 0, 0, 0.12));
   font-family: var(--font-interface);
+}
+
+.butter-code-block-shell[data-butter-mode="edit"] > .butter-code-edit-toolbar:not(.butter-hidden) {
+  display: flex;
 }
 
 .butter-code-edit-toolbar-lang {
@@ -7895,6 +7947,9 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
 
 .butter-editor-view .butter-task-checkbox-visual {
   display: inline-block;
+  /* A clipped inline-block keeps its baseline at the box edge whether its
+     checkmark text is empty or present. Toggling must not move the task line. */
+  overflow: hidden;
   width: 16px;
   height: 16px;
   box-sizing: border-box;
@@ -10299,7 +10354,7 @@ body.butter-is-drag-scene-v2 .butter-editor-view .butter-drag-scene-live-lane {
   clip-path: none !important;
   contain: none !important;
 }
-body.butter-is-drag-scene-v2 .butter-editor-view blockquote > *,
+body.butter-is-drag-scene-v2 .butter-editor-view blockquote:not(:where(.butter-native-html-block *)) > *,
 body.butter-is-drag-scene-v2 .butter-editor-view .butter-callout-view > * {
   flex-shrink: 0 !important;
 }

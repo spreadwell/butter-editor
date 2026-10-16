@@ -40,6 +40,7 @@ import {
   headingFoldKey,
 } from "../heading-folding";
 import { DragSceneRuntime } from "../drag-scene-v2/runtime";
+import { HandleLayoutInvalidation } from "./layout-invalidation";
 
 const INLINE_TAP_TARGET_SELECTOR = [
   ".butter-external-link",
@@ -196,6 +197,20 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
       let activeMenu: Menu | null = null;
       let cancelPendingMultiMenu: (() => void) | null = null;
       let v2Runtime: DragSceneRuntime | null = null;
+      let layoutInvalidation: HandleLayoutInvalidation | null = null;
+      let destroyed = false;
+
+      function returnToIdle(): void {
+        phase = { kind: "idle" };
+        layoutInvalidation?.resume();
+      }
+
+      function mayRefreshHandles(): boolean {
+        return !destroyed && phase.kind === "idle" && touchPressTimer === 0 &&
+          !touchPressPromoting &&
+          !activeDocument.body.classList.contains("butter-is-image-resizing") &&
+          !activeDocument.body.classList.contains("butter-is-image-dragging");
+      }
 
       const chromeY = () => config.chromeBottom?.() ?? 0;
 
@@ -240,6 +255,10 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
       function ensureMode(): void {
         const mode = config.dragHandleVisibility();
         if (mode === currentMode) return;
+        if (!mayRefreshHandles()) {
+          layoutInvalidation?.invalidate();
+          return;
+        }
         currentMode = mode;
         if (mode === "always") {
           hoverHandle.hide();
@@ -261,8 +280,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
       if (currentMode === "always") {
         hoverHandle.hide();
         alwaysLayer = new HandleLayer(viewDocument);
-        // Defer initial update so the editor has rendered
-        window.requestAnimationFrame(() => alwaysLayer?.update(editorView, chromeY()));
+        // Initial placement is scheduled after all lifecycle guards are ready.
       }
 
       function hideSelectorPreview(): void {
@@ -641,7 +659,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         releaseCapturedPointer();
 
         const { hitPos } = phase;
-        phase = { kind: "idle" };
+        returnToIdle();
 
         const hitNode = editorView.state.doc.nodeAt(hitPos);
         if (!hitNode) {
@@ -717,13 +735,26 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         // Open context menu
         const handle = findHandleForPos(hitPos);
         if (handle) {
-          activeMenu = openBlockContextMenu(
+          // The automatic flat-list subtree selection above is the reviewed
+          // operation scope. Route its complete group through the same menu
+          // as an existing multi-selection, including Copy/Cut/Duplicate.
+          const selected = getMultiBlockSelection(editorView.state);
+          activeMenu = selected.positions.length > 1 && selected.positions.includes(hitPos)
+            ? openMultiBlockContextMenu(
+              config.app,
+              editorView,
+              handle,
+              hitPos,
+              selected.positions,
+              config.serializeNode,
+            ) : openBlockContextMenu(
             config.app,
             editorView,
             handle,
             hitPos,
             hitNode,
             config.serializeNode,
+            config.unlockMobileEditable,
           );
           const menu = activeMenu;
           menu.onHide(() => {
@@ -812,6 +843,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           window.clearTimeout(touchPressTimer);
           touchPressTimer = 0;
         }
+        layoutInvalidation?.resume();
       };
       // Keep the guard inert during the 400ms intent window, then claim the
       // first post-promotion move. DragSceneRuntime installs its equivalent
@@ -1037,6 +1069,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           } finally {
             touchPressPromoting = false;
             removeTouchPressNativeGuard();
+            layoutInvalidation?.resume();
           }
         }, TOUCH_LONGPRESS_MS);
       };
@@ -1067,14 +1100,14 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
 
         const liveArmedNode = editorView.state.doc.nodeAt(armedPhase.hitPos);
         if (!liveArmedNode) {
-          phase = { kind: "idle" };
+          returnToIdle();
           releaseCapturedPointer();
           return;
         }
         const armed = { ...armedPhase, hitNode: liveArmedNode };
 
         if (editorView.state.doc.childCount <= 1 && !armed.context) {
-          phase = { kind: "idle" };
+          returnToIdle();
           releaseCapturedPointer();
           return;
         }
@@ -1119,7 +1152,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         }
 
         if (draggedNodes.length === 0) {
-          phase = { kind: "idle" };
+          returnToIdle();
           releaseCapturedPointer();
           return;
         }
@@ -1186,7 +1219,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
             onFinish: (result) => {
               v2Runtime = null;
               releaseCapturedPointer();
-              phase = { kind: "idle" };
+              returnToIdle();
               activeDocument.body.dataset.butterDragEndedAt = String(Date.now());
               activeDocument.body.dataset.butterDragSceneV2Result = result.kind;
               if (result.finishReason) {
@@ -1271,14 +1304,14 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
               } else {
                 delete activeDocument.body.dataset.butterDragSceneV2ConvergenceError;
               }
-              if (currentMode === "always") alwaysLayer?.update(editorView, chromeY());
+              if (mayRefreshHandles() && currentMode === "always") alwaysLayer?.update(editorView, chromeY());
             },
           });
           return;
         } catch (error) {
           v2Runtime?.destroy();
           v2Runtime = null;
-          phase = { kind: "idle" };
+          returnToIdle();
           releaseCapturedPointer();
           activeDocument.body.dataset.butterDragSceneV2Result = "startup-error";
           activeDocument.body.dataset.butterDragSceneV2ConvergenceError =
@@ -1292,13 +1325,17 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         if (phase.kind !== "armed" || event.pointerId !== phase.pointerId) return;
         cleanupArmListeners();
         releaseCapturedPointer();
-        phase = { kind: "idle" };
+        returnToIdle();
         hideSelectorPreview();
       };
 
       const onScroll = () => {
         hideSelectorPreview();
         if (suppressHoverDuringImageManipulation()) return;
+        if (!mayRefreshHandles()) {
+          layoutInvalidation?.invalidate();
+          return;
+        }
         if (phase.kind === "idle" && currentMode === "always") {
           alwaysLayer?.update(editorView, chromeY());
         } else if (phase.kind === "idle" && currentMode === "hover" && currentHit) {
@@ -1331,7 +1368,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         if (phase.kind !== "armed") return;
         cleanupArmListeners();
         releaseCapturedPointer();
-        phase = { kind: "idle" };
+        returnToIdle();
         hideSelectorPreview();
       };
       window.addEventListener("blur", onWindowBlur);
@@ -1345,6 +1382,33 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         );
       }
 
+      layoutInvalidation = new HandleLayoutInvalidation(
+        editorView,
+        mayRefreshHandles,
+        () => {
+          ensureMode();
+          if (currentMode === "always") {
+            alwaysLayer?.update(editorView, chromeY());
+          } else if (currentHit) {
+            const node = editorView.state.doc.nodeAt(currentHit.pos);
+            const dom = editorView.nodeDOM(currentHit.pos);
+            if (!node || node.type !== currentHit.node.type ||
+                !(dom instanceof viewWindow.HTMLElement)) {
+              currentHit = null;
+              hideHoverHandle();
+              hideSelectorPreview();
+              return;
+            }
+            currentHit = { ...currentHit, node, dom, rect: dom.getBoundingClientRect() };
+            showHoverHandle(currentHit);
+          }
+        },
+      );
+      const workspace = config.app.workspace;
+      const cssChangeRef = workspace?.on("css-change", layoutInvalidation.invalidate);
+      const workspaceLayoutRef = workspace?.on("layout-change", layoutInvalidation.invalidate);
+      layoutInvalidation.initialPaint();
+
       return {
         update(view, prevState) {
           ensureMode();
@@ -1355,13 +1419,17 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           // Revalidate armed and idle handle state after document changes.
           if (phase.kind === "armed" && docChanged) {
             cleanupArmListeners();
-            phase = { kind: "idle" };
+            returnToIdle();
             currentHit = null;
             hideHoverHandle();
             return;
           }
 
           if (phase.kind !== "idle") return;
+          if (!mayRefreshHandles()) {
+            layoutInvalidation?.invalidate();
+            return;
+          }
 
           if (currentMode === "always") {
             if (
@@ -1396,6 +1464,10 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           }
         },
         destroy() {
+          destroyed = true;
+          layoutInvalidation?.destroy();
+          if (cssChangeRef) workspace.offref(cssChangeRef);
+          if (workspaceLayoutRef) workspace.offref(workspaceLayoutRef);
           v2Runtime?.destroy();
           v2Runtime = null;
           hoverHandle.remove();

@@ -1,9 +1,17 @@
-import { Schema, NodeSpec, MarkSpec, Attrs } from "prosemirror-model";
+import { Schema, NodeSpec, MarkSpec, Attrs, Fragment, type Mark, type DOMOutputSpec } from "prosemirror-model";
 import {
   tableNodes,
 } from "prosemirror-tables";
 import { getExtensionSchemaSpecs } from "../integration/extensions";
 import { sanitizeHref } from "../util/safe-url";
+import { isObsidianTagName } from "./tag-characters";
+import { isCommentNavigationSource, commentNavigationSource } from "./comment-navigation";
+import { encodeDOMPayload, readDOMPayload } from "./dom-payload";
+import { isNativeHtmlSourceKind, nativeHtmlBlockPayload } from "./native-html-block-source";
+import { isCommentMarkdownNavigation, commentMarkdownFootnotes } from "./comment-markdown-navigation";
+import { blockCommentFootnotes, hiddenFootnoteDOM } from "./source-footnotes";
+import { isLinkOccurrence, unresolvedLinkDelimiters } from "./link-occurrence";
+import { isImageSourceOwnership, referenceImageSource, isEmptyLinkSourceOwnership } from "./link-occurrence";
 
 /** PM's `Attrs` is `Record<string, any>` — every node-spec toDOM
  *  reads `node.attrs.X` and trips no-unsafe-assignment. This narrows
@@ -11,6 +19,18 @@ import { sanitizeHref } from "../util/safe-url";
  *  attr shape; eslint sees `unknown` (safer) at the call site. */
 function attrs<T>(a: Attrs): T {
   return a as unknown as T;
+}
+
+function referenceDelimiter(mark: Mark, text: string): DOMOutputSpec {
+  let result: DOMOutputSpec = ["span", { "data-link-occurrence-delimiter": "", contenteditable: "false" }, text];
+  const scopes = attrs<{ labelOuterMarks: readonly { type: string; attrs: Readonly<Record<string, unknown>> }[] }>(mark.attrs).labelOuterMarks;
+  for (const fields of [...scopes].reverse()) {
+    const type = mark.type.schema.marks[fields.type], rendered = type?.spec.toDOM?.(type.create(fields.attrs), true);
+    if (!Array.isArray(rendered) || typeof rendered[0] !== "string") continue;
+    const parts = rendered as readonly unknown[];
+    result = [parts[0], ...parts.slice(1).map(part => part === 0 ? result : part)] as DOMOutputSpec;
+  }
+  return result;
 }
 
 // Table-cell alignment is a styling-only attribute; the parser pulls
@@ -159,13 +179,17 @@ const basicNodes: Record<string, NodeSpec> = {
         const match = cls.match(/language-(\S+)/);
         return { language: match ? match[1] : "" };
       },
+      getContent(dom: Node, schema: Schema) {
+        const value = readDOMPayload(dom as HTMLElement, "data-code-payload", dom.textContent ?? "");
+        return value ? Fragment.from(schema.text(value)) : Fragment.empty;
+      },
     }],
     toDOM(node) {
       const a = attrs<{ language?: string }>(node.attrs);
       const code: import("prosemirror-model").DOMOutputSpec = a.language
         ? ["code", { class: `language-${a.language}` }, 0]
         : ["code", 0];
-      return ["pre", code];
+      return ["pre", { "data-code-payload-json": encodeDOMPayload(node.textContent) }, code];
     },
   },
 
@@ -215,14 +239,31 @@ const basicNodes: Record<string, NodeSpec> = {
       // splits the parent paragraph to enforce the image sitting in
       // a block by itself.
       displayMode: { default: null },
+      sourceSyntax: { default: "inline" },
+      reference: { default: null },
+      referenceForm: { default: null },
+      resolved: { default: true },
+      sourceAlt: { default: null },
+      altSignature: { default: null },
     },
     draggable: true,
-    parseDOM: [{
+    parseDOM: [{ tag: "span[data-reference-image]", getAttrs(dom: HTMLElement) {
+      try {
+        const value: unknown = JSON.parse(dom.getAttribute("data-reference-image") ?? "");
+        return value && typeof value === "object" && isImageSourceOwnership(value as Record<string, unknown>) ? value : false;
+      } catch { return false; }
+    } }, {
       tag: "img[src]",
       getAttrs(dom: HTMLElement) {
         const w = dom.getAttribute("width");
         const h = dom.getAttribute("height");
+        let ownership: Record<string, unknown> = {};
+        try {
+          const value: unknown = JSON.parse(dom.getAttribute("data-image-source") ?? "null");
+          if (value && typeof value === "object" && isImageSourceOwnership(value as Record<string, unknown>)) ownership = value as Record<string, unknown>;
+        } catch { /* Ordinary external images have generated inline source. */ }
         return {
+          ...ownership,
           src: dom.getAttribute("src"),
           alt: dom.getAttribute("alt"),
           title: dom.getAttribute("title"),
@@ -232,10 +273,12 @@ const basicNodes: Record<string, NodeSpec> = {
       },
     }],
     toDOM(node) {
+      if (node.attrs.sourceSyntax === "reference" && node.attrs.resolved === false) return ["span", { "data-reference-image": JSON.stringify(node.attrs) }, referenceImageSource(node) ?? ""];
       const attrs: Record<string, unknown> = {
         src: node.attrs.src,
         alt: node.attrs.alt,
         title: node.attrs.title,
+        "data-image-source": JSON.stringify(node.attrs),
       };
       if (node.attrs.width) attrs.width = node.attrs.width;
       if (node.attrs.height) attrs.height = node.attrs.height;
@@ -265,18 +308,21 @@ const basicNodes: Record<string, NodeSpec> = {
       getAttrs(dom: HTMLElement) {
         return {
           calloutType: dom.getAttribute("data-callout-type") || "note",
-          title: dom.getAttribute("data-title") || "",
+          title: readDOMPayload(dom, "data-title"),
           foldState: dom.getAttribute("data-fold") || "",
         };
       },
     }],
     toDOM(node) {
-      const a = attrs<{ calloutType: string }>(node.attrs);
+      const a = attrs<{ calloutType: string; title: string; foldState: string }>(node.attrs);
       return [
         "div",
         {
           "data-callout": "",
           "data-callout-type": a.calloutType,
+          "data-title": a.title,
+          "data-title-json": encodeDOMPayload(a.title),
+          "data-fold": a.foldState,
           class: "butter-callout",
         },
         0,
@@ -314,11 +360,14 @@ const basicNodes: Record<string, NodeSpec> = {
     group: "inline",
     inline: true,
     atom: true,
-    attrs: { src: { default: "" } },
+    attrs: { src: { default: "" }, literalSource: { default: null } },
     parseDOM: [{
       tag: "span[data-obsidian-embed-inline]",
       getAttrs(dom: HTMLElement) {
-        return { src: dom.getAttribute("data-src") || "" };
+        const src = dom.getAttribute("data-src") || "";
+        const literal = dom.getAttribute("data-comment-literal-source");
+        return { src, literalSource: dom.closest("span[data-obsidian-comment]") &&
+          isCommentNavigationSource("obsidian_embed_inline", { src }, literal) ? literal : null };
       },
     }],
     toDOM(node) {
@@ -326,6 +375,8 @@ const basicNodes: Record<string, NodeSpec> = {
       return ["span", {
         "data-obsidian-embed-inline": "",
         "data-src": a.src,
+        ...(commentNavigationSource(node) !== null && node.attrs.literalSource !== null
+          ? { "data-comment-literal-source": commentNavigationSource(node) } : {}),
         class: "butter-embed-placeholder butter-embed-inline",
       }, `![[${a.src}]]`];
     },
@@ -338,30 +389,58 @@ const basicNodes: Record<string, NodeSpec> = {
     parseDOM: [{
       tag: "div[data-math-block]",
       getAttrs(dom: HTMLElement) {
-        return { value: dom.getAttribute("data-value") || "" };
+        return { value: readDOMPayload(dom, "data-value") };
       },
     }],
     toDOM(node) {
-      return ["div", { "data-math-block": "", class: "butter-math-block" }, node.attrs.value];
+      const a = attrs<{ value: string }>(node.attrs);
+      return ["div", { "data-math-block": "", "data-value": a.value,
+        "data-value-json": encodeDOMPayload(a.value), class: "butter-math-block" }, a.value];
     },
   },
 
   block_comment: {
     group: "block",
     atom: true,
-    attrs: { value: { default: "" } },
+    // Percent comments can own hidden native cache tags. HTML comments and
+    // newly created opaque values are inert unless source supplied metadata.
+    attrs: { value: { default: "" }, nativeTags: { default: [] }, nativeSyntax: { default: "html" } },
     parseDOM: [{
       tag: "div[data-block-comment]",
       getAttrs(dom: HTMLElement) {
-        return { value: dom.getAttribute("data-value") || "" };
+        const value = readDOMPayload(dom, "data-value");
+        const encodedTags = dom.getAttribute("data-native-tags") || "[]";
+        const sourceSyntax = dom.getAttribute("data-native-syntax");
+        const percentSource = sourceSyntax === "percent";
+        let nativeSyntax = sourceSyntax === "html-unclosed" && !value.includes("-->") ? "html-unclosed" : "html";
+        let nativeTags: string[] = [];
+        try {
+          // Every cache tag consumes its raw hash and name in this payload.
+          // Bound private DOM metadata by its carrier before JSON decoding.
+          if (percentSource && encodedTags.length <= value.length * 4 + 2) {
+            const parsed: unknown = JSON.parse(encodedTags);
+            if (Array.isArray(parsed) && parsed.length <= value.length &&
+              parsed.every(tag => typeof tag === "string" && isObsidianTagName(tag)) &&
+              (parsed as string[]).reduce((length, tag) => length + tag.length + 1, 0) <= value.length) {
+              nativeTags = parsed as string[];
+              nativeSyntax = "percent";
+            }
+          }
+        } catch { /* An ordinary HTML comment never supplies native metadata. */ }
+        return { value, nativeTags, nativeSyntax };
       },
     }],
     toDOM(node) {
+      const a = attrs<{ value: string; nativeTags: string[]; nativeSyntax: string }>(node.attrs);
       return ["div", {
         "data-block-comment": "",
+        "data-value": a.value,
+        "data-value-json": encodeDOMPayload(a.value),
+        "data-native-tags": JSON.stringify(a.nativeTags),
+        "data-native-syntax": a.nativeSyntax,
         class: "butter-block-comment",
         style: "display:none",
-      }, node.attrs.value];
+      }, a.value, ...blockCommentFootnotes(node).map(hiddenFootnoteDOM)];
     },
   },
 
@@ -374,6 +453,7 @@ const basicNodes: Record<string, NodeSpec> = {
     attrs: { label: { default: "" } },
     parseDOM: [{
       tag: "sup[data-footnote-ref]",
+      priority: 60,
       getAttrs(dom: HTMLElement) {
         return { label: dom.getAttribute("data-label") || "" };
       },
@@ -400,15 +480,19 @@ const basicNodes: Record<string, NodeSpec> = {
       getAttrs(dom: HTMLElement) {
         return {
           label: dom.getAttribute("data-label") || "",
-          content: dom.getAttribute("data-content") || "",
+          content: readDOMPayload(dom, "data-content"),
         };
       },
     }],
     toDOM(node) {
+      const a = attrs<{ label: string; content: string }>(node.attrs);
       return ["div", {
         "data-footnote-def": "",
+        "data-label": a.label,
+        "data-content": a.content,
+        "data-content-json": encodeDOMPayload(a.content),
         class: "butter-footnote-def",
-      }, `[^${node.attrs.label}]: ${node.attrs.content}`];
+      }, `[^${a.label}]: ${a.content}`];
     },
   },
 
@@ -435,6 +519,57 @@ const basicNodes: Record<string, NodeSpec> = {
 
   // ── Obsidian-specific inline nodes ──
 
+  empty_link: {
+    group: "inline", inline: true, atom: true, selectable: false, marks: "",
+    attrs: { href: { default: "" }, title: { default: null }, sourceSyntax: { default: "inline" },
+      reference: { default: null }, referenceForm: { default: null }, resolved: { default: true } },
+    parseDOM: [{
+      tag: "span[data-empty-link]",
+      getAttrs(dom: HTMLElement) {
+        const payload = dom.getAttribute("data-empty-link-source");
+        if (payload) {
+          try {
+            const value: unknown = JSON.parse(payload);
+            if (!value || typeof value !== "object" || Array.isArray(value) || !isEmptyLinkSourceOwnership(value as Record<string, unknown>)) return false;
+            return value;
+          } catch { return false; }
+        }
+        return { href: dom.getAttribute("data-href") || "", title: dom.getAttribute("data-title") };
+      },
+    }],
+    toDOM(node) {
+      const a = attrs<{ href: string; title: string | null; sourceSyntax: string; resolved: boolean; reference: string | null }>(node.attrs);
+      return ["span", { "data-empty-link": "", "data-href": a.href,
+        "data-empty-link-source": JSON.stringify(node.attrs),
+        ...(a.title !== null ? { "data-title": a.title } : {}),
+        ...(a.sourceSyntax === "reference" && !a.resolved ? {} : { style: "display:none" }), contenteditable: "false" },
+        ...(a.sourceSyntax === "reference" && !a.resolved ? [`[][${a.reference ?? ""}]`] : [])];
+    },
+  },
+
+  comment_navigation: {
+    group: "inline", inline: true, atom: true,
+    attrs: { source: { default: "" }, kind: { default: "link" }, target: { default: "" },
+      title: { default: null }, reference: { default: false }, sourceKind: { default: "percent" },
+      displayText: { default: "" }, nativeTags: { default: [] },
+      footnoteRefs: { default: [] }, labelParts: { default: [] } },
+    parseDOM: [{ tag: "span[data-comment-navigation]", getAttrs(dom: HTMLElement) {
+      const payload = dom.getAttribute("data-comment-navigation");
+      if (!payload || !dom.closest("span[data-obsidian-comment]")) return false;
+      try {
+        const value: unknown = JSON.parse(payload);
+        return value && typeof value === "object" && isCommentMarkdownNavigation(value as Record<string, unknown>)
+          ? value : false;
+      } catch { return false; }
+    } }],
+    toDOM(node) {
+      return ["span", { "data-comment-navigation": JSON.stringify(node.attrs), contenteditable: "false" },
+        String(node.attrs.source),
+        ...commentMarkdownFootnotes(node).map(hiddenFootnoteDOM),
+      ];
+    },
+  },
+
   wikilink: {
     group: "inline",
     inline: true,
@@ -442,22 +577,34 @@ const basicNodes: Record<string, NodeSpec> = {
     attrs: {
       target: { default: "" },
       alias: { default: "" },
+      emptyAlias: { default: false },
+      literalSource: { default: null },
     },
     parseDOM: [{
       tag: "a[data-wikilink]",
+      priority: 60,
       getAttrs(dom: HTMLElement) {
+        const target = dom.getAttribute("data-target") || "";
+        const alias = dom.getAttribute("data-alias") || "";
+        const emptyAlias = dom.getAttribute("data-empty-alias") === "true" && alias === "";
+        const literal = dom.getAttribute("data-comment-literal-source");
         return {
-          target: dom.getAttribute("data-target") || "",
-          alias: dom.getAttribute("data-alias") || "",
+          target, alias, emptyAlias,
+          literalSource: dom.closest("span[data-obsidian-comment]") &&
+            isCommentNavigationSource("wikilink", { target, alias, emptyAlias }, literal) ? literal : null,
         };
       },
     }],
     toDOM(node) {
-      const a = attrs<{ target: string; alias: string }>(node.attrs);
-      const display = a.alias || a.target;
+      const a = attrs<{ target: string; alias: string; emptyAlias: boolean }>(node.attrs);
+      const display = a.emptyAlias ? "" : a.alias || a.target;
       return ["a", {
         "data-wikilink": "",
         "data-target": a.target,
+        "data-alias": a.alias,
+        "data-empty-alias": String(a.emptyAlias),
+        ...(commentNavigationSource(node) !== null && node.attrs.literalSource !== null
+          ? { "data-comment-literal-source": commentNavigationSource(node) } : {}),
         class: "butter-wikilink internal-link",
         contenteditable: "false",
         href: sanitizeHref(a.target),
@@ -496,11 +643,13 @@ const basicNodes: Record<string, NodeSpec> = {
     parseDOM: [{
       tag: "span[data-inline-math]",
       getAttrs(dom: HTMLElement) {
-        return { value: dom.getAttribute("data-value") || "" };
+        return { value: readDOMPayload(dom, "data-value") };
       },
     }],
     toDOM(node) {
-      return ["span", { "data-inline-math": "", class: "butter-inline-math" }, `$${node.attrs.value}$`];
+      const a = attrs<{ value: string }>(node.attrs);
+      return ["span", { "data-inline-math": "", "data-value": a.value,
+        "data-value-json": encodeDOMPayload(a.value), class: "butter-inline-math" }, `$${a.value}$`];
     },
   },
 
@@ -512,14 +661,17 @@ const basicNodes: Record<string, NodeSpec> = {
     parseDOM: [{
       tag: "span[data-inline-footnote]",
       getAttrs(dom: HTMLElement) {
-        return { content: dom.getAttribute("data-content") || "" };
+        return { content: readDOMPayload(dom, "data-content") };
       },
     }],
     toDOM(node) {
+      const a = attrs<{ content: string }>(node.attrs);
       return ["span", {
         "data-inline-footnote": "",
+        "data-content": a.content,
+        "data-content-json": encodeDOMPayload(a.content),
         class: "butter-inline-footnote",
-      }, `^[${node.attrs.content}]`];
+      }, `^[${a.content}]`];
     },
   },
 
@@ -537,6 +689,7 @@ const basicNodes: Record<string, NodeSpec> = {
     toDOM(node) {
       return ["span", {
         "data-block-id": "",
+        "data-id": node.attrs.id as string,
         class: "butter-block-id",
         style: "color: var(--text-faint); font-size: 0.85em",
       }, `^${node.attrs.id}`];
@@ -564,22 +717,29 @@ const basicNodes: Record<string, NodeSpec> = {
     attrs: {
       raw: { default: "" },
       reason: { default: "" },
+      sourceKind: { default: "fallback" },
     },
     parseDOM: [{
       tag: "div[data-raw-block]",
       getAttrs(dom: HTMLElement) {
+        const raw = readDOMPayload(dom, "data-raw");
+        const sourceKind = dom.getAttribute("data-source-kind");
+        const qualified = isNativeHtmlSourceKind(sourceKind, raw);
         return {
-          raw: dom.getAttribute("data-raw") || "",
+          raw: qualified && sourceKind === "native-html-block" ? nativeHtmlBlockPayload(raw) : raw,
           reason: dom.getAttribute("data-reason") || "",
+          sourceKind: qualified ? sourceKind : "fallback",
         };
       },
     }],
     toDOM(node) {
-      const a = attrs<{ raw: string; reason: string }>(node.attrs);
+      const a = attrs<{ raw: string; reason: string; sourceKind: string }>(node.attrs);
       return ["div", {
         "data-raw-block": "",
         "data-raw": a.raw,
+        "data-raw-json": encodeDOMPayload(a.raw),
         "data-reason": a.reason,
+        "data-source-kind": a.sourceKind,
         class: "butter-raw-block",
       }, a.raw];
     },
@@ -613,6 +773,29 @@ const basicMarks: Record<string, MarkSpec> = {
     toDOM() { return ["code", 0]; },
   },
 
+  link_occurrence: {
+    attrs: { id: {}, syntax: { default: "inline" }, href: { default: "" }, title: { default: null }, reference: { default: null },
+      referenceForm: { default: null }, resolved: { default: true }, labelSource: { default: null }, labelSignature: { default: null }, labelOuterMarks: { default: null } },
+    inclusive: false,
+    parseDOM: [{
+      tag: "span[data-link-occurrence]",
+      getAttrs(dom: HTMLElement) {
+        try {
+          const value: unknown = JSON.parse(dom.getAttribute("data-link-occurrence") ?? "");
+          return value && typeof value === "object" && isLinkOccurrence(value as Record<string, unknown>) ? value : false;
+        } catch { return false; }
+      },
+    }, { tag: "span[data-link-occurrence-delimiter]", ignore: true }],
+    toDOM(mark) {
+      const data = { "data-link-occurrence": JSON.stringify(mark.attrs) };
+      if (mark.attrs.syntax === "reference" && mark.attrs.resolved === false) {
+        const suffix = unresolvedLinkDelimiters(mark)?.suffix ?? "]";
+        return ["span", data, referenceDelimiter(mark, "["), ["span", 0], referenceDelimiter(mark, suffix)];
+      }
+      return ["span", data, 0];
+    },
+  },
+
   link: {
     attrs: {
       href: {},
@@ -622,6 +805,7 @@ const basicMarks: Record<string, MarkSpec> = {
     parseDOM: [{
       tag: "a[href]",
       getAttrs(dom: HTMLElement) {
+        if (dom.hasAttribute("data-obsidian-tag") || dom.hasAttribute("data-wikilink") || dom.hasAttribute("data-footnote-ref")) return false;
         return {
           href: dom.getAttribute("href"),
           title: dom.getAttribute("title"),
@@ -657,10 +841,10 @@ const basicMarks: Record<string, MarkSpec> = {
   },
 
   highlight: {
-    // `html` attr remembers whether the highlight was authored as
-    // `==text==` (markdown shorthand) or `<mark>text</mark>` (HTML).
-    // The serializer reads this to round-trip back to the same form
-    // so users don't see their `<mark>` tags rewritten on save.
+    // Rich source parsing uses the canonical `html:false` representation:
+    // the serializer chooses its qualified HTML codec from color and context.
+    // DOM imports must use that same representation, including colored marks.
+    // Original Markdown spelling belongs to the source-preserving save path.
     //
     // `color` is the optional background-color value (CSS color
     // literal: hex, rgb(), or named color). When set, the highlight
@@ -678,7 +862,7 @@ const basicMarks: Record<string, MarkSpec> = {
         const style = dom.getAttribute("style") || "";
         const m = /background(?:-color)?\s*:\s*([^;]+)/i.exec(style);
         const color = m ? m[1].trim() : null;
-        return { html: true, color };
+        return { html: false, color };
       },
     }],
     toDOM(node) {
@@ -794,7 +978,9 @@ const tNodes = tableNodes({
 // themselves, but built-ins always dominate.
 const { nodes: extNodes, marks: extMarks } = getExtensionSchemaSpecs();
 const allNodes = { ...extNodes, ...basicNodes, ...tNodes };
-const allMarks = { ...extMarks, ...basicMarks };
+// Ownership surrounds user styling in the DOM, so missing-reference literal
+// delimiters receive only genuinely outer source marks, not label-only marks.
+const allMarks = { link_occurrence: basicMarks.link_occurrence, ...extMarks, ...basicMarks };
 
 /**
  * Source preservation is a first-class property of Butter's editor schema.

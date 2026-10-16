@@ -1,6 +1,7 @@
 import { Fragment, type Node as PMNode } from "prosemirror-model";
 import type { EditorView } from "prosemirror-view";
 import type { MessageKey } from "../i18n";
+import { markBlockConversionRefusal } from "./native-block-id-conservation";
 
 export interface MergeMenuItem {
   id: string;
@@ -56,6 +57,17 @@ function combineIntoParagraph(
 ): void {
   const softbreakType = view.state.schema.nodes.softbreak;
   if (!softbreakType) return;
+  // The selected block owns its complete body. A list item's later code,
+  // math, comment, definition or paragraph cannot disappear merely because
+  // its first child happens to carry inline text.
+  if (nodes.some(({ node }) => !isInlineCarrier(node) ||
+    node.type.name === "list_item" && node.childCount !== 1)) {
+    const tr = view.state.tr;
+    markBlockConversionRefusal(tr);
+    view.dispatch(tr);
+    view.focus();
+    return;
+  }
   const parts: PMNode[] = [];
   nodes.forEach(({ node }, index) => {
     if (index > 0) parts.push(softbreakType.create());

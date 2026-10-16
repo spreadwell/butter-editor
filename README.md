@@ -21,7 +21,7 @@ Butter adds a visual editing view to the Markdown notes already in your vault. U
 - **Desktop and mobile:** Use the same plugin and license, with controls adapted for mouse, keyboard, and touch.
 - **Your toolbar, your way:** Choose its position and customize desktop and mobile button layouts.
 
-Standard Markdown formatting is the default. Optional rich-formatting tools - including text color, custom highlights, underline, superscript, and subscript - use inline HTML and may be less portable between Markdown applications.
+Standard Markdown formatting is the default. Optional rich-formatting tools - text color, custom highlights, and underline - use inline HTML and may be less portable between Markdown applications. Enable Rich formatting under Settings → Butter Editor → Editor → Formatting to use them. Existing HTML formatting, including superscript and subscript, is still displayed and preserved.
 
 ## See it in action
 
@@ -71,7 +71,9 @@ For trial and license operations, the plugin contacts `api.buttereditor.com`. Th
 
 Butter Editor does not send product-usage analytics, note telemetry, or third-party tracking data. See the [privacy policy](https://buttereditor.com/privacy) for full data-handling details.
 
-The Help & feedback page can send a bug report, feature request, or other message only when you press **Submit feedback**. A reply email is optional. Basic device diagnostics are off by default and shown before you choose to include them. Feedback never includes vault names, paths, filenames, or note contents.
+The Help & feedback page can send a bug report, feature request, or other message only when you press **Submit feedback**. You can report anonymously by leaving the reply email blank and omitting personal information from your message. A save-failure notice offers recovery and an anonymous-report shortcut once per unresolved incident; opening feedback sends nothing. Basic device details and recent save diagnostics are separate choices, both off by default. You can preview exactly which save details will be sent. Automatically collected diagnostics exclude vault names, paths, filenames, note contents, raw error messages, and recovery snapshots.
+
+Save diagnostics include failure stages, occurrence counts, content-free structural mismatch locations, and recovery outcomes. Butter keeps up to 20 recent failure groups for 30 days with the plugin in your vault configuration; your sync setup may sync this local history. Save and recovery counts cover the current plugin session. Diagnostics remain available in memory if their local history cannot be read or written, and diagnostic storage failures do not block editing or saving.
 
 Network destinations you may need to allow through a firewall:
 

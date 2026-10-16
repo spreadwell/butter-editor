@@ -7,6 +7,19 @@ import type MarkdownIt from "markdown-it";
 import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
 import type StateBlock from "markdown-it/lib/rules_block/state_block.mjs";
 import type StateCore from "markdown-it/lib/rules_core/state_core.mjs";
+import { isObsidianTagCharacter } from "./tag-characters";
+import { nativeSingleLineSetextPlugin } from "./native-setext";
+import { nativeDelimiterPlugin } from "./native-delimiters";
+import { nativeHtmlCodeLinksPlugin, nativeLinkOwnershipPlugin } from "./native-link-ownership";
+import { linkOccurrencePlugin } from "./link-occurrence";
+import { hasNativeBlockIdSourceBoundary } from "./block-id-boundary";
+import { htmlBlockCommentPlugin, findHtmlCommentEnd } from "./html-comments";
+import { hasOnlyQualifiedHtmlAttributes, parseHtmlAttributes, protectHtmlSource, readHtmlElement } from "./html-source-safety";
+import { isNativeHtmlSourceBlock, nativeHtmlBlockPayload } from "./native-html-block-source";
+import { nativeSourceTags, nativeSourceFootnoteReferences } from "./source-tags";
+import { nativeSourceNavigation } from "./comment-navigation";
+import { nativeSourceMarkdownNavigation, commentMarkdownNavigationPlugin } from "./comment-markdown-navigation";
+import { setSourceFootnoteGrammar } from "./source-footnotes";
 import type Token from "markdown-it/lib/token.mjs";
 import {
   findInlineMathClose,
@@ -267,7 +280,8 @@ export function wikilinkPlugin(md: MarkdownIt) {
 
     const token = state.push("wikilink", "", 0);
     token.content = inner;
-    token.meta = { target, alias };
+    token.meta = { target, alias, rawNavigationStart: start, rawNavigationEnd: end + 2,
+      rawNavigationSource: src.slice(start, end + 2) };
     token.markup = "[[";
 
     return true;
@@ -308,6 +322,8 @@ export function embedPlugin(md: MarkdownIt) {
     const token = state.push("obsidian_embed_inline", "", 0);
     token.content = inner;
     token.markup = "![[";
+    token.meta = { rawNavigationStart: start, rawNavigationEnd: end + 2,
+      rawNavigationSource: src.slice(start, end + 2) };
 
     return true;
   }
@@ -370,57 +386,107 @@ export function embedPlugin(md: MarkdownIt) {
 
 export function tagPlugin(md: MarkdownIt) {
   md.inline.ruler.push("obsidian_tag", tagRule);
+  md.core.ruler.after("inline", "obsidian_tag_boundaries", resolveTagBoundaries);
+
+  function resolveTagBoundaries(state: StateCore): void {
+    const literalizeLabelTags = (tokens: Token[]): void => {
+      for (const token of tokens) {
+        if (token.type === "obsidian_tag_candidate") {
+          token.type = "text";
+          token.content = `#${token.content}`;
+          token.markup = "";
+        }
+        if (token.children) literalizeLabelTags(token.children);
+      }
+    };
+    for (const inline of state.tokens) {
+      if (inline.type !== "inline" || !inline.children) continue;
+      let boundary = true;
+      for (let index = 0; index < inline.children.length; index++) {
+        const token = inline.children[index];
+        if (token.type === "link_occurrence_open" || token.type === "link_occurrence_close") continue;
+        // These delimiters have no visible width. Native emphasis tokens are
+        // resolved by inline2 before this core pass, so unmatched delimiters
+        // remain ordinary text and cannot create a fictitious tag boundary.
+        if (token.type === "image" && token.children) literalizeLabelTags(token.children);
+        if (/^(?:html_.*|strong|em|s|highlight|link|obsidian_comment)_(?:open|close)$/.test(token.type) ||
+          token.type === "html_inline_boundary") {
+          // Native Obsidian starts a new tag-scanning segment after resolved
+          // syntax, even when that segment follows non-whitespace content.
+          boundary = true;
+          continue;
+        }
+        if ((token.type === "text" || token.type === "text_special") && !token.content) continue;
+        if (token.type === "obsidian_tag_candidate") {
+          token.type = boundary ? "obsidian_tag" : "text";
+          if (!boundary) {
+            token.content = `#${token.content}`;
+            token.markup = "";
+          } else {
+            // Delimiter pairing may leave part of a prospective underscore
+            // closing run as visible tag characters in the same scope.
+            const tail = Number((token.meta as { tagUnderscoreTail?: number } | null)?.tagUnderscoreTail ?? 0);
+            const next = inline.children[index + 1];
+            if (tail && next?.type === "text") {
+              const leftovers = /^_+/.exec(next.content)?.[0] ?? "";
+              const length = Math.min(tail, leftovers.length);
+              token.content += leftovers.slice(0, length);
+              next.content = next.content.slice(length);
+            }
+          }
+        }
+        // Decoded entity whitespace is visible text, but does not establish
+        // the raw source boundary used by native Obsidian's tag scanner.
+        boundary = ["softbreak", "hardbreak", "code_inline", "wikilink", "obsidian_embed_inline", "inline_math", "footnote_ref", "inline_footnote", "image"].includes(token.type) ||
+          ((token.type === "text" || token.type === "text_special") && token.info !== "entity" && /\s$/.test(token.content));
+      }
+    }
+  }
 
   function tagRule(state: StateInline, silent: boolean): boolean {
     const src = state.src;
     const start = state.pos;
     if (src.charCodeAt(start) !== 0x23 /* # */) return false;
 
-    // Skip when we're inside a markdown link label `[...](url)`.
-    // The tag node has no link mark allowed in our schema, so a tag
-    // mid-label causes the serializer to split the link into two
-    // (`[before ](url)#tag[ after](url)`) on round-trip - the link
-    // mark must close around the tag node and reopen after. Treating
-    // `#topic` as plain text inside link labels keeps the link
-    // structure intact at the cost of losing tag-atom navigability
-    // for the rare "tag inside a link label" case. The user already
-    // chose to write `#` inside an explicit link, so they're unlikely
-    // to expect tag behavior there. markdown-it sets `linkLevel > 0`
-    // while tokenizing link contents (post-`parseLinkLabel`).
-    if ((state as { linkLevel?: number }).linkLevel && (state as { linkLevel?: number }).linkLevel! > 0) return false;
+    // Resolved raw tags also own native navigation inside external labels.
+    // The later ownership pass ends that link at its first genuine tag.
 
-    // Must be preceded by whitespace or start of string
-    if (start > 0) {
-      const prev = src.charCodeAt(start - 1);
-      if (prev !== 0x20 && prev !== 0x09 && prev !== 0x0A && prev !== 0x0D) return false;
-    }
-
-    // Scan tag characters: letters, digits, -, _, /
+    // Scan the exact native character domain by complete Unicode code point.
     let end = start + 1;
     let hasNonDigit = false;
     while (end < state.posMax) {
-      const ch = src.charCodeAt(end);
-      if ((ch >= 0x41 && ch <= 0x5A) || (ch >= 0x61 && ch <= 0x7A) || ch === 0x5F || ch === 0x2D || ch === 0x2F) {
-        hasNonDigit = true;
-        end++;
-      } else if (ch >= 0x30 && ch <= 0x39) {
-        end++;
-      } else {
-        break;
-      }
+      const point = src.codePointAt(end);
+      if (point === undefined) break;
+      const character = String.fromCodePoint(point);
+      if (!isObsidianTagCharacter(character)) break;
+      if (point < 0x30 || point > 0x39) hasNonDigit = true;
+      end += character.length;
     }
 
     if (end === start + 1) return false; // just #
     if (!hasNonDigit) return false; // all digits
+
+    // Underscores also belong to tag names. Give a prospective native
+    // emphasis close its source bytes when an underscore opener exists;
+    // the resolved core pass keeps unmatched remainder as tag text.
+    const underscoreTail = /_+$/.exec(src.slice(start + 1, end))?.[0] ?? "";
+    const closingStart = end - underscoreTail.length;
+    const closesEmphasis = underscoreTail && closingStart > start + 1 &&
+      state.delimiters.some((delimiter) => delimiter.marker === 0x5F && delimiter.open) &&
+      state.scanDelims(closingStart, false).can_close;
+    if (closesEmphasis) end = closingStart;
 
     // Advance pos before silent return (see highlight rule above).
     state.pos = end;
     if (silent) return true;
 
     const tag = src.slice(start + 1, end);
-    const token = state.push("obsidian_tag", "", 0);
+    // Only a raw source # reaches this rule. Escapes/entities remain text;
+    // the core pass resolves this candidate's boundary after native marks.
+    const token = state.push("obsidian_tag_candidate", "", 0);
     token.content = tag;
     token.markup = "#";
+    token.meta = { rawTagStart: start, ...(closesEmphasis ? { tagUnderscoreTail: underscoreTail.length } : {}) };
 
     return true;
   }
@@ -458,6 +524,7 @@ export function inlineFootnotePlugin(md: MarkdownIt) {
     const token = state.push("inline_footnote", "", 0);
     token.content = content;
     token.markup = "^[";
+    token.meta = { rawInlineFootnoteStart: start };
 
     return true;
   }
@@ -483,6 +550,10 @@ export function inlineCommentPlugin(md: MarkdownIt) {
     if (end >= state.posMax - 1) return false;
 
     const content = src.slice(start + 2, end);
+    // Native inline %% comments end on the same physical source line.
+    // Rich-created hidden LF payloads use the standard hidden-span codec;
+    // loading visible multiline percent text must not silently hide it.
+    if (/[\r\n]/.test(content)) return false;
 
     // Advance pos before silent return (see highlight rule above).
     state.pos = end + 2;
@@ -493,10 +564,60 @@ export function inlineCommentPlugin(md: MarkdownIt) {
     // (so %%…%% round-trips losslessly through parse → serialize).
     const openTok = state.push("obsidian_comment_open", "", 1);
     openTok.markup = "%%";
-    const textTok = state.push("text", "", 0);
-    textTok.content = content;
+    // Native metadata scanning recognizes genuine source tags inside an
+    // otherwise opaque percent comment. Keep only that source-owned meaning
+    // as hidden tag atoms; embedded marks/links/HTML remain literal payload.
+    let offset = 0;
+    const owned = [
+      ...nativeSourceTags(md, content).map(tag => ({ ...tag, kind: "obsidian_tag" as const })),
+      ...nativeSourceNavigation(md, content),
+      ...nativeSourceFootnoteReferences(md, content),
+      ...nativeSourceMarkdownNavigation(md, content).map(item => ({ ...item, kind: "comment_navigation" as const })),
+    ].sort((left, right) => left.start - right.start || right.end - left.end);
+    for (const item of owned) {
+      if (item.start < offset) continue;
+      if (item.start > offset) state.push("text", "", 0).content = content.slice(offset, item.start);
+      const token = state.push(item.kind, "", 0);
+      if (item.kind === "obsidian_tag") {
+        token.content = item.tag; token.markup = "#";
+        token.meta = { rawTagStart: start + 2 + item.start };
+      } else if (item.kind === "footnote_ref") {
+        token.content = item.label; token.markup = "[^";
+        token.meta = { rawFootnoteStart: start + 2 + item.start };
+      } else if (item.kind === "comment_navigation") {
+        token.meta = { ...item, kind: item.source.startsWith("!") ? "image" : "link", start: start + 2 + item.start, end: start + 2 + item.end };
+      } else {
+        token.content = item.kind === "wikilink" ? item.source.slice(2, -2) : item.src ?? "";
+        token.meta = { target: item.target, alias: item.alias, rawNavigationSource: item.source };
+        token.markup = item.kind === "wikilink" ? "[[" : "![[";
+      }
+      offset = item.end;
+    }
+    if (offset < content.length) state.push("text", "", 0).content = content.slice(offset);
     const closeTok = state.push("obsidian_comment_close", "", -1);
     closeTok.markup = "%%";
+
+    // Obsidian's metadata reader recognizes a terminal, unescaped native
+    // block ID inside a single-line authored comment. Keep the opaque text
+    // unchanged; the bridge separately represents the actual reference.
+    // This evidence belongs to the raw %% token, never decoded HTML/text.
+    if (!/[\r\n]/.test(content) && !/\s$/.test(content) && /\^[A-Za-z0-9-]+/.test(content)) {
+      const nativeId = /\^([A-Za-z0-9-]+)$/.exec(content);
+      if (nativeId && hasNativeBlockIdSourceBoundary(content, nativeId.index)) {
+        closeTok.meta = { nativeBlockId: nativeId[1] };
+      } else {
+        // Genuine native Markdown closing delimiters can surround metadata
+        // inside the comment. Reuse resolved source tokens to distinguish
+        // balanced closers from literal/unmatched markers, code and HTML.
+        // No %% pair can be inside this payload: its first pair closed the
+        // outer comment, so this analysis cannot recursively open a comment.
+        for (const inline of md.parseInline(content, {})) {
+          for (const token of inline.children ?? []) {
+            if (token.type === "block_id") closeTok.meta = { nativeBlockId: token.content };
+          }
+        }
+      }
+    }
 
     return true;
   }
@@ -549,6 +670,7 @@ export function blockCommentPlugin(md: MarkdownIt) {
       const isLabeled = /list-break/i.test(lineContent);
       const token = state.push("block_comment", "", 0);
       token.content = isLabeled ? "list-break" : "";
+      token.meta = { nativeTags: [], nativeSyntax: "percent" };
       token.markup = "%%";
       token.map = [startLine, startLine + 1];
       state.line = startLine + 1;
@@ -572,13 +694,9 @@ export function blockCommentPlugin(md: MarkdownIt) {
     if (!found) return false;
     if (silent) return true;
 
-    const lines: string[] = [];
-    for (let i = startLine + 1; i < nextLine; i++) {
-      lines.push(src.slice(state.bMarks[i] + state.tShift[i], state.eMarks[i]));
-    }
-
     const token = state.push("block_comment", "", 0);
-    token.content = lines.join("\n");
+    token.content = state.getLines(startLine + 1, nextLine, state.blkIndent, false);
+    token.meta = { nativeTags: nativeSourceTags(md, token.content, true).map(value => value.tag), nativeSyntax: "percent" };
     token.markup = "%%";
     token.map = [startLine, nextLine + 1];
 
@@ -593,6 +711,56 @@ export function blockCommentPlugin(md: MarkdownIt) {
 
 export function blockIdPlugin(md: MarkdownIt) {
   md.inline.ruler.push("block_id", blockIdRule);
+  md.core.ruler.after("obsidian_tag_boundaries", "block_id_boundaries", resolveBlockIdBoundaries);
+
+  function resolveBlockIdBoundaries(state: StateCore): void {
+    const literalize = (token: Token): void => {
+      token.type = "text";
+      token.content = `^${token.content}`;
+      token.markup = "";
+    };
+    const literalizePayload = (tokens: Token[]): void => {
+      for (const token of tokens) {
+        if (token.type === "block_id_candidate") literalize(token);
+        if (token.children) literalizePayload(token.children);
+      }
+    };
+    const nativeClosingMark = (token: Token): boolean =>
+      /^(?:strong|em|s|highlight|link)_close$/.test(token.type) || token.type === "link_occurrence_close" &&
+        (token.meta as { resolved?: boolean } | null)?.resolved !== false;
+    const nativeBoundary = (token: Token): boolean =>
+      nativeClosingMark(token) || /^(?:strong|em|s|highlight|link)_open$/.test(token.type) ||
+      /^html_.*_(?:open|close)$/.test(token.type) ||
+      ["html_inline_boundary", "code_inline", "inline_math", "wikilink", "obsidian_tag", "obsidian_embed_inline",
+        "footnote_ref", "inline_footnote", "image", "empty_link", "softbreak", "hardbreak", "obsidian_comment_close"].includes(token.type);
+    for (const inline of state.tokens) {
+      if (inline.type !== "inline" || !inline.children) continue;
+      const tokens = inline.children;
+      const terminalSuffix = new Array<boolean>(tokens.length + 1);
+      terminalSuffix[tokens.length] = true;
+      for (let index = tokens.length - 1; index >= 0; index--) {
+        const token = tokens[index];
+        terminalSuffix[index] = terminalSuffix[index + 1] && (nativeClosingMark(token) ||
+          (token.type === "text" && /^\s*$/.test(token.content)));
+      }
+      for (let index = 0; index < tokens.length; index++) {
+        const token = tokens[index];
+        if (token.type === "image" && token.children) literalizePayload(token.children);
+        if (token.type !== "block_id_candidate") continue;
+        const rawBoundary = Boolean((token.meta as { rawBlockIdBoundary?: boolean } | null)?.rawBlockIdBoundary);
+        let before = index - 1;
+        while (before >= 0 && !tokens[before].content &&
+          (tokens[before].type === "text" || tokens[before].type === "text_special" || tokens[before].type === "link_occurrence_close")) before--;
+        const boundary = rawBoundary || (before >= 0 && nativeBoundary(tokens[before]));
+        // Obsidian recognizes trailing IDs inside native Markdown formatting,
+        // including link labels. HTML closing tags remain authored source after
+        // an ID, so an ID inside <code> or other HTML scopes stays literal.
+        const terminal = terminalSuffix[index + 1];
+        if (boundary && terminal) token.type = "block_id";
+        else literalize(token);
+      }
+    }
+  }
 
   function blockIdRule(state: StateInline, silent: boolean): boolean {
     const src = state.src;
@@ -615,18 +783,15 @@ export function blockIdPlugin(md: MarkdownIt) {
     }
     if (end === start + 1) return false;
 
-    // Must be at end of line (possibly with trailing whitespace)
-    const rest = src.slice(end, state.posMax).trim();
-    if (rest) return false;
-
     // Advance pos before silent return (see highlight rule above).
     state.pos = end;
     if (silent) return true;
 
     const id = src.slice(start + 1, end);
-    const token = state.push("block_id", "", 0);
+    const token = state.push("block_id_candidate", "", 0);
     token.content = id;
     token.markup = "^";
+    token.meta = { rawBlockIdBoundary: hasNativeBlockIdSourceBoundary(src, start) };
 
     return true;
   }
@@ -667,6 +832,7 @@ export function footnoteRefPlugin(md: MarkdownIt) {
     const token = state.push("footnote_ref", "", 0);
     token.content = label;
     token.markup = "[^";
+    token.meta = { rawFootnoteStart: start };
 
     return true;
   }
@@ -702,18 +868,17 @@ export function footnoteDefPlugin(md: MarkdownIt) {
 
     if (silent) return true;
 
-    // Collect content: first line after ]: , plus continuation lines (indented by 4 spaces)
+    // Continuations need four content columns beyond this block container's
+    // own indent. Physical list/quote prefix columns are structural syntax,
+    // not footnote indentation; counting them would swallow later siblings.
     const firstLineContent = src.slice(labelEnd + 2, maxPos).trim();
     const lines: string[] = [firstLineContent];
 
     let nextLine = startLine + 1;
     while (nextLine < endLine) {
-      const ls = state.bMarks[nextLine];
-      const le = state.eMarks[nextLine];
-      const indent = state.tShift[nextLine];
-      // Continuation lines must be indented by at least 4 spaces
-      if (indent < 4) break;
-      lines.push(src.slice(ls + 4, le));
+      const continuationIndent = state.blkIndent + 4;
+      if (state.sCount[nextLine] < continuationIndent) break;
+      lines.push(state.getLines(nextLine, nextLine + 1, continuationIndent, false));
       nextLine++;
     }
 
@@ -873,10 +1038,8 @@ export function calloutPlugin(md: MarkdownIt) {
 // does the recognition + pairing during tokenization, which the
 // existing mark machinery already handles cleanly.
 //
-// Attribute support is per-tag: only `<font>` carries attrs (color,
-// face, size). The other tags accept no attrs (any attrs in source
-// are ignored on parse and lost on serialize - the user's expected
-// behavior since these are styling-only tags).
+// Attribute support is explicit. Unmodeled styling/class/data attributes
+// belong to authored source and must not disappear on a rich-text save.
 
 interface HtmlMarkConfig {
   /** HTML tag name (lowercase, no angle brackets). */
@@ -895,6 +1058,12 @@ const HTML_INLINE_MARKS: readonly HtmlMarkConfig[] = [
   { tag: "sub",  type: "html_sub" },
   { tag: "mark", type: "html_mark", attrs: ["style"] },
   { tag: "kbd",  type: "html_kbd" },
+  // Inline HTML code is a styling mark, unlike opaque backtick code spans.
+  // Other inline marks/atoms can remain meaningful between these tags.
+  { tag: "code", type: "html_code" },
+  // Only the exact native hidden style below is modeled. Other raw spans are
+  // retained as protected source; escaped/code-literal spans remain text.
+  { tag: "span", type: "html_comment", attrs: ["style"] },
   // <strong> / <em> / <s> / <del> as HTML form for overlap-with-
   // other-marks cases - CommonMark emphasis pairing requires nested
   // marks, but PM stores marks as a set so the editor can produce
@@ -909,6 +1078,114 @@ const HTML_INLINE_MARKS: readonly HtmlMarkConfig[] = [
 ];
 
 export function htmlInlineTagsPlugin(md: MarkdownIt) {
+  // Keep the existing code/hidden-comment codecs ahead of this rule. A
+  // complete standalone HTML block owns all of its source, so unsupported
+  // attributes do not force unrelated Markdown into whole-file recovery.
+  md.block.ruler.before("paragraph", "native_html_source_block", (state, startLine, endLine, silent) => {
+    if (startLine >= endLine || state.sCount[startLine] - state.blkIndent >= 4) return false;
+    const first = state.src.slice(state.bMarks[startLine] + state.tShift[startLine], state.eMarks[startLine]);
+    if (!first.startsWith("<")) return false;
+    let nextLine = startLine;
+    while (nextLine < endLine && !state.isEmpty(nextLine) && state.sCount[nextLine] >= state.blkIndent) nextLine++;
+    const source = state.getLines(startLine, nextLine, state.blkIndent, true);
+    if (!isNativeHtmlSourceBlock(source)) return false;
+    if (silent) return true;
+    const token = state.push("native_html_source_block", "", 0);
+    token.content = nativeHtmlBlockPayload(source);
+    token.block = true;
+    token.map = [startLine, nextLine];
+    state.line = nextLine;
+    return true;
+  }, { alt: ["paragraph", "reference", "blockquote", "list"] });
+  md.inline.ruler.before("emphasis", "html_opaque_comment", (state, silent) => {
+    const start = state.pos;
+    const end = findHtmlCommentEnd(state.src, start, state.posMax);
+    if (end < 0) return false;
+    state.pos = end;
+    if (!silent) {
+      state.push("html_comment_open", "", 0).markup = "<!--";
+      const text = state.push("text", "", 0);
+      // HTML comments contain raw opaque payload, not decoded entities or
+      // Markdown. They never synthesize native block metadata.
+      text.content = state.src.slice(start + 4, end - 3);
+      state.push("html_comment_close", "", 0).markup = "-->";
+    }
+    return true;
+  });
+  // Native <pre><code> is the lossless block-code form when a payload contains
+  // literal CR controls that fenced Markdown would normalize to LF. Accept
+  // only this complete one-line codec; nested HTML and arbitrary attributes
+  // retain their existing source interpretation, and neighbors cannot enter
+  // the code payload. Entity decoding is HTML-only, never Markdown unescaping.
+  md.block.ruler.before("fence", "html_code_block", (state, startLine, endLine, silent) => {
+    if (startLine >= endLine || state.sCount[startLine] - state.blkIndent >= 4) return false;
+    const source = state.src.slice(state.bMarks[startLine] + state.tShift[startLine], state.eMarks[startLine]);
+    const match = /^<pre><code(?: class="language-([^"<>]*)")?>([^<]*)<\/code><\/pre>[ \t]*$/.exec(source);
+    if (!match) return false;
+    if (silent) return true;
+    const decode = (value: string): string => value.replace(
+      /&(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);/g,
+      (entity) => state.md.utils.unescapeAll(entity),
+    );
+    const token = state.push("html_code_block", "pre", 0);
+    token.content = decode(match[2]);
+    token.info = decode(match[1] ?? "");
+    token.block = true;
+    token.map = [startLine, startLine + 1];
+    state.line = startLine + 1;
+    return true;
+  }, { alt: ["paragraph", "reference", "blockquote", "list"] });
+  // A complete, empty native span is a semantic-neutral source boundary.
+  // Adjacent math atoms need one because closing/opening dollars otherwise
+  // merge into a different math delimiter. Styled/nonempty spans are not
+  // accepted by this rule.
+  md.inline.ruler.before("emphasis", "html_inline_boundary", (state, silent) => {
+    const markup = "<span></span>";
+    if (!state.src.startsWith(markup, state.pos) || state.pos + markup.length > state.posMax) return false;
+    state.pos += markup.length;
+    if (!silent) {
+      const token = state.push("html_inline_boundary", "", 0);
+      token.markup = markup;
+    }
+    return true;
+  });
+  // Raw spans inside native opaque %% payload still establish cache-tag
+  // boundaries. This token-only analysis never accepts arbitrary span markup
+  // as a rich editor mark or drops its literal opaque bytes.
+  md.inline.ruler.before("html_inline_boundary", "html_comment_source_span_boundary", (state, silent) => {
+    if (!(state.env as { butterNativeCommentSource?: boolean }).butterNativeCommentSource) return false;
+    if (state.src[state.pos] !== "<") return false;
+    const prefix = /^<\/?span(?=[\s/>])/i.exec(state.src.slice(state.pos, state.posMax));
+    if (!prefix) return false;
+    if (state.src[state.pos + 1] === "/" && !/^<\/span\s*>/i.test(state.src.slice(state.pos, state.posMax))) return false;
+    let end = state.pos + prefix[0].length, quote = "";
+    for (; end < state.posMax; end++) {
+      const character = state.src[end];
+      if (quote) { if (character === quote) quote = ""; continue; }
+      if (character === '"' || character === "'") { quote = character; continue; }
+      if (character === "<" || character === "\r" || character === "\n") return false;
+      if (character === ">") break;
+    }
+    if (end >= state.posMax || quote) return false;
+    const markup = state.src.slice(state.pos, end + 1);
+    state.pos = end + 1;
+    if (!silent) state.push("html_inline_boundary", "", 0).markup = markup;
+    return true;
+  });
+  // Recognize source-authored break syntax before text/entity decoding. Doing
+  // this in the bridge's text handler would turn escaped literal `<br>` into
+  // an unintended break and make safe text emission impossible.
+  md.inline.ruler.before("emphasis", "html_inline_breaks", (state, silent) => {
+    if (state.src.charCodeAt(state.pos) !== 0x3C) return false;
+    const match = /^<br\s*(\/?)>/i.exec(state.src.slice(state.pos, state.posMax));
+    if (!match) return false;
+    state.pos += match[0].length;
+    if (!silent) {
+      const token = state.push(match[1] ? "softbreak" : "hardbreak", "br", 0);
+      token.markup = match[0];
+    }
+    return true;
+  });
   // Flat open/close tokens - emit `${type}_open` and `${type}_close` as
   // independent points in the inline stream rather than recursing into
   // a clamped sub-state. This lets markdown delimiters (e.g. `**`) and
@@ -926,12 +1203,6 @@ export function htmlInlineTagsPlugin(md: MarkdownIt) {
   // `X_close` if the stack top matches (well-nested closes only - an
   // orphan or out-of-order close is left as literal text by returning
   // false).
-  const tagAlternation = HTML_INLINE_MARKS.map((c) => c.tag).join("|");
-  const openTagRegex = new RegExp(
-    `^<(${tagAlternation})\\b([^>]*)>`,
-    "i",
-  );
-  const closeTagRegex = new RegExp(`^</(${tagAlternation})\\s*>`, "i");
   const cfgByTag = new Map<string, HtmlMarkConfig>();
   for (const c of HTML_INLINE_MARKS) cfgByTag.set(c.tag.toLowerCase(), c);
 
@@ -943,11 +1214,12 @@ export function htmlInlineTagsPlugin(md: MarkdownIt) {
       const start = state.pos;
       if (src.charCodeAt(start) !== 0x3C /* < */) return false;
 
-      // Try close tag first.
-      const remaining = src.slice(start, state.posMax);
-      const closeMatch = closeTagRegex.exec(remaining);
-      if (closeMatch) {
-        const tag = closeMatch[1].toLowerCase();
+      const element = readHtmlElement(src, start, state.posMax);
+      if (!element) return false;
+      // Try close tag first. An unmatched real close reaches the final source
+      // guard instead of becoming newly visible literal markup.
+      if (element.closing) {
+        const tag = element.name;
         const cfg = cfgByTag.get(tag);
         if (!cfg) return false;
         const stateAny = state as unknown as {
@@ -964,7 +1236,7 @@ export function htmlInlineTagsPlugin(md: MarkdownIt) {
         // dangling html_*_open token, so we'd lose the mark entirely.
         const idx = stack.lastIndexOf(tag);
         if (idx < 0) return false;
-        state.pos = start + closeMatch[0].length;
+        state.pos = element.end;
         if (silent) return true;
         stack.splice(idx, 1);
         stateAny.__butterHtmlStack = stack;
@@ -975,25 +1247,44 @@ export function htmlInlineTagsPlugin(md: MarkdownIt) {
         // token type name (`html_X_close`), not nesting, so this is
         // safe - tokens still carry the open/close semantics.
         const t = state.push(`${cfg.type}_close`, cfg.tag, 0);
-        t.markup = closeMatch[0];
+        t.markup = element.markup;
         return true;
       }
 
-      // Try open tag.
-      const openMatch = openTagRegex.exec(remaining);
-      if (!openMatch) return false;
-      const tag = openMatch[1].toLowerCase();
+      const tag = element.name;
       const cfg = cfgByTag.get(tag);
       if (!cfg) return false;
+      const attributes = parseHtmlAttributes(element.attributes)!;
+      // The comment source analyzer owns raw opaque bytes and only inspects
+      // their native metadata. It must not turn those bytes into a load lock.
+      if (!(state.env as { butterNativeCommentSource?: boolean }).butterNativeCommentSource) {
+        if (element.selfClosing || !hasOnlyQualifiedHtmlAttributes(element.attributes, cfg.attrs ?? [])) {
+          return protectHtmlSource(state, silent, element.markup);
+        }
+        if (cfg.type === "html_comment" &&
+          (attributes.length !== 1 || !/^\s*display\s*:\s*none\s*;?\s*$/i.test(attributes[0].value ?? ""))) {
+          return protectHtmlSource(state, silent, element.markup);
+        }
+        if (cfg.type === "html_mark" && attributes.some(attribute =>
+          !/^\s*background(?:-color)?\s*:\s*[^;]+;?\s*$/i.test(attribute.value ?? ""))) {
+          return protectHtmlSource(state, silent, element.markup);
+        }
+      }
 
       // Verify a matching close exists somewhere ahead. We don't
       // require strict nesting on the verification scan (the close
       // rule enforces nesting via stack); we just need to know an
       // opener-without-closer becomes literal text rather than a
       // dangling open mark token.
-      const afterOpen = start + openMatch[0].length;
+      const afterOpen = element.end;
       const closer = `</${cfg.tag}`;
-      const tail = src.slice(afterOpen, state.posMax).toLowerCase();
+      // A supported HTML mark can cross a native Markdown delimiter's
+      // recursive range. Only closer existence may inspect the enclosing
+      // source; actual token consumption remains bounded by posMax.
+      const nativeSource = (state as StateInline & {
+        __butterNativeDelimiterSource?: { source: string; end: number };
+      }).__butterNativeDelimiterSource;
+      const tail = (nativeSource?.source ?? src).slice(afterOpen, nativeSource?.end ?? state.posMax).toLowerCase();
       if (tail.indexOf(closer) < 0) return false;
 
       state.pos = afterOpen;
@@ -1007,24 +1298,35 @@ export function htmlInlineTagsPlugin(md: MarkdownIt) {
       // Parse attributes off the open tag.
       const tokenAttrs: [string, string][] = [];
       if (cfg.attrs && cfg.attrs.length) {
-        const attrSrc = openMatch[2];
-        for (const name of cfg.attrs) {
-          const m = new RegExp(
-            `\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))`,
-            "i",
-          ).exec(attrSrc);
-          if (m) tokenAttrs.push([name, m[1] ?? m[2] ?? m[3] ?? ""]);
+        for (const { name, value: rawValue } of attributes) {
+          if (cfg.attrs.includes(name) && rawValue !== null) {
+            // HTML attributes decode entities but do not treat backslashes
+            // as Markdown escapes. Decode only the entity-shaped pieces.
+            const value = rawValue.replace(
+              /&(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);/g,
+              (entity) => state.md.utils.unescapeAll(entity),
+            );
+            tokenAttrs.push([name, value]);
+          }
         }
       }
 
       // nesting=0 (not 1) so state.push doesn't push a fresh delimiter
       // stack - see the close branch above for the rationale.
       const t = state.push(`${cfg.type}_open`, cfg.tag, 0);
-      t.markup = openMatch[0];
+      t.markup = element.markup;
       if (tokenAttrs.length) t.attrs = tokenAttrs;
       return true;
     },
   );
+  // Every qualified codec above gets first refusal. Stock text already stops
+  // at '<'; this final lexical rule sees only remaining actual raw elements,
+  // never text obtained by entity decoding, an escape or opaque code/comment.
+  md.inline.ruler.after("html_inline", "html_source_safety", (state, silent) => {
+    if ((state.env as { butterNativeCommentSource?: boolean }).butterNativeCommentSource) return false;
+    const element = readHtmlElement(state.src, state.pos, state.posMax);
+    return element ? protectHtmlSource(state, silent, element.markup) : false;
+  });
 }
 
 // Re-export the tag config so the bridge + serializer can look up
@@ -1037,8 +1339,10 @@ export type { HtmlMarkConfig };
 // ══════════════════════════════════════════
 
 export function installObsidianPlugins(md: MarkdownIt): void {
+  nativeSingleLineSetextPlugin(md);
   referenceDefinitionPlugin(md);
   blockCommentPlugin(md);
+  htmlBlockCommentPlugin(md);
   blockMathPlugin(md);
   footnoteDefPlugin(md);
   calloutPlugin(md);
@@ -1052,4 +1356,10 @@ export function installObsidianPlugins(md: MarkdownIt): void {
   inlineCommentPlugin(md);
   blockIdPlugin(md);
   htmlInlineTagsPlugin(md);
+  nativeDelimiterPlugin(md);
+  nativeHtmlCodeLinksPlugin(md);
+  commentMarkdownNavigationPlugin(md);
+  linkOccurrencePlugin(md);
+  setSourceFootnoteGrammar(md);
+  nativeLinkOwnershipPlugin(md);
 }

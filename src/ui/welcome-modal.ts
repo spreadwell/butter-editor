@@ -139,7 +139,7 @@ export class WelcomeModal extends Modal {
       formatting,
       "palette",
       tx("Rich formatting"),
-      tx("Adds text color, custom highlights, underline, superscript, and subscript."),
+      tx("Adds text color, custom highlights, and underline."),
       this.richFormattingEnabled,
       (enabled) => {
         this.richFormattingEnabled = enabled;

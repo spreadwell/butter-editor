@@ -44,6 +44,8 @@ export interface RichMenuField {
   /** Optional Lucide icon shown left of the input. */
   icon?: string;
   initial?: string;
+  /** Native multiline atom payload; Enter commits and Shift+Enter adds LF. */
+  multiline?: boolean;
   placeholder?: string;
   /** When set, attach the vault-files suggester (Obsidian native
    *  AbstractInputSuggest popup with fuzzy match + folder paths). */
@@ -98,7 +100,7 @@ export interface RichMenuModeSwitch {
   options: Array<{ value: string; label: string; icon: string }>;
   onChange?: (
     value: string,
-    inputs: Readonly<Record<string, HTMLInputElement>>,
+    inputs: Readonly<Record<string, HTMLInputElement | HTMLTextAreaElement>>,
     source: "user" | "inferred",
   ) => void;
   /** Infer a more suitable mode while the user types, unless the caller has locked a deliberate choice. */
@@ -124,6 +126,8 @@ export interface RichMenuOptions {
    *  values keyed by field id. */
   /** Return false to reject the values and leave the editor open. */
   onCommit?: (values: Record<string, string>) => void | boolean;
+  /** Actual initialized DOM values, after the browser's sanitization. */
+  onFieldsReady?: (values: Record<string, string>) => void;
   /** Run when the user dismisses without committing (Esc, click
    *  outside). */
   onCancel?: () => void;
@@ -171,7 +175,7 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
   dom.appendChild(body);
 
   // Fields
-  const inputEls: Record<string, HTMLInputElement> = {};
+  const inputEls: Record<string, HTMLInputElement | HTMLTextAreaElement> = {};
   const actionEls: Array<{ el: HTMLElement; action: RichMenuAction }> = [];
   const getValues = (): Record<string, string> => {
     const values: Record<string, string> = {};
@@ -267,8 +271,9 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
     labelEl.textContent = txKnown(field.label);
       headerEl.appendChild(labelEl);
       fieldEl.appendChild(headerEl);
-      const input = activeWindow.createEl("input");
-      input.type = "text";
+      const input = field.multiline
+        ? activeWindow.createEl("textarea", { attr: { rows: "3" } })
+        : activeWindow.createEl("input", { attr: { type: "text" } });
       input.className = "butter-inline-atom-edit-input butter-rich-menu-input";
       input.spellcheck = false;
       input.value = field.initial ?? "";
@@ -281,8 +286,9 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
         }
       });
     if (field.placeholder) input.placeholder = txKnown(field.placeholder);
-      if (field.autocomplete === "vault-files") {
-        applyVaultFilesSuggest(opts.app, input, {
+      if (field.autocomplete === "vault-files" && !field.multiline) {
+        const suggestionInput = input as HTMLInputElement;
+        applyVaultFilesSuggest(opts.app, suggestionInput, {
           scope: field.suggestScope,
           skipWhen: field.suggestSkipWhen,
           showOnEmpty: field.suggestOnEmpty,
@@ -291,7 +297,7 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
               field.onSuggestSelect({
                 basename: file.basename,
                 path: file.path,
-              }, input);
+              }, suggestionInput);
             } else {
               input.value = file.basename;
               // Fire 'input' so dependent fields (placeholders that
@@ -307,6 +313,7 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
     }
     body.appendChild(fieldsRoot);
   }
+  opts.onFieldsReady?.(getValues());
 
   const flashInvalid = () => {
     for (const input of Object.values(inputEls)) {
@@ -449,7 +456,8 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
   // keypress (e.g. Esc closing other UI).
   for (const input of Object.values(inputEls)) {
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
+      const keyboard = e as KeyboardEvent;
+      if (keyboard.key === "Enter" && !(input.tagName === "TEXTAREA" && keyboard.shiftKey)) {
         e.preventDefault();
         e.stopPropagation();
         const accepted = opts.onCommit?.(getValues());
@@ -458,7 +466,7 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
           return;
         }
         close();
-      } else if (e.key === "Escape") {
+      } else if (keyboard.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         if (opts.onCancel) opts.onCancel();

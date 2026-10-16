@@ -1,6 +1,8 @@
 import { Node as PMNode, Fragment, Mark, MarkType, NodeType } from "prosemirror-model";
 import type Token from "markdown-it/lib/token.mjs";
 import { schema } from "../schema";
+import { allowsInlineMark } from "../inline-mark-policy";
+import { stampLinkOccurrenceLabels, canonicalizeLinkOccurrences, seedLinkOccurrences } from "../link-occurrence";
 import { metaStr, __mdit } from "./common";
 import { debug } from "../../integration/debug";
 
@@ -47,10 +49,11 @@ function buildTokenStructureIndex(tokens: readonly Token[]): TokenStructureIndex
         (token.type === "bullet_list_open" ||
           token.type === "ordered_list_open") &&
         token.map &&
-        token.level > listItem.level
+        token.level === listItem.level + 1
       ) {
-        // Butter flattens nested list items into PM siblings. End the parent
-        // before its first child list so their source ranges cannot overlap.
+        // Butter flattens only a directly nested list into PM siblings.
+        // A list owned by an inner quote/callout remains inside that container
+        // and must not truncate the outer item's source range.
         openEndLines[listItemIndex] = token.map[0];
       }
     }
@@ -78,6 +81,9 @@ export type TokenHandler = (state: ParseState, tok: Token) => void;
 export class ParseState {
   stack: StackFrame[];
   marks: readonly Mark[];
+  // HTML can nest the same styling type, including distinct font attrs.
+  // Closing the inner scope restores the outer mark instead of removing it.
+  private markScopes = new Map<MarkType, Array<Mark | null>>();
 
   // ── Source-preservation context (optional; null in plain parse) ──
   // When the parser is driven with source-map context, these fields
@@ -209,8 +215,9 @@ export class ParseState {
     const finalAttrs = this.withRange(attrs);
     const node = this.buildNode(type, finalAttrs, []);
     // Apply active marks (set by inline mark open tokens) to the
-    // created node. Without this, an inline atom (wikilink, tag,
-    // math, embed, footnote ref/inline, block id, image) inside an
+    // created node, subject to shared native metadata/navigation ownership.
+    // Without this, an inline atom (wikilink, tag, math, embed, footnote
+    // ref/inline, image) inside an
     // emphasis / strong / highlight range loses the surrounding
     // mark. The serializer then opens-then-closes the mark across
     // the atom - emitting `*foo *[[link]]* bar*` instead of `*foo
@@ -221,7 +228,8 @@ export class ParseState {
     // are only opened inside `inline` token walks), so this is a
     // no-op for blocks. Only inline atoms inside marked ranges see
     // any change.
-    const marked = this.marks.length > 0 ? node.mark(this.marks) : node;
+    const allowedMarks = node.isInline ? this.marks.filter(mark => allowsInlineMark(node, mark)) : this.marks;
+    const marked = allowedMarks.length > 0 ? node.mark(allowedMarks) : node;
     this.top().content.push(marked);
   }
 
@@ -343,11 +351,23 @@ export class ParseState {
   }
 
   openMark(type: MarkType, attrs: Record<string, unknown> = {}) {
+    const scopes = this.markScopes.get(type) ?? [];
+    scopes.push(type.isInSet(this.marks) ?? null);
+    this.markScopes.set(type, scopes);
     this.marks = type.create(attrs).addToSet(this.marks);
   }
 
   closeMark(type: MarkType) {
     this.marks = type.removeFromSet(this.marks);
+    const scopes = this.markScopes.get(type);
+    const outer = scopes?.pop();
+    if (outer) this.marks = outer.addToSet(this.marks);
+    if (!scopes?.length) this.markScopes.delete(type);
+  }
+
+  resetInlineMarks() {
+    this.marks = Mark.none;
+    this.markScopes.clear();
   }
 
 }
@@ -561,13 +581,35 @@ function buildHandlers(): Record<string, TokenHandler> {
     s.addText(stripTrailingNL(t.content));
     s.pop();
   };
+  h.html_code_block = (s, t) => {
+    s.push(schema.nodes.code_block, { language: t.info || "" });
+    // Numeric CR/LF references are opaque payload, including final controls.
+    s.addText(t.content);
+    s.pop();
+  };
   h.hr = (s) => s.addNode(schema.nodes.horizontal_rule);
 
   // Leaf block nodes
   h.math_block = (s, t) =>
     s.addNode(schema.nodes.math_block, { value: t.content });
   h.block_comment = (s, t) =>
-    s.addNode(schema.nodes.block_comment, { value: t.content });
+    s.addNode(schema.nodes.block_comment, {
+      value: t.content,
+      nativeTags: (t.meta as { nativeTags?: string[] } | null)?.nativeTags ?? [],
+      nativeSyntax: (t.meta as { nativeSyntax?: string } | null)?.nativeSyntax ?? "html",
+    });
+  h.html_comment_raw = (s, t) =>
+    s.addNode(schema.nodes.raw_block, {
+      raw: t.content,
+      reason: "HTML comment block with literal visible suffix",
+      sourceKind: "native-html-comment",
+    });
+  h.native_html_source_block = (s, t) =>
+    s.addNode(schema.nodes.raw_block, {
+      raw: t.content,
+      reason: "Native HTML source block",
+      sourceKind: "native-html-block",
+    });
   h.obsidian_embed = (s, t) =>
     s.addNode(schema.nodes.obsidian_embed, { src: t.content });
   h.footnote_def = (s, t) =>
@@ -598,33 +640,65 @@ function buildHandlers(): Record<string, TokenHandler> {
   // have a source pattern (softbreak, hardbreak) correctly end up
   // with `sourceRange: null` and the preservation hook skips them.
   h.inline = (s, t) => {
+    // Task syntax belongs to the first source paragraph, before inline
+    // escapes/entities are decoded. Literal `\\[ \\]` must remain text even
+    // though its rendered textContent looks like a checkbox marker.
+    const paragraph = s.top();
+    const item = s.stack[s.stack.length - 2];
+    if (paragraph.type.name === "paragraph" && item?.type.name === "list_item" && item.content.length === 0) {
+      const task = TASK_RE.exec(t.content);
+      if (task) {
+        item.attrs.kind = "task";
+        item.attrs.checked = task[1].toLowerCase() === "x";
+      }
+    }
     if (!t.children) return;
     const savedIdx = s.currentTokIdx;
     s.currentTokIdx = -1;
+    s.resetInlineMarks();
+    let authoredCommentId: string | null = null;
     try {
       for (let index = 0; index < t.children.length; index++) {
         const c = t.children[index];
+        if (c.type === "obsidian_comment_close") {
+          const id = metaStr(c, "nativeBlockId");
+          if (id) authoredCommentId = id;
+        } else if (c.type === "block_id") {
+          // A later ordinary terminal carrier supersedes an earlier comment
+          // carrier in the same native paragraph. Do not invent aliases.
+          authoredCommentId = null;
+        }
         // HTML breaks already supply the line ending. A physical newline
         // beside one is source layout, not an additional visual break.
-        if (c.type === "softbreak") {
+        const isHtmlBreak = (token?: Token) => token &&
+          (token.type === "hardbreak" || token.type === "softbreak") &&
+          /^<br\s*\/?\s*>$/i.test(token.markup);
+        if (c.type === "softbreak" && !isHtmlBreak(c)) {
           let before = index - 1;
           let after = index + 1;
           const isBoundary = (token: Token) => token.nesting !== 0
+            || /^html_.*_(?:open|close)$/.test(token.type)
             || (token.type === "text" && token.content === "");
           while (before >= 0 && isBoundary(t.children[before])) before--;
           while (after < t.children.length && isBoundary(t.children[after])) after++;
           const previous = t.children[before];
           const next = t.children[after];
-          if ((previous?.type === "text" && /<br\s*\/?\s*>\s*$/i.test(previous.content))
-            || (next?.type === "text" && /^\s*<br\s*\/?\s*>/i.test(next.content))) continue;
+          if (isHtmlBreak(previous) || isHtmlBreak(next)) continue;
         }
         s.nextInlineTokenType = t.children[index + 1]?.type ?? null;
         const fn = handlers[c.type];
         if (fn) fn(s, c);
       }
+      if (authoredCommentId) {
+        // The comment's original hidden payload remains exact. Canonical
+        // output protects that payload with standard hidden HTML and emits
+        // this native metadata carrier outside it; source no-op retains %%.
+        s.addNode(schema.nodes.block_id, { id: authoredCommentId });
+      }
     } finally {
       s.nextInlineTokenType = null;
       s.currentTokIdx = savedIdx;
+      s.resetInlineMarks();
     }
   };
 
@@ -662,6 +736,11 @@ function buildHandlers(): Record<string, TokenHandler> {
   h.html_sub_close = (s) => s.closeMark(schema.marks.subscript);
   h.html_kbd_open = (s) => s.openMark(schema.marks.kbd);
   h.html_kbd_close = (s) => s.closeMark(schema.marks.kbd);
+  h.html_code_open = (s) => s.openMark(schema.marks.code);
+  h.html_code_close = (s) => s.closeMark(schema.marks.code);
+  h.html_comment_open = (s) => s.openMark(schema.marks.comment);
+  h.html_comment_close = (s) => s.closeMark(schema.marks.comment);
+  h.html_inline_boundary = () => {};
   // <mark> opens the highlight mark. We deliberately DON'T set the
   // `html: true` attr here - the form choice is cosmetic, and keeping
   // the attr breaks round-trip when overlap forces HTML form:
@@ -718,6 +797,22 @@ function buildHandlers(): Record<string, TokenHandler> {
       title: t.attrGet("title") || null,
     });
   h.link_close = (s) => s.closeMark(schema.marks.link);
+  h.link_occurrence_open = (s, t) => {
+    const fields = t.meta as Record<string, unknown>;
+    const outer = fields.syntax === "reference" ? s.marks.filter(mark => !["link", "link_occurrence", "comment"].includes(mark.type.name))
+      .map(mark => ({ type: mark.type.name, attrs: mark.attrs })) : null;
+    s.openMark(schema.marks.link_occurrence, { ...fields, labelOuterMarks: outer });
+  };
+  h.link_occurrence_close = (s) => s.closeMark(schema.marks.link_occurrence);
+  h.empty_link = (s, t) => s.addNode(schema.nodes.empty_link, {
+    ...(() => {
+      const owner = (t.meta as { linkOccurrence?: { syntax?: string; reference?: string; referenceForm?: string; resolved?: boolean } } | null)?.linkOccurrence;
+      return owner?.syntax === "reference" ? { href: "", title: null, sourceSyntax: "reference", reference: owner.reference,
+        referenceForm: owner.referenceForm, resolved: owner.resolved } : { href: t.attrGet("href") || "", title: t.attrGet("title") || null,
+        sourceSyntax: owner?.syntax === "html" ? "html" : "inline" };
+    })(),
+  });
+  h.comment_navigation = (s, t) => s.addNode(schema.nodes.comment_navigation, t.meta as Record<string, unknown>);
 
   // code_inline: single token -> open mark, add text, close mark
   h.code_inline = (s, t) => {
@@ -731,38 +826,31 @@ function buildHandlers(): Record<string, TokenHandler> {
   // newline would end an ATX heading.
   h.hardbreak = (s) => s.addNode(schema.nodes.hard_break);
   h.softbreak = (s) => s.addNode(schema.nodes.softbreak);
-  h.text = (s, t) => {
-    // Butter parses with raw HTML disabled, so standard `<br>` tags arrive
-    // inside text tokens. `<br>` is the exact hard-break fallback and
-    // `<br />` the exact soft-break fallback where CommonMark has no native
-    // edge/consecutive spelling. Both remain portable HTML to other readers.
-    const breakPattern = /<br\s*(\/?)>/gi;
-    if (breakPattern.test(t.content)) {
-      breakPattern.lastIndex = 0;
-      let cursor = 0;
-      let match: RegExpExecArray | null;
-      while ((match = breakPattern.exec(t.content)) !== null) {
-        const before = t.content.slice(cursor, match.index);
-        if (before) s.addText(before);
-        s.addNode(match[1] === "/"
-          ? schema.nodes.softbreak
-          : schema.nodes.hard_break);
-        cursor = match.index + match[0].length;
-      }
-      const tail = t.content.slice(cursor);
-      const isSerializerTagBoundary =
-        s.nextInlineTokenType === "obsidian_tag" && tail === " ";
-      if (tail && !isSerializerTagBoundary) s.addText(tail);
-      return;
-    }
-    s.addText(t.content);
-  };
+  // Token rules own syntax recognition before escapes/entities are decoded.
+  // A decoded literal `<br>` must remain text, just like any other literal.
+  h.text = (s, t) => s.addText(t.content);
 
   h.image = (s, t) => {
-    // Image labels can tokenize into multiple children when they contain
-    // escapes/entities/format-looking punctuation. Alt semantics are the
-    // concatenated visible content, not merely the first token.
-    const rawAlt: string = t.children?.map((child) => child.content).join("") ?? "";
+    const occurrence = (t.meta as { linkOccurrence?: { syntax?: string; reference?: string; referenceForm?: string; resolved?: boolean } } | null)?.linkOccurrence;
+    const ownership = occurrence?.syntax === "reference" ? {
+      sourceSyntax: "reference", reference: occurrence.reference, referenceForm: occurrence.referenceForm,
+      resolved: occurrence.resolved, sourceAlt: t.content, altSignature: "",
+    } : { sourceSyntax: occurrence?.syntax === "html" ? "html" : "inline" };
+    // Native image alt is an inactive literal string, including Markdown,
+    // tag/wiki/footnote-looking characters. Only escapes/entities decode;
+    // interpreting token children would erase authored delimiter characters.
+    const rawAlt: string = occurrence?.syntax === "html" ? t.content : md.utils.unescapeAll(t.content ?? "");
+    if (occurrence?.syntax === "html") {
+      const dimension = (value: string | null): number | null => value && /^\d+$/.test(value) ? Number(value) : null;
+      s.addNode(schema.nodes.image, { ...ownership, src: t.attrGet("src"), alt: rawAlt || null, title: t.attrGet("title") || null,
+        width: dimension(t.attrGet("width")), height: dimension(t.attrGet("height")), displayMode: null });
+      return;
+    }
+    if (occurrence?.syntax === "reference") {
+      s.addNode(schema.nodes.image, { ...ownership, src: t.attrGet("src"), alt: rawAlt || null, title: t.attrGet("title") || null,
+        width: null, height: null, displayMode: null });
+      return;
+    }
     const authoredAlt = t.content ?? "";
     const authoredSuffix = /\|(full|\d+(?:x\d+)?)$/i.exec(authoredAlt);
     let suffixIsMetadata = false;
@@ -788,6 +876,7 @@ function buildHandlers(): Record<string, TokenHandler> {
       : null;
     if (fullMatch) {
       s.addNode(schema.nodes.image, {
+        ...ownership,
         src: t.attrGet("src"),
         alt: fullMatch[1] || null,
         title: t.attrGet("title") || null,
@@ -802,6 +891,7 @@ function buildHandlers(): Record<string, TokenHandler> {
       : null;
     s.addNode(schema.nodes.image, m
       ? {
+          ...ownership,
           src: t.attrGet("src"), alt: m[1] || null,
           title: t.attrGet("title") || null,
           width: parseInt(m[2], 10),
@@ -809,6 +899,7 @@ function buildHandlers(): Record<string, TokenHandler> {
           displayMode: null,
         }
       : {
+          ...ownership,
           src: t.attrGet("src"), alt: rawAlt || null,
           title: t.attrGet("title") || null,
           width: null, height: null,
@@ -820,13 +911,18 @@ function buildHandlers(): Record<string, TokenHandler> {
     s.addNode(schema.nodes.wikilink, {
       target: metaStr(t, "target") || t.content,
       alias: metaStr(t, "alias"),
+      emptyAlias: /\|\]\]$/.test(metaStr(t, "rawNavigationSource")),
+      literalSource: s.marks.some(mark => mark.type.name === "comment")
+        ? metaStr(t, "rawNavigationSource") || null : null,
     });
   h.obsidian_tag = (s, t) =>
     s.addNode(schema.nodes.obsidian_tag, { tag: t.content });
   h.inline_math = (s, t) =>
     s.addNode(schema.nodes.inline_math, { value: t.content });
   h.obsidian_embed_inline = (s, t) =>
-    s.addNode(schema.nodes.obsidian_embed_inline, { src: t.content });
+    s.addNode(schema.nodes.obsidian_embed_inline, { src: t.content,
+      literalSource: s.marks.some(mark => mark.type.name === "comment")
+        ? metaStr(t, "rawNavigationSource") || null : null });
   h.inline_footnote = (s, t) =>
     s.addNode(schema.nodes.inline_footnote, { content: t.content });
   h.footnote_ref = (s, t) =>
@@ -844,7 +940,8 @@ export const handlers: Record<string, TokenHandler> = { ...buildHandlers() };
 
 function firstUnhandledToken(tokens: readonly Token[]): Token | null {
   for (const token of tokens) {
-    if (!handlers[token.type]) return token;
+    const sourceMeta = token.meta as { nativeUnsupportedAnchor?: boolean; nativeUnsupportedHtml?: boolean } | null;
+    if (!handlers[token.type] || sourceMeta?.nativeUnsupportedAnchor || sourceMeta?.nativeUnsupportedHtml) return token;
     // Only `inline` dispatches its children as independent semantic tokens.
     // Children on leaf tokens such as image describe that token's payload and
     // are deliberately consumed by the leaf handler itself.
@@ -900,7 +997,7 @@ function transformTaskItems(node: PMNode): PMNode {
   const base = changed
     ? node.type.create(node.attrs, Fragment.fromArray(mapped), node.marks)
     : node;
-  if (base.type.name !== "list_item") return base;
+  if (base.type.name !== "list_item" || base.attrs.kind !== "task") return base;
   const first = base.firstChild;
   if (!first || first.type.name !== "paragraph") return base;
   const m = first.textContent.match(TASK_RE);
@@ -944,7 +1041,7 @@ export function parse(markdown: string): PMNode | null {
   }
   while (state.stack.length > 1) state.pop();
   const doc = state.pop();
-  return transformTaskItems(doc);
+  return canonicalizeLinkOccurrences(stampLinkOccurrenceLabels(seedLinkOccurrences(transformTaskItems(doc))));
 }
 
 /**
@@ -1122,10 +1219,17 @@ function inlineAtomPattern(node: PMNode): string | null {
     case "wikilink": {
       const target = (node.attrs.target as string) || "";
       const alias = (node.attrs.alias as string) || "";
-      return alias ? `[[${target}|${alias}]]` : `[[${target}]]`;
+      return alias || node.attrs.emptyAlias === true ? `[[${target}|${alias}]]` : `[[${target}]]`;
     }
     case "obsidian_tag":
       return `#${node.attrs.tag as string}`;
+    case "empty_link":
+    case "comment_navigation":
+      // An inactive prefix may originate from a nonempty authored label.
+      // Searching a synthesized [] codec could borrow another occurrence,
+      // including literal code/image payload. Preserve the whole unchanged
+      // block; synthesize exact attrs when this inline owner is edited.
+      return null;
     case "inline_math":
       return `$${node.attrs.value as string}$`;
     case "obsidian_embed_inline":
@@ -1360,7 +1464,7 @@ function parseWithSourceMapInner(markdown: string): SourceMapResult | null {
     blockRanges.push(r ?? { start: -1, end: -1 });
   }
 
-  return { doc: docWithInlineRanges, blockRanges };
+  return { doc: canonicalizeLinkOccurrences(stampLinkOccurrenceLabels(seedLinkOccurrences(docWithInlineRanges))), blockRanges };
 }
 
 // ═══════════════════════════════════════════════
@@ -1557,7 +1661,7 @@ export function parseIncrementally(
     Fragment.fromArray(newChildren),
     oldDoc.marks,
   );
-  return { doc: newDoc, blockRanges };
+  return { doc: canonicalizeLinkOccurrences(newDoc), blockRanges };
 }
 
 // ═══════════════════════════════════════════════
