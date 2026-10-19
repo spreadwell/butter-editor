@@ -37,7 +37,7 @@
  *      + text alternations. Round-trips cleanly; the original
  *      shape reparses with the softbreak as an explicit node. Code/comment
  *      payload remains opaque, including its literal line endings.
- *   5. Extra top-level empty paragraphs -> dropped. An entirely blank doc
+ *   5. Extra unaligned top-level empty paragraphs -> dropped. An entirely blank doc
  *      retains one persisted paragraph; presentation retains cursor blocks.
  *
  * All other PM shapes pass through unchanged.
@@ -57,6 +57,7 @@ import {
 import { __mdit } from "./bridge/common";
 import { allowsInlineMark } from "./inline-mark-policy";
 import { canonicalizeLinkOccurrences, projectLinkOccurrences } from "./link-occurrence";
+import { textAlignment } from "./text-alignment";
 
 export interface NormalizeDocForSaveOptions {
   /**
@@ -327,7 +328,7 @@ function dropTopLevelEmptyParagraphs(doc: PMNode): PMNode | null {
   const kids: PMNode[] = [];
   for (let i = 0; i < doc.childCount; i++) {
     const c = doc.child(i);
-    if (c.type.name === "paragraph" && c.childCount === 0) {
+    if (isEmptyParagraph(c)) {
       changed = true;
       continue;
     }
@@ -400,6 +401,8 @@ function promoteSoleEmbedInline(
   schema: Schema,
 ): PMNode | null {
   if (paragraph.type.name !== "paragraph") return null;
+  // An explicit layout wrapper is durable, including around a sole embed.
+  if (textAlignment(paragraph.attrs.textAlign)) return null;
   if (paragraph.childCount !== 1) return null;
   const only = paragraph.child(0);
   if (only.type.name !== "obsidian_embed_inline") return null;
@@ -423,13 +426,16 @@ function promoteSoleEmbedInline(
 }
 
 function isEmptyParagraph(node: PMNode): boolean {
-  return node.type.name === "paragraph" && node.childCount === 0;
+  // Aligned paragraphs have an exact HTML representation even with no text.
+  // They own layout intent and must survive Enter, save and reopen.
+  return node.type.name === "paragraph" && node.childCount === 0 && !textAlignment(node.attrs.textAlign);
 }
 
 /**
  * Canonicalize transient empty paragraphs that Markdown cannot encode as
  * durable child blocks. Blank source lines separate blocks; they do not create
- * empty paragraph nodes between them.
+ * empty paragraph nodes between them. Explicit alignment has a durable HTML
+ * wrapper and is never a transient empty paragraph.
  *
  * A list_item is the one schema-sensitive case: it must start with a
  * paragraph. When its first real block is not a paragraph, retain one empty

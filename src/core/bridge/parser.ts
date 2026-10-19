@@ -5,6 +5,8 @@ import { allowsInlineMark } from "../inline-mark-policy";
 import { stampLinkOccurrenceLabels, canonicalizeLinkOccurrences, seedLinkOccurrences } from "../link-occurrence";
 import { metaStr, __mdit } from "./common";
 import { debug } from "../../integration/debug";
+import { textAlignment } from "../text-alignment";
+import { nativeHighlightColor } from "../native-highlight";
 
 const md = __mdit;
 
@@ -454,7 +456,7 @@ function buildHandlers(): Record<string, TokenHandler> {
     leaveBlockContainer(s);
     s.pop();
   };
-  h.paragraph_open = (s) => s.push(schema.nodes.paragraph);
+  h.paragraph_open = (s, t) => s.push(schema.nodes.paragraph, { textAlign: textAlignment(t.attrGet("data-text-align")) });
   h.paragraph_close = (s) => s.pop();
   h.heading_open = (s, t) => {
     if (isSingleDashSetextHeadingInListItem(s, t)) {
@@ -709,7 +711,9 @@ function buildHandlers(): Record<string, TokenHandler> {
   h.em_close = (s) => s.closeMark(schema.marks.em);
   h.s_open = (s) => s.openMark(schema.marks.strikethrough);
   h.s_close = (s) => s.closeMark(schema.marks.strikethrough);
-  h.highlight_open = (s) => s.openMark(schema.marks.highlight);
+  h.highlight_open = (s, t) => s.openMark(schema.marks.highlight, {
+    color: nativeHighlightColor(t.attrGet("data-highlight")),
+  });
   h.highlight_close = (s) => s.closeMark(schema.marks.highlight);
   h.obsidian_comment_open = (s) => s.openMark(schema.marks.comment);
   h.obsidian_comment_close = (s) => s.closeMark(schema.marks.comment);
@@ -756,7 +760,7 @@ function buildHandlers(): Record<string, TokenHandler> {
     // name are normalised; both `background` and `background-color`
     // are accepted because Obsidian's own MarkdownRenderer treats the
     // shorthand as the highlight colour.
-    let color: string | null = null;
+    let color: string | null = nativeHighlightColor(t.attrGet("data-highlight"));
     for (const [name, value] of (t.attrs) ?? []) {
       if (name === "style") {
         const m = /background(?:-color)?\s*:\s*([^;]+)/i.exec(value);

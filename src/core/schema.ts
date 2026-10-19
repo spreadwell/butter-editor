@@ -12,6 +12,8 @@ import { isCommentMarkdownNavigation, commentMarkdownFootnotes } from "./comment
 import { blockCommentFootnotes, hiddenFootnoteDOM } from "./source-footnotes";
 import { isLinkOccurrence, unresolvedLinkDelimiters } from "./link-occurrence";
 import { isImageSourceOwnership, referenceImageSource, isEmptyLinkSourceOwnership } from "./link-occurrence";
+import { alignmentDOM, textAlignment } from "./text-alignment";
+import { nativeHighlightColor, nativeHighlightName } from "./native-highlight";
 
 /** PM's `Attrs` is `Record<string, any>` — every node-spec toDOM
  *  reads `node.attrs.X` and trips no-unsafe-assignment. This narrows
@@ -45,10 +47,16 @@ const basicNodes: Record<string, NodeSpec> = {
   doc: { content: "block+" },
 
   paragraph: {
+    attrs: { textAlign: { default: null, validate(value: unknown) {
+      if (value !== null && !textAlignment(value)) throw new RangeError("Invalid paragraph alignment");
+    } } },
     content: "inline*",
     group: "block",
-    parseDOM: [{ tag: "p" }],
-    toDOM() { return ["p", 0]; },
+    parseDOM: [{ tag: "p", getAttrs: alignmentDOM }],
+    toDOM(node) {
+      const alignment = textAlignment(node.attrs.textAlign);
+      return alignment ? ["p", { style: `text-align: ${alignment};` }, 0] : ["p", 0];
+    },
   },
 
   heading: {
@@ -861,7 +869,7 @@ const basicMarks: Record<string, MarkSpec> = {
       getAttrs(dom: HTMLElement) {
         const style = dom.getAttribute("style") || "";
         const m = /background(?:-color)?\s*:\s*([^;]+)/i.exec(style);
-        const color = m ? m[1].trim() : null;
+        const color = m ? m[1].trim() : nativeHighlightColor(dom.getAttribute("data-highlight"));
         return { html: false, color };
       },
     }],
@@ -869,6 +877,8 @@ const basicMarks: Record<string, MarkSpec> = {
       const attrs: Record<string, string> = { class: "butter-highlight" };
       if (node.attrs.color) {
         attrs.style = `background-color: ${node.attrs.color}`;
+        const name = nativeHighlightName(node.attrs.color);
+        if (name) attrs["data-highlight"] = name;
       }
       return ["mark", attrs, 0];
     },

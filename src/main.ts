@@ -37,6 +37,7 @@ import {
 } from "./ui/toolbar-layout";
 export type { ToolbarLayoutItem };
 import { toggleMark } from "prosemirror-commands";
+import { toggleNativeHighlight } from "./editor/native-highlight-command";
 import type { MarkType } from "prosemirror-model";
 import {
   contextMenuDefaultLayout,
@@ -97,7 +98,7 @@ import {
 import { openUnifiedLinkEditor } from "./ui/link-editor";
 import { toggleTaskOnCurrentLine } from "./editor/list-operations";
 import { ButterSettingTab } from "./ui/settings-tab";
-import { setPresetColorsProvider } from "./ui/toolbar";
+import { setPresetColorsProvider, BUTTON_REGISTRY, canExecuteConversion, execAlignmentCmd } from "./ui/toolbar";
 import { installWordCountBridge } from "./ui/wordcount-bridge";
 import { WelcomeModal } from "./ui/welcome-modal";
 import {
@@ -2611,6 +2612,22 @@ export default class ButterEditorPlugin extends Plugin {
     butterMarkCommand("toggle-inline-code", tx("Toggle inline code"), "code");
     butterMarkCommand("toggle-strikethrough", tx("Toggle strikethrough"), "strikethrough");
     butterMarkCommand("toggle-highlight", tx("Toggle highlight"), "highlight");
+    // Paragraph layout is also available through the command palette, so
+    // existing customized toolbars need no silent layout migration.
+    for (const id of ["text-align-left", "text-align-center", "text-align-right", "text-align-justify"]) {
+      const button = BUTTON_REGISTRY.get(id);
+      if (!button) continue;
+      this.addCommand({
+        id, name: tx(button.label),
+        checkCallback: checking => {
+          const view = this.app.workspace.getActiveViewOfType(ButterEditorView);
+          const editor = view?.pmViewRef();
+          if (!view?.isEditable() || !editor?.editable || !canExecuteConversion(button, editor.state)) return false;
+          if (!checking) execAlignmentCmd(button, editor);
+          return true;
+        },
+      });
+    }
     this.addCommand({
       id: "toggle-underline",
       name: tx("Underline"),
@@ -2661,13 +2678,14 @@ export default class ButterEditorPlugin extends Plugin {
     return Boolean((active.pm.state.schema.marks as Record<string, MarkType | undefined>)[markName]);
   }
 
-  private toggleButterMark(markName: string, target?: EventTarget | null): boolean {
+  private toggleButterMark(markName: string, target?: EventTarget | null, color?: string): boolean {
     const active = this.resolveButterEditor(target);
     if (!active) return false;
     if (!active.view.isEditable()) return false;
     const mark = (active.pm.state.schema.marks as Record<string, MarkType | undefined>)[markName];
     if (!mark) return false;
-    const handled = toggleMark(mark)(
+    const command = markName === "highlight" && color ? toggleNativeHighlight(color) : toggleMark(mark);
+    const handled = command(
       active.pm.state,
       active.pm.dispatch.bind(active.pm),
       active.pm,
@@ -2735,7 +2753,7 @@ export default class ButterEditorPlugin extends Plugin {
     this.nativeFormattingCommandRestorers = patchNativeFormattingCommands(
       commands,
       (markName) => this.canToggleButterMark(markName),
-      (markName) => this.toggleButterMark(markName),
+      (markName, color) => this.toggleButterMark(markName, undefined, color),
     );
   }
 

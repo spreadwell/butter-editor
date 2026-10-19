@@ -30,7 +30,9 @@
 import { escapeMarkdownText, htmlAttribute, serialize } from "../core/bridge/serializer";
 import { schema } from "../core/schema";
 import { parser } from "../core/parser";
-import type { Node as PMNode } from "prosemirror-model";
+import { Fragment, type Node as PMNode } from "prosemirror-model";
+import { textAlignment, type TextAlignment } from "../core/text-alignment";
+import { nativeHighlightColor } from "../core/native-highlight";
 
 export function htmlToMarkdown(html: string): string {
   // DOMParser parses into an inert document - scripts don't execute,
@@ -54,6 +56,23 @@ export function htmlToMarkdown(html: string): string {
   // lexical run, so '&' + hidden content + 'nbsp;' cannot become an entity.
   body.normalize();
   return serializeNode(body).trim();
+}
+
+/** Apply inherited clipboard layout through the same schema and serializer
+ * as ordinary editing. Explicitly aligned descendants retain their override;
+ * heading syntax and native reference targets are never decorated. */
+function alignClipboardMarkdown(source: string, alignment: TextAlignment): string {
+  const doc = parser.parse(source);
+  if (!doc) return source;
+  const apply = (node: PMNode): PMNode => {
+    if (node.type.name === "paragraph") return node.type.create(
+      { ...node.attrs, textAlign: textAlignment(node.attrs.textAlign) ?? alignment }, node.content, node.marks,
+    );
+    if (node.isLeaf) return node;
+    const children: PMNode[] = []; node.forEach(child => children.push(apply(child)));
+    return node.copy(Fragment.fromArray(children));
+  };
+  return serialize(apply(doc));
 }
 
 /** Read only inert clipboard DOM. Explicit display/hidden removes the whole
@@ -96,7 +115,13 @@ export function serializeNode(node: Node): string {
   if (node.nodeType !== Node.ELEMENT_NODE) return "";
   const el = node as HTMLElement;
   const children = Array.from(el.childNodes).map(serializeNode).join("");
-  switch (el.tagName.toLowerCase()) {
+  const tag = el.tagName.toLowerCase();
+  if (["p", "div", "center"].includes(tag) || tag === "span" &&
+      (el.style.display === "block" || el.style.display === "inline-block" && el.style.width === "100%")) {
+    const alignment = textAlignment((el.style.textAlign || el.getAttribute("align") || (tag === "center" ? "center" : "")).toLowerCase());
+    if (alignment) return `\n${alignClipboardMarkdown(children, alignment)}\n`;
+  }
+  switch (tag) {
     // Inline marks with both HTML and markdown forms - emit HTML form.
     case "strong":
     case "b":
@@ -118,8 +143,11 @@ export function serializeNode(node: Node): string {
       return `<sub>${children}</sub>`;
     case "kbd":
       return `<kbd>${children}</kbd>`;
-    case "mark":
-      return `<mark>${children}</mark>`;
+    case "mark": {
+      const background = /(?:^|;)\s*background(?:-color)?\s*:\s*([^;]+)/i.exec(el.getAttribute("style") ?? "");
+      const color = background?.[1].trim() || nativeHighlightColor(el.getAttribute("data-highlight"));
+      return color ? `<mark style="background:${htmlAttribute(color)}">${children}</mark>` : `<mark>${children}</mark>`;
+    }
     case "font": {
       const color = el.getAttribute("color");
       const face = el.getAttribute("face");

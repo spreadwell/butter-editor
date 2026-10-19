@@ -1,4 +1,5 @@
 import type { Node as PMNode } from "prosemirror-model";
+import { textAlignment } from "./text-alignment";
 
 export type FlatListKind = "bullet" | "ordered" | "task";
 
@@ -50,7 +51,7 @@ export function listItemHasSyntheticLeadingParagraph(
     listKind(node) !== "task" &&
     node.childCount > 1 &&
     node.firstChild?.type.name === "paragraph" &&
-    node.firstChild.childCount === 0;
+    node.firstChild.childCount === 0 && !textAlignment(node.firstChild.attrs.textAlign);
 }
 
 /**
@@ -86,7 +87,7 @@ export function listItemIsMarkerOnly(node: PMNode): boolean {
     listKind(node) !== "task" &&
     node.childCount === 1 &&
     node.firstChild?.type.name === "paragraph" &&
-    node.firstChild.childCount === 0;
+    node.firstChild.childCount === 0 && !textAlignment(node.firstChild.attrs.textAlign);
 }
 
 /**
@@ -109,7 +110,8 @@ export function listItemRequiresLooseParentEdge(
   }
   const owner = parent.child(entry.parentIndex);
   const trailingBlock = owner.lastChild;
-  if (trailingBlock?.type.name !== "paragraph" || trailingBlock.childCount === 0) {
+  if (trailingBlock?.type.name !== "paragraph" ||
+      trailingBlock.childCount === 0 && !textAlignment(trailingBlock.attrs.textAlign)) {
     return false;
   }
   const node = parent.child(index);

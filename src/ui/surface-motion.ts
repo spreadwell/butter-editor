@@ -65,6 +65,11 @@ export function attachMenuSurfaceMotion(
 ): void {
   const dom = (menu as Menu & { dom?: HTMLElement }).dom;
   if (dom) attachSurfaceMotion(dom, kind);
+  // Obsidian caches submenu objects and reopens them while their parent stays
+  // live. Their native hide must finish before the next hover can reuse them:
+  // delaying it leaves stale parent links and invisible/noninteractive chrome.
+  // Keep the entrance treatment, but let native submenu closure stay atomic.
+  if (kind === "submenu") return;
   if (patchedMenus.has(menu)) return;
   patchedMenus.add(menu);
 

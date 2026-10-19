@@ -1,5 +1,6 @@
 import type { Command } from "prosemirror-state";
 import { TextSelection } from "prosemirror-state";
+import { textAlignment } from "../core/text-alignment";
 
 /** Exit a callout when Enter is pressed on its trailing empty paragraph.
  *
@@ -34,7 +35,7 @@ export const exitCalloutFromTrailingEmptyParagraph: Command = (
   const originalCalloutEnd = calloutPos + callout.nodeSize;
   const emptyFrom = $from.before($from.depth);
   const emptyTo = $from.after($from.depth);
-  const paragraph = state.schema.nodes.paragraph.create();
+  const paragraph = state.schema.nodes.paragraph.create({ textAlign: textAlignment($from.parent.attrs.textAlign) });
   const continuationMarks = state.storedMarks ?? $from.marks();
 
   const tr = state.tr.delete(emptyFrom, emptyTo);

@@ -1,5 +1,13 @@
 // Release-discovery copy, grouped here so every supported locale stays in lockstep.
 export const recentDe = {
+  "Alignment and Obsidian highlight colors": "Absatzausrichtung und Hervorhebungsfarben von Obsidian",
+  "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 bietet Absatzausrichtung, unterstützt die sechs Hervorhebungsfarben von Obsidian und sorgt für zuverlässige Untermenüs im Kontextmenü.",
+  "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Richten Sie Absätze über die Symbolleiste oder Befehlspalette linksbündig, zentriert, rechtsbündig oder im Blocksatz aus.",
+  "Edit supported alignment HTML while keeping surrounding Markdown and links intact.": "Bearbeiten Sie unterstütztes HTML zur Ausrichtung, ohne das umgebende Markdown oder Links zu verändern.",
+  "Use Obsidian's six highlight colors and color commands in Butter Editor.": "Verwenden Sie die sechs Hervorhebungsfarben und Farbbefehle von Obsidian in Butter Editor.",
+  "Follow Obsidian's preferred text size and render math with its current engine.": "Übernehmen Sie die bevorzugte Textgröße von Obsidian und lassen Sie Formeln mit dessen aktueller Engine darstellen.",
+  "Move between context-menu submenus repeatedly without reopening the menu.": "Wechseln Sie beliebig oft zwischen Untermenüs im Kontextmenü, ohne das Menü erneut öffnen zu müssen.",
+  "Keep aligned task checkboxes on the first line as text wraps.": "Kontrollkästchen ausgerichteter Aufgaben bleiben bei Zeilenumbrüchen in der ersten Zeile.",
   "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "Fügen Sie Feedback bei Bedarf aktuelle Speicherfehler bei – mit Vorschau, ohne Notizinhalte oder Dateipfade.",
   "More reliable saves and optional underline": "Zuverlässigeres Speichern und optionale Unterstreichung",
   "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 behebt weitere Probleme beim alltäglichen Speichern, bietet Wiederherstellungskopien und native HTML-Vorschauen und ergänzt optionale Bedienelemente zum Unterstreichen.",
@@ -116,6 +124,14 @@ export const recentDe = {
 } as const;
 
 export const recentEs = {
+  "Alignment and Obsidian highlight colors": "Alineación y colores de resaltado de Obsidian",
+  "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 añade alineación de párrafos y admite los seis colores de resaltado de Obsidian, con submenús contextuales fiables.",
+  "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Alinea los párrafos a la izquierda, al centro, a la derecha o justificados desde la barra de herramientas o la paleta de comandos.",
+  "Edit supported alignment HTML while keeping surrounding Markdown and links intact.": "Edita el HTML de alineación compatible sin alterar el Markdown ni los enlaces que lo rodean.",
+  "Use Obsidian's six highlight colors and color commands in Butter Editor.": "Usa los seis colores de resaltado y los comandos de color de Obsidian en Butter Editor.",
+  "Follow Obsidian's preferred text size and render math with its current engine.": "Respeta el tamaño de texto preferido de Obsidian y muestra las fórmulas con su motor actual.",
+  "Move between context-menu submenus repeatedly without reopening the menu.": "Pasa de un submenú contextual a otro tantas veces como quieras sin volver a abrir el menú.",
+  "Keep aligned task checkboxes on the first line as text wraps.": "Las casillas de las tareas alineadas permanecen en la primera línea cuando el texto se ajusta.",
   "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "Incluye opcionalmente detalles de fallos de guardado recientes en tus comentarios, con una vista previa y sin contenido de notas ni rutas de archivos.",
   "More reliable saves and optional underline": "Guardado más fiable y subrayado opcional",
   "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 resuelve más problemas de guardado cotidianos, añade copias de recuperación y vistas previas nativas de HTML, y ofrece controles opcionales de subrayado.",
@@ -232,6 +248,14 @@ export const recentEs = {
 } as const;
 
 export const recentFr = {
+  "Alignment and Obsidian highlight colors": "Alignement et couleurs de surlignage d’Obsidian",
+  "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 ajoute l’alignement des paragraphes et prend en charge les six couleurs de surlignage d’Obsidian, avec des sous-menus contextuels fiables.",
+  "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Alignez les paragraphes à gauche, au centre, à droite ou en mode justifié depuis la barre d’outils ou la palette de commandes.",
+  "Edit supported alignment HTML while keeping surrounding Markdown and links intact.": "Modifiez le HTML d’alignement pris en charge sans altérer le Markdown ni les liens qui l’entourent.",
+  "Use Obsidian's six highlight colors and color commands in Butter Editor.": "Utilisez les six couleurs de surlignage et les commandes de couleur d’Obsidian dans Butter Editor.",
+  "Follow Obsidian's preferred text size and render math with its current engine.": "Respectez la taille de texte préférée d’Obsidian et affichez les formules avec son moteur actuel.",
+  "Move between context-menu submenus repeatedly without reopening the menu.": "Passez plusieurs fois d’un sous-menu contextuel à l’autre sans rouvrir le menu.",
+  "Keep aligned task checkboxes on the first line as text wraps.": "Les cases à cocher des tâches alignées restent sur la première ligne lorsque le texte revient à la ligne.",
   "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "Joignez, si vous le souhaitez, les détails des échecs récents d’enregistrement à vos commentaires, avec un aperçu et sans contenu de note ni chemin de fichier.",
   "More reliable saves and optional underline": "Enregistrement plus fiable et soulignement facultatif",
   "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 corrige davantage de problèmes d'enregistrement au quotidien, ajoute des copies de récupération et des aperçus HTML natifs, et propose des commandes de soulignement facultatives.",
@@ -348,6 +372,14 @@ export const recentFr = {
 } as const;
 
 export const recentJa = {
+  "Alignment and Obsidian highlight colors": "段落の配置と Obsidian のハイライト色",
+  "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 では段落の配置を設定でき、Obsidian の6色のハイライトに対応しました。コンテキストメニューのサブメニューも安定して操作できます。",
+  "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "ツールバーやコマンドパレットから、段落を左揃え、中央揃え、右揃え、両端揃えにできます。",
+  "Edit supported alignment HTML while keeping surrounding Markdown and links intact.": "周囲の Markdown やリンクを保ったまま、対応する配置指定の HTML を編集できます。",
+  "Use Obsidian's six highlight colors and color commands in Butter Editor.": "Butter Editor で Obsidian の6色のハイライトと色変更コマンドを使えます。",
+  "Follow Obsidian's preferred text size and render math with its current engine.": "Obsidian の文字サイズ設定を反映し、現在の数式エンジンで数式を表示します。",
+  "Move between context-menu submenus repeatedly without reopening the menu.": "メニューを開き直すことなく、コンテキストメニューのサブメニュー間を繰り返し移動できます。",
+  "Keep aligned task checkboxes on the first line as text wraps.": "配置を指定したタスクでは、テキストが折り返されてもチェックボックスは最初の行に表示されます。",
   "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "最近の保存失敗の詳細を、プレビューで確認してから任意でフィードバックに添付できます。ノートの内容やファイルパスは含まれません。",
   "More reliable saves and optional underline": "より確実な保存と任意で使える下線機能",
   "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 では、日常的な保存操作の問題をさらに修正し、復元用コピーとネイティブ HTML プレビューを追加しました。下線の操作も任意で利用できます。",
@@ -464,6 +496,14 @@ export const recentJa = {
 } as const;
 
 export const recentKo = {
+  "Alignment and Obsidian highlight colors": "문단 정렬과 Obsidian 강조 색상",
+  "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0은 문단 정렬과 Obsidian의 여섯 가지 강조 색상을 지원하며, 상황에 맞는 메뉴의 하위 메뉴가 안정적으로 동작합니다.",
+  "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "도구 모음이나 명령 팔레트에서 문단을 왼쪽, 가운데, 오른쪽 또는 양쪽으로 정렬할 수 있습니다.",
+  "Edit supported alignment HTML while keeping surrounding Markdown and links intact.": "주변 Markdown과 링크를 그대로 유지하면서 지원되는 정렬 HTML을 편집할 수 있습니다.",
+  "Use Obsidian's six highlight colors and color commands in Butter Editor.": "Butter Editor에서 Obsidian의 여섯 가지 강조 색상과 색상 명령을 사용할 수 있습니다.",
+  "Follow Obsidian's preferred text size and render math with its current engine.": "Obsidian의 텍스트 크기 설정을 따르고 현재 수식 엔진으로 수식을 표시합니다.",
+  "Move between context-menu submenus repeatedly without reopening the menu.": "메뉴를 다시 열지 않고도 상황에 맞는 메뉴의 하위 메뉴 사이를 반복해서 이동할 수 있습니다.",
+  "Keep aligned task checkboxes on the first line as text wraps.": "정렬된 할 일의 텍스트가 줄 바꿈되어도 체크박스는 첫 번째 줄에 유지됩니다.",
   "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "최근 저장 실패 세부 정보를 미리 확인한 뒤 선택적으로 피드백에 포함할 수 있습니다. 노트 내용이나 파일 경로는 포함되지 않습니다.",
   "More reliable saves and optional underline": "더 안정적인 저장과 선택적으로 사용할 수 있는 밑줄",
   "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2는 일상적인 저장 작업에서 발생하는 문제를 추가로 수정하고, 복구 사본과 기본 HTML 미리보기를 추가하며, 밑줄 기능을 선택적으로 사용할 수 있게 합니다.",
@@ -580,6 +620,14 @@ export const recentKo = {
 } as const;
 
 export const recentPt = {
+  "Alignment and Obsidian highlight colors": "Alinhamento e cores de realce do Obsidian",
+  "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "O Butter Editor 0.13.0 acrescenta alinhamento de parágrafos e suporte para as seis cores de realce do Obsidian, com submenus de contexto fiáveis.",
+  "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Alinhe parágrafos à esquerda, ao centro, à direita ou justificados a partir da barra de ferramentas ou da paleta de comandos.",
+  "Edit supported alignment HTML while keeping surrounding Markdown and links intact.": "Edite o HTML de alinhamento suportado sem alterar o Markdown nem as ligações em redor.",
+  "Use Obsidian's six highlight colors and color commands in Butter Editor.": "Utilize as seis cores de realce e os comandos de cor do Obsidian no Butter Editor.",
+  "Follow Obsidian's preferred text size and render math with its current engine.": "Respeite o tamanho de texto preferido do Obsidian e apresente fórmulas com o seu motor atual.",
+  "Move between context-menu submenus repeatedly without reopening the menu.": "Alterne repetidamente entre submenus de contexto sem voltar a abrir o menu.",
+  "Keep aligned task checkboxes on the first line as text wraps.": "As caixas de verificação das tarefas alinhadas permanecem na primeira linha quando o texto muda de linha.",
   "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "Inclua opcionalmente detalhes de falhas de gravação recentes nos comentários, com uma pré-visualização e sem conteúdo de notas nem caminhos de ficheiros.",
   "More reliable saves and optional underline": "Maior fiabilidade ao guardar e sublinhado opcional",
   "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 corrige mais problemas comuns ao guardar, acrescenta cópias de recuperação e pré-visualizações HTML nativas e disponibiliza controlos opcionais de sublinhado.",
@@ -696,6 +744,14 @@ export const recentPt = {
 } as const;
 
 export const recentPtBR = {
+  "Alignment and Obsidian highlight colors": "Alinhamento e cores de destaque do Obsidian",
+  "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "O Butter Editor 0.13.0 adiciona alinhamento de parágrafos e suporte às seis cores de destaque do Obsidian, com submenus de contexto confiáveis.",
+  "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Alinhe parágrafos à esquerda, ao centro, à direita ou justificados pela barra de ferramentas ou pela paleta de comandos.",
+  "Edit supported alignment HTML while keeping surrounding Markdown and links intact.": "Edite o HTML de alinhamento compatível sem alterar o Markdown nem os links ao redor.",
+  "Use Obsidian's six highlight colors and color commands in Butter Editor.": "Use as seis cores de destaque e os comandos de cor do Obsidian no Butter Editor.",
+  "Follow Obsidian's preferred text size and render math with its current engine.": "Respeite o tamanho de texto preferido do Obsidian e exiba fórmulas com o mecanismo atual.",
+  "Move between context-menu submenus repeatedly without reopening the menu.": "Alterne repetidamente entre submenus de contexto sem precisar reabrir o menu.",
+  "Keep aligned task checkboxes on the first line as text wraps.": "As caixas de seleção das tarefas alinhadas permanecem na primeira linha quando o texto quebra de linha.",
   "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "Inclua opcionalmente detalhes de falhas de salvamento recentes no feedback, com uma prévia e sem conteúdo de notas ou caminhos de arquivos.",
   "More reliable saves and optional underline": "Salvamento mais confiável e sublinhado opcional",
   "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 corrige mais problemas comuns ao salvar, adiciona cópias de recuperação e pré-visualizações nativas de HTML e oferece controles opcionais de sublinhado.",
@@ -812,6 +868,14 @@ export const recentPtBR = {
 } as const;
 
 export const recentRu = {
+  "Alignment and Obsidian highlight colors": "Выравнивание и цвета выделения Obsidian",
+  "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 добавляет выравнивание абзацев, поддержку шести цветов выделения Obsidian и надёжную работу подменю контекстного меню.",
+  "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Выравнивайте абзацы по левому краю, по центру, по правому краю или по ширине через панель инструментов или палитру команд.",
+  "Edit supported alignment HTML while keeping surrounding Markdown and links intact.": "Редактируйте поддерживаемый HTML выравнивания, сохраняя окружающий Markdown и ссылки без изменений.",
+  "Use Obsidian's six highlight colors and color commands in Butter Editor.": "Используйте шесть цветов выделения и команды выбора цвета Obsidian в Butter Editor.",
+  "Follow Obsidian's preferred text size and render math with its current engine.": "Используйте предпочтительный размер текста Obsidian и отображайте формулы с помощью его текущего движка.",
+  "Move between context-menu submenus repeatedly without reopening the menu.": "Переходите между подменю контекстного меню многократно, не открывая меню заново.",
+  "Keep aligned task checkboxes on the first line as text wraps.": "Флажки выровненных задач остаются на первой строке при переносе текста.",
   "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "При желании включите в отзыв сведения о недавних сбоях сохранения, предварительно просмотрев их. Содержимое заметок и пути к файлам не включаются.",
   "More reliable saves and optional underline": "Более надёжное сохранение и подчёркивание по желанию",
   "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 устраняет ещё больше повседневных проблем с сохранением, добавляет копии для восстановления и нативный предпросмотр HTML, а также позволяет включить команды подчёркивания.",
@@ -928,6 +992,14 @@ export const recentRu = {
 } as const;
 
 export const recentZhCN = {
+  "Alignment and Obsidian highlight colors": "段落对齐与 Obsidian 高亮颜色",
+  "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 新增段落对齐，支持 Obsidian 的六种高亮颜色，并让右键菜单的子菜单稳定运行。",
+  "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "通过工具栏或命令面板，将段落设为左对齐、居中、右对齐或两端对齐。",
+  "Edit supported alignment HTML while keeping surrounding Markdown and links intact.": "编辑受支持的对齐 HTML，同时保持周围的 Markdown 和链接不变。",
+  "Use Obsidian's six highlight colors and color commands in Butter Editor.": "在 Butter Editor 中使用 Obsidian 的六种高亮颜色和颜色命令。",
+  "Follow Obsidian's preferred text size and render math with its current engine.": "遵循 Obsidian 的文字大小设置，并使用其当前引擎渲染数学公式。",
+  "Move between context-menu submenus repeatedly without reopening the menu.": "在右键菜单的子菜单之间反复切换，无需重新打开菜单。",
+  "Keep aligned task checkboxes on the first line as text wraps.": "任务文本换行时，已对齐任务的复选框仍保持在第一行。",
   "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "可选择在反馈中附上近期保存失败详情，发送前可预览，不包含笔记内容或文件路径。",
   "More reliable saves and optional underline": "更可靠的保存与可选的下划线功能",
   "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 修复了更多日常保存问题，新增恢复副本和原生 HTML 预览，并提供可选的下划线操作。",
@@ -1044,6 +1116,14 @@ export const recentZhCN = {
 } as const;
 
 export const recentZhTW = {
+  "Alignment and Obsidian highlight colors": "段落對齊與 Obsidian 螢光標記顏色",
+  "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 新增段落對齊，支援 Obsidian 的六種螢光標記顏色，並讓右鍵選單的子選單穩定運作。",
+  "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "透過工具列或命令面板，將段落設為靠左、置中、靠右或左右對齊。",
+  "Edit supported alignment HTML while keeping surrounding Markdown and links intact.": "編輯支援的對齊 HTML，同時保持周圍的 Markdown 和連結不變。",
+  "Use Obsidian's six highlight colors and color commands in Butter Editor.": "在 Butter Editor 中使用 Obsidian 的六種螢光標記顏色與顏色命令。",
+  "Follow Obsidian's preferred text size and render math with its current engine.": "遵循 Obsidian 的文字大小設定，並使用其目前的引擎呈現數學公式。",
+  "Move between context-menu submenus repeatedly without reopening the menu.": "在右鍵選單的子選單之間反覆切換，無須重新開啟選單。",
+  "Keep aligned task checkboxes on the first line as text wraps.": "工作文字換行時，已對齊工作的核取方塊仍保持在第一行。",
   "Optionally include recent save failure details in feedback, with a preview and no note content or file paths.": "可選擇在意見回饋中附上近期儲存失敗詳情，傳送前可預覽，不包含筆記內容或檔案路徑。",
   "More reliable saves and optional underline": "更可靠的儲存與可選的底線功能",
   "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.": "Butter Editor 0.12.2 修正了更多日常儲存問題，新增復原副本和原生 HTML 預覽，並提供可選的底線操作。",

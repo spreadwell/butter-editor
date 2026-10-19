@@ -21,6 +21,8 @@ import type { Schema, MarkType, NodeType } from "prosemirror-model";
 import { toggleMark, wrapIn } from "prosemirror-commands";
 import { toggleExternalLink } from "../editor/link-mark-policy";
 import { setHeadingBlockType, setParagraphBlockType, setLiteralCodeBlock } from "../editor/textblock-command";
+import { setTextAlignment, selectedTextAlignment } from "../editor/text-alignment";
+import type { TextAlignment } from "../core/text-alignment";
 
 /** PM command shape - mirrors `Command` from prosemirror-state, which
  *  isn't exported by name from prosemirror-commands. */
@@ -88,7 +90,8 @@ export interface BtnDef {
   icon: string;
   label: MessageKey;
   kbd?: string;
-  kind: "mark" | "block" | "list" | "list-depth" | "insert" | "heading" | "history";
+  kind: "mark" | "block" | "list" | "list-depth" | "insert" | "heading" | "history" | "alignment";
+  textAlignment?: TextAlignment;
   markName?: string;
   nodeName?: string;
   attrs?: Record<string, unknown>;
@@ -100,6 +103,12 @@ export interface BtnDef {
 }
 
 const BUTTONS = {
+  alignment: [
+    { id: "text-align-left", icon: "align-left", label: "Align text left", kind: "alignment" as const, textAlignment: "left" as const },
+    { id: "text-align-center", icon: "align-center", label: "Align text center", kind: "alignment" as const, textAlignment: "center" as const },
+    { id: "text-align-right", icon: "align-right", label: "Align text right", kind: "alignment" as const, textAlignment: "right" as const },
+    { id: "text-align-justify", icon: "align-justify", label: "Justify text", kind: "alignment" as const, textAlignment: "justify" as const },
+  ],
   heading: [
     { id: "paragraph", icon: "pilcrow",   label: "Paragraph", kbd: "Ctrl+Alt+0", kind: "heading" as const, headingLevel: 0 },
     { id: "heading-1", icon: "heading-1", label: "Heading 1", kbd: "Ctrl+Alt+1", kind: "heading" as const, headingLevel: 1 },
@@ -183,6 +192,7 @@ const BUTTONS = {
 } satisfies Record<string, BtnDef[]>;
 
 const ALL_BUTTONS: BtnDef[] = [
+  ...BUTTONS.alignment,
   ...BUTTONS.heading,
   ...BUTTONS.inline,
   ...BUTTONS.block,
@@ -209,6 +219,7 @@ export const MAIN_TOOLBAR_BUTTON_DEFS: Array<{
   group: string;
   icon: string;
 }> = [
+  ...BUTTONS.alignment.map((b) => ({ id: b.id, label: b.label, group: "Alignment", icon: b.icon })),
   ...BUTTONS.heading.map((b) => ({
     id: b.id,
     label: b.label,
@@ -307,7 +318,13 @@ export function execHistoryCmd(btn: BtnDef, view: EditorView) {
   cmd(view.state, view.dispatch.bind(view));
 }
 
+export function execAlignmentCmd(btn: BtnDef, view: EditorView) {
+  if (!btn.textAlignment) return;
+  setTextAlignment(btn.textAlignment, getMultiBlockSelection(view.state).positions)(view.state, view.dispatch.bind(view), view);
+}
+
 export function canExecuteConversion(btn: BtnDef, state: EditorState): boolean {
+  if (btn.kind === "alignment") return !!btn.textAlignment && setTextAlignment(btn.textAlignment, getMultiBlockSelection(state).positions)(state);
   if (!hasTextSelection(state)) return true;
   let target: SelectionTarget | null = null;
   if (btn.kind === "heading") target = btn.headingLevel ? `h${btn.headingLevel}` : "paragraph";
@@ -2735,7 +2752,8 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
       return;
     }
 
-    if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
+    if (def.kind === "alignment") execAlignmentCmd(def, view);
+    else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
     else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
     else if (def.kind === "list") execListCmd(def, ctx.schema, view);
     else if (def.kind === "list-depth") execListDepthCmd(def, view);
@@ -2978,7 +2996,10 @@ function updateActiveStates(
       el.classList.toggle("is-disabled", !enabled);
       (el as HTMLButtonElement).disabled = !enabled;
     }
-    if (btn.kind === "mark" && btn.markName) {
+    if (btn.kind === "alignment") {
+      active = selectedTextAlignment(state, getMultiBlockSelection(state).positions) === btn.textAlignment;
+      for (const el of els ?? []) el.setAttribute("aria-pressed", String(active));
+    } else if (btn.kind === "mark" && btn.markName) {
       const mt = schema.marks[btn.markName];
       if (mt) active = isMarkActive(state, mt);
     } else if ((btn.kind === "block" || btn.kind === "list") && btn.nodeName) {

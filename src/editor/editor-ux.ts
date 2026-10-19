@@ -35,6 +35,7 @@ import {
 } from "prosemirror-inputrules";
 import type { Mark, MarkType } from "prosemirror-model";
 import { exitCalloutFromTrailingEmptyParagraph } from "./callout-enter";
+import { textAlignment } from "../core/text-alignment";
 import {
   EditorState,
   Plugin,
@@ -187,7 +188,7 @@ const handleEnterInTaskList: Command = (state, dispatch) => {
     // from. The item IS a top-level block; we just retype it.)
     if (!dispatch) return true;
     const tr = state.tr;
-    const para = state.schema.nodes.paragraph.create();
+    const para = state.schema.nodes.paragraph.create({ textAlign: textAlignment(liNode.firstChild?.attrs.textAlign) });
     tr.replaceWith(liPos, liEnd, para);
     const newSel = TextSelection.near(tr.doc.resolve(liPos + 1));
     tr.setSelection(newSel);
@@ -204,7 +205,7 @@ const handleEnterInTaskList: Command = (state, dispatch) => {
   // it joins the visual run.
   if (!dispatch) return true;
   const schema = state.schema;
-  const newPara = schema.nodes.paragraph.create();
+  const newPara = schema.nodes.paragraph.create({ textAlign: textAlignment(liNode.firstChild?.attrs.textAlign) });
   const liAttrs = liNode.attrs as { depth?: number; tight?: boolean };
   const newItem = schema.nodes.list_item.create(
     {
@@ -293,7 +294,7 @@ const handleEnterInFlatListItem: Command = (state, dispatch) => {
       dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
       return true;
     }
-    const para = state.schema.nodes.paragraph.create();
+    const para = state.schema.nodes.paragraph.create({ textAlign: textAlignment(liNode.firstChild?.attrs.textAlign) });
     tr.replaceWith(liPos, liEnd, para);
     tr.setSelection(TextSelection.near(tr.doc.resolve(liPos + 1)));
     dispatch(restoreContinuationMarks(tr, marks).scrollIntoView());
@@ -527,15 +528,29 @@ const liftEmptyBlockGuarded: Command = (state, dispatch) => {
  * Both operations still dispatch together, so history and data guards see the
  * original edit as one transaction.
  */
+const splitParagraphKeepingAlignment: Command = (state, dispatch, view) => {
+  const alignment = state.selection.$from.parent.type.name === "paragraph"
+    ? textAlignment(state.selection.$from.parent.attrs.textAlign) : null;
+  return splitBlockKeepMarks(state, dispatch && (tr => {
+    const { $from } = tr.selection;
+    if (alignment && $from.depth && $from.parent.type.name === "paragraph" && $from.parent.attrs.textAlign === null) {
+      const marks = tr.storedMarks;
+      tr.setNodeMarkup($from.before(), undefined, { ...$from.parent.attrs, textAlign: alignment, sourceRange: null });
+      if (marks !== null) tr.setStoredMarks(marks);
+    }
+    dispatch(tr);
+  }), view);
+};
+
 const splitBlockAfterSelection: Command = (state, dispatch) => {
   const selection = state.selection;
   if (!(selection instanceof TextSelection) || selection.empty || selection.$from.sameParent(selection.$to)) {
-    return splitBlockKeepMarks(state, dispatch);
+    return splitParagraphKeepingAlignment(state, dispatch);
   }
   const tr = state.tr.deleteSelection();
   const marks = state.storedMarks ?? (selection.$to.parentOffset ? selection.$from.marks() : null);
   const afterDeletion = EditorState.create({ schema: state.schema, doc: tr.doc, selection: tr.selection, storedMarks: marks });
-  return splitBlockKeepMarks(afterDeletion, dispatch && (split => {
+  return splitParagraphKeepingAlignment(afterDeletion, dispatch && (split => {
     for (const step of split.steps) tr.step(step);
     tr.setSelection(Selection.fromJSON(tr.doc, split.selection.toJSON()));
     tr.setStoredMarks(split.storedMarks);

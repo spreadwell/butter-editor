@@ -542,7 +542,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 
   outline: none;
   font-family: var(--font-text);
-  font-size: var(--font-text-size);
+  font-size: var(--font-preferred-size, var(--font-text-size));
   line-height: var(--line-height-normal, 1.5);
   color: var(--text-normal);
   padding-bottom: 50vh;
@@ -3832,7 +3832,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
   max-width: 680px;
   margin: 12px 0 0;
   color: var(--text-muted);
-  font-size: var(--font-text-size);
+  font-size: var(--font-preferred-size, var(--font-text-size));
   line-height: 1.65;
 }
 .butter-whats-new-preference {
@@ -7723,7 +7723,7 @@ body:not(.is-mobile) .butter-context-toolbar-btn svg {
   border-radius: var(--radius-s, 4px);
   overflow: hidden;
   font-family: var(--font-text);
-  font-size: var(--font-text-size);
+  font-size: var(--font-preferred-size, var(--font-text-size));
   color: var(--text-normal);
   line-height: var(--line-height-normal, 1.5);
 }

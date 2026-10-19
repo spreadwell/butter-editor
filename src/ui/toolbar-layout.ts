@@ -108,6 +108,19 @@ export function newId(prefix: string): string {
 // between groups. These are what the user sees if they've never
 // customized + on Reset.
 
+/** Paragraph layout actions shared by desktop and mobile presets. */
+export function textAlignmentSubmenu(): LayoutItem {
+  return {
+    type: "submenu", id: newId("sub"), label: "Alignment", icon: "align-left",
+    children: [
+      { type: "button", id: "text-align-left" },
+      { type: "button", id: "text-align-center" },
+      { type: "button", id: "text-align-right" },
+      { type: "button", id: "text-align-justify" },
+    ],
+  };
+}
+
 /** Full preset - the canonical "everything available" layout. */
 export function mainLayoutFull(): Layout {
   return [
@@ -138,6 +151,7 @@ export function mainLayoutFull(): Layout {
     { type: "button", id: "code" },
     { type: "button", id: "link" },
     { type: "button", id: "clear-formatting" },
+    textAlignmentSubmenu(),
     { type: "separator", id: newId("sep") },
     {
       type: "submenu",
@@ -216,6 +230,7 @@ export function mainLayoutDefault(): Layout {
     { type: "button", id: "underline" },
     { type: "button", id: "highlight" },
     { type: "button", id: "link" },
+    textAlignmentSubmenu(),
     { type: "separator", id: newId("sep") },
     {
       type: "submenu",
@@ -336,6 +351,7 @@ export function mobileLayoutDefault(): Layout {
     { type: "button", id: "highlight" },
     { type: "button", id: "text-color" },
     { type: "separator", id: newId("sep") },
+    textAlignmentSubmenu(),
     { type: "button", id: "bullet-list" },
     { type: "button", id: "ordered-list" },
     { type: "button", id: "task-list" },

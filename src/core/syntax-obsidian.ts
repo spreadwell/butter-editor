@@ -16,6 +16,8 @@ import { hasNativeBlockIdSourceBoundary } from "./block-id-boundary";
 import { htmlBlockCommentPlugin, findHtmlCommentEnd } from "./html-comments";
 import { hasOnlyQualifiedHtmlAttributes, parseHtmlAttributes, protectHtmlSource, readHtmlElement } from "./html-source-safety";
 import { isNativeHtmlSourceBlock, nativeHtmlBlockPayload } from "./native-html-block-source";
+import { textAlignmentPlugin } from "./text-alignment";
+import { nativeHighlightColor, nativeHighlightPrefix } from "./native-highlight";
 import { nativeSourceTags, nativeSourceFootnoteReferences } from "./source-tags";
 import { nativeSourceNavigation } from "./comment-navigation";
 import { nativeSourceMarkdownNavigation, commentMarkdownNavigationPlugin } from "./comment-markdown-navigation";
@@ -141,6 +143,8 @@ export function highlightPlugin(md: MarkdownIt) {
 
     const tokenOpen = state.push("highlight_open", "mark", 1);
     tokenOpen.markup = "==";
+    const nativeColor = nativeHighlightPrefix(src, start + 2);
+    if (nativeColor) tokenOpen.attrSet("data-highlight", nativeColor.name);
 
     // Recursively tokenize the inner content so other inline rules
     // (HTML inline tags <sup>/<sub>/<kbd>/<font>/<u>, em/strong,
@@ -150,7 +154,7 @@ export function highlightPlugin(md: MarkdownIt) {
     // dropping the sup mark on round-trip.
     const oldPos = state.pos;
     const oldPosMax = state.posMax;
-    state.pos = start + 2;
+    state.pos = start + 2 + (nativeColor?.length ?? 0);
     state.posMax = end;
     state.md.inline.tokenize(state);
     state.pos = oldPos;
@@ -359,6 +363,7 @@ export function embedPlugin(md: MarkdownIt) {
     // we've already passed).
     for (let i = tokens.length - 1; i >= 2; i--) {
       if (!liftable.has(i)) continue;
+      if (tokens[i - 2].attrGet("data-text-align")) continue;
       const inlineToken = tokens[i - 1];
       if (inlineToken.type !== "inline" || !inlineToken.children) continue;
 
@@ -1056,7 +1061,7 @@ const HTML_INLINE_MARKS: readonly HtmlMarkConfig[] = [
   { tag: "u",    type: "html_underline" },
   { tag: "sup",  type: "html_sup" },
   { tag: "sub",  type: "html_sub" },
-  { tag: "mark", type: "html_mark", attrs: ["style"] },
+  { tag: "mark", type: "html_mark", attrs: ["style", "data-highlight"] },
   { tag: "kbd",  type: "html_kbd" },
   // Inline HTML code is a styling mark, unlike opaque backtick code spans.
   // Other inline marks/atoms can remain meaningful between these tags.
@@ -1266,7 +1271,8 @@ export function htmlInlineTagsPlugin(md: MarkdownIt) {
           return protectHtmlSource(state, silent, element.markup);
         }
         if (cfg.type === "html_mark" && attributes.some(attribute =>
-          !/^\s*background(?:-color)?\s*:\s*[^;]+;?\s*$/i.test(attribute.value ?? ""))) {
+          attribute.name === "data-highlight" ? !nativeHighlightColor(attribute.value) :
+            !/^\s*background(?:-color)?\s*:\s*[^;]+;?\s*$/i.test(attribute.value ?? ""))) {
           return protectHtmlSource(state, silent, element.markup);
         }
       }
@@ -1356,6 +1362,7 @@ export function installObsidianPlugins(md: MarkdownIt): void {
   inlineCommentPlugin(md);
   blockIdPlugin(md);
   htmlInlineTagsPlugin(md);
+  textAlignmentPlugin(md);
   nativeDelimiterPlugin(md);
   nativeHtmlCodeLinksPlugin(md);
   commentMarkdownNavigationPlugin(md);

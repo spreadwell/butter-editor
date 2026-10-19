@@ -1,3 +1,5 @@
+import { nativeHighlightColor } from "../core/native-highlight";
+
 export type NativeFormattingCommandRecord = {
   checkCallback?: (checking: boolean) => unknown;
 };
@@ -15,12 +17,16 @@ export type FormattingHotkeyLike = {
 export const NATIVE_FORMATTING_COMMANDS: Array<{
   id: string;
   markName: string;
+  color?: string;
 }> = [
   { id: "editor:toggle-bold", markName: "strong" },
   { id: "editor:toggle-italics", markName: "em" },
   { id: "editor:toggle-code", markName: "code" },
   { id: "editor:toggle-strikethrough", markName: "strikethrough" },
   { id: "editor:toggle-highlight", markName: "highlight" },
+  ...["red", "orange", "yellow", "green", "blue", "purple"].map(name => ({
+    id: `editor:toggle-highlight-${name}`, markName: "highlight", color: nativeHighlightColor(name)!,
+  })),
 ];
 
 export function markNameForFormattingHotkey(
@@ -65,18 +71,18 @@ export function markNameForFormattingHotkey(
 export function patchNativeFormattingCommands(
   commands: Record<string, NativeFormattingCommandRecord | undefined> | undefined,
   canToggle: (markName: string) => boolean,
-  toggle: (markName: string) => boolean,
+  toggle: (markName: string, color?: string) => boolean,
 ): Array<() => void> {
   if (!commands) return [];
 
   const restorers: Array<() => void> = [];
-  for (const { id, markName } of NATIVE_FORMATTING_COMMANDS) {
+  for (const { id, markName, color } of NATIVE_FORMATTING_COMMANDS) {
     const command = commands[id];
     if (!command) continue;
     const originalCheck = command.checkCallback;
     const wrappedCheck = (checking: boolean) => {
       if (canToggle(markName)) {
-        if (!checking) return toggle(markName);
+        if (!checking) return toggle(markName, color);
         return true;
       }
       return originalCheck?.(checking);

@@ -30,6 +30,22 @@ export interface WhatsNewState {
 
 export const WHATS_NEW_RELEASES: readonly WhatsNewRelease[] = [
   {
+    version: "0.13.0",
+    headline: "Alignment and Obsidian highlight colors",
+    summary: "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.",
+    demos: [],
+    improvements: [
+      "Align paragraphs left, center, right, or justified from the toolbar or command palette.",
+      "Edit supported alignment HTML while keeping surrounding Markdown and links intact.",
+      "Use Obsidian's six highlight colors and color commands in Butter Editor.",
+      "Follow Obsidian's preferred text size and render math with its current engine.",
+    ],
+    fixed: [
+      "Move between context-menu submenus repeatedly without reopening the menu.",
+      "Keep aligned task checkboxes on the first line as text wraps.",
+    ],
+  },
+  {
     "version": "0.12.2",
     "headline": "More reliable saves and optional underline",
     "summary": "Butter Editor 0.12.2 fixes more everyday saving issues, adds recovery copies and native HTML previews, and offers optional underline controls.",

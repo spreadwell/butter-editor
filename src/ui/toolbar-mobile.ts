@@ -31,6 +31,7 @@ import {
   execListCmd,
   execListDepthCmd,
   execMarkCmd,
+  execAlignmentCmd,
   insertTable,
   insertPickedAttachment,
   isMarkActive,
@@ -501,7 +502,8 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
       });
       return;
     }
-    if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
+    if (def.kind === "alignment") execAlignmentCmd(def, view);
+    else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
     else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
     else if (def.kind === "list") execListCmd(def, ctx.schema, view);
     else if (def.kind === "list-depth") execListDepthCmd(def, view);
@@ -617,7 +619,8 @@ function openMobileVariantsPopover(
       if (!isFormattingMarkAllowed(def.markName, isMobileHtmlFormattingEnabled(ctx))) return;
       if (def.id === "link" || def.id === "insert-link-md") {
         openMobileAddLinkModal(ctx.app, view, ctx.getSourcePath());
-      } else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
+      } else if (def.kind === "alignment") execAlignmentCmd(def, view);
+      else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
       else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
       else if (def.kind === "list") execListCmd(def, ctx.schema, view);
       else if (def.kind === "list-depth") execListDepthCmd(def, view);
@@ -703,7 +706,8 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
     if (!isFormattingMarkAllowed(def.markName, isMobileHtmlFormattingEnabled(ctx))) return;
     if (def.id === "link" || def.id === "insert-link-md") {
       openMobileAddLinkModal(ctx.app, view, ctx.getSourcePath());
-    } else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
+    } else if (def.kind === "alignment") execAlignmentCmd(def, view);
+    else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
     else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
     else if (def.kind === "list") execListCmd(def, ctx.schema, view);
     else if (def.kind === "list-depth") execListDepthCmd(def, view);

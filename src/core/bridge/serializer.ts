@@ -4,6 +4,8 @@ import { CANONICAL_DEFAULTS, type CanonicalFormOptions } from "./common";
 import { isDigitCode } from "../inline-math-delimiters";
 import { isObsidianTagCharacter } from "../tag-characters";
 import { blockCommentSource, hasUnclosedHtmlCommentTail } from "../html-comments";
+import { alignmentOpening, textAlignment } from "../text-alignment";
+import { nativeHighlightEmoji } from "../native-highlight";
 import { commentNavigationSource } from "../comment-navigation";
 import { commentMarkdownSource } from "../comment-markdown-navigation";
 import { emptyLinkSource, markdownLinkDestination as markdownDestination, markdownLinkTitle as markdownTitle } from "../native-link-ownership";
@@ -68,13 +70,15 @@ export const markSpecs: Record<string, MarkSpec> = {
     // background survives the round-trip. Plain (no color)
     // highlights honour `html` for the markdown vs HTML shape choice.
     open: (mark) => {
+      const emoji = !mark.attrs.html && nativeHighlightEmoji(mark.attrs.color);
+      if (emoji) return `==${emoji}`;
       if (mark.attrs.color) {
         return `<mark style="background:${htmlAttribute(mark.attrs.color as string)}">`;
       }
       return mark.attrs.html ? "<mark>" : "==";
     },
     close: (mark) =>
-      mark.attrs.color || mark.attrs.html ? "</mark>" : "==",
+      mark.attrs.html || mark.attrs.color && !nativeHighlightEmoji(mark.attrs.color) ? "</mark>" : "==",
     expel: (mark) => !mark.attrs.color && !mark.attrs.html,
     // The highlight rule recursively tokenizes its body. Literal syntax and
     // entity-looking text therefore need the same escaping as ordinary text.
@@ -1323,6 +1327,18 @@ export class SerState {
     else render(children);
   }
 
+  renderTextblockInline(parent: PMNode) {
+    const alignment = textAlignment(parent.attrs.textAlign);
+    if (!alignment) { this.renderInline(parent); return; }
+    const blockId = parent.lastChild?.type.name === "block_id" ? parent.lastChild : null;
+    this.write(alignmentOpening(alignment));
+    this.renderInline(blockId ? parent.copy(parent.content.cut(0, parent.content.size - blockId.nodeSize)) : parent);
+    this.write("</span>");
+    // Native Obsidian recognizes metadata only outside the HTML wrapper.
+    // The alignment codec owns this structural separator; body text is exact.
+    if (blockId) this.write(` ^${String(blockId.attrs.id)}`);
+  }
+
   renderInline(parent: PMNode) {
     let hasOwner = false;
     parent.forEach(node => { if (linkOccurrence(node)) hasOwner = true; });
@@ -1804,7 +1820,7 @@ function isEmptyListItem(node: PMNode): boolean {
   return node.type.name === "list_item" &&
     node.childCount === 1 &&
     node.firstChild?.type.name === "paragraph" &&
-    node.firstChild.childCount === 0;
+    node.firstChild.childCount === 0 && !textAlignment(node.firstChild.attrs.textAlign);
 }
 
 function listItemUsesTightLeadingEdge(
@@ -1876,9 +1892,9 @@ export const nodeSer: Record<string, NodeSer> = {
       const reordered = node.copy(
         Fragment.fromArray([...inlineChildren, ...tailBlockIds]),
       );
-      state.renderInline(reordered);
+      state.renderTextblockInline(reordered);
     } else {
-      state.renderInline(node);
+      state.renderTextblockInline(node);
     }
     state.closeBlock(node);
   },

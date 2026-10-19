@@ -23,6 +23,10 @@ Butter adds a visual editing view to the Markdown notes already in your vault. U
 
 Standard Markdown formatting is the default. Optional rich-formatting tools - text color, custom highlights, and underline - use inline HTML and may be less portable between Markdown applications. Enable Rich formatting under Settings → Butter Editor → Editor → Formatting to use them. Existing HTML formatting, including superscript and subscript, is still displayed and preserved.
 
+Use the toolbar's Alignment menu or the Align text commands to align paragraphs left, center, right, or justified, including paragraphs in lists and callouts. Alignment saves as standard inline HTML around the paragraph's Markdown; supported existing `<center>` and paragraph alignment HTML is editable too. Native headings retain their normal Markdown and link targets.
+
+Obsidian's six native highlight colors are supported too. Write a color emoji at the start of a highlight, such as `==🔴Important==`, or use Obsidian's highlight-color commands while editing in Butter.
+
 ## See it in action
 
 **Select, reorder, and transform blocks**
