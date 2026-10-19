@@ -53,9 +53,10 @@ export function setTextAlignment(alignment: TextAlignment | null, selectedBlocks
     if (!targets.length) return false;
     if (!dispatch) return true;
     const tr = state.tr;
+    const explicitAlignment = alignment === "left" ? null : alignment;
     for (const { pos, node } of targets) {
-      if (node.attrs.textAlign === alignment || alignment === "left" && node.attrs.textAlign === null) continue;
-      tr.setNodeMarkup(pos, undefined, { ...node.attrs, textAlign: alignment }, node.marks);
+      if (node.attrs.textAlign === explicitAlignment) continue;
+      tr.setNodeMarkup(pos, undefined, { ...node.attrs, textAlign: explicitAlignment }, node.marks);
     }
     if (!tr.docChanged) return true;
     if (state.storedMarks) tr.setStoredMarks(state.storedMarks);

@@ -30,6 +30,18 @@ export interface WhatsNewState {
 
 export const WHATS_NEW_RELEASES: readonly WhatsNewRelease[] = [
   {
+    version: "0.13.1",
+    headline: "Highlight and alignment fixes",
+    summary: "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.",
+    demos: [],
+    improvements: [],
+    fixed: [
+      "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.",
+      "Choose left alignment to remove paragraph alignment HTML and restore the default.",
+      "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.",
+    ],
+  },
+  {
     version: "0.13.0",
     headline: "Alignment and Obsidian highlight colors",
     summary: "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.",
@@ -250,6 +262,8 @@ export function shouldAutoOpenWhatsNew(
   const release = stableWhatsNewRelease(runtimeVersion);
   return Boolean(
     release &&
+    // Patch notes remain available without interrupting the editor on startup.
+    /^\d+\.\d+\.0$/.test(release.version) &&
     state.whatsNewAutoOpen &&
     state.whatsNewReleaseVersion === release.version &&
     state.whatsNewAutoOpenedVersion !== release.version,

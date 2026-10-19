@@ -34,9 +34,9 @@ import {
   execAlignmentCmd,
   insertTable,
   insertPickedAttachment,
-  isMarkActive,
   setHeading,
   openMobileColorSheet,
+  isToolbarItemFormattingAllowed,
 } from "./toolbar";
 import {
   openMobileInsertDrawer,
@@ -45,7 +45,7 @@ import {
 } from "./insert-drawer";
 import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
 import { tx, txKnown, type MessageKey } from "../i18n";
-import { isFormattingMarkAllowed } from "./rich-formatting-actions";
+import { isFormattingActionAllowed } from "./rich-formatting-actions";
 import { openUnifiedLinkEditor } from "./link-editor";
 import {
   commandActionIcon,
@@ -339,6 +339,7 @@ function createMobileActionButton(
 }
 
 function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
+  if (!isToolbarItemFormattingAllowed(item, isMobileHtmlFormattingEnabled(ctx))) return;
   if (item.type === "separator") {
     const sep = activeWindow.createDiv();
     sep.classList.add("mobile-toolbar-separator");
@@ -421,7 +422,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   // user disables HTML formatting in settings. Same setting check;
   // applyToolbarButtonVisibility rebuilds the mobile bar on toggle.
   const htmlOk = isMobileHtmlFormattingEnabled(ctx);
-  if (!isFormattingMarkAllowed(def.markName, htmlOk)) return;
+  if (!isFormattingActionAllowed(def, htmlOk)) return;
   const el = createMobileActionButton(
     true,
     "mobile-toolbar-option",
@@ -433,6 +434,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
   // mobile toolbar 1:1 without our CSS having to hard-code colors.
   el.setAttribute("aria-label", tx(def.label));
   el.dataset.btnId = def.id;
+  if (def.id === "highlight") el.setAttribute("aria-haspopup", "menu");
   setIcon(el, def.icon);
   const existing = ctx.buttonMap.get(def.id);
   if (existing) existing.add(el);
@@ -442,7 +444,7 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
     const view = ctx.getView();
     if (!view || !view.editable) return;
     const currentHtmlOk = isMobileHtmlFormattingEnabled(ctx);
-    if (!isFormattingMarkAllowed(def.markName, currentHtmlOk)) return;
+    if (!isFormattingActionAllowed(def, currentHtmlOk)) return;
     // Mobile-specific insert flows replace the desktop hover-grid /
     // prompt-dialog UI with thumb-friendly modals.
     if (def.id === "link" || def.id === "insert-link-md") {
@@ -465,19 +467,9 @@ function renderMobileItem(item: LayoutItem, ctx: RenderCtx, list: HTMLElement) {
       clearFormatting(view, ctx.schema);
       return;
     }
-    // Mirror the desktop highlight UX: tap toggles `==text==` and,
-    // when HTML formatting is enabled and the tap is adding (not
-    // removing) the highlight, immediately opens the color sheet so
-    // the user can refine to a custom colour with one more tap.
+    // Match the desktop picker without changing text merely by opening it.
     if (def.id === "highlight") {
-      const highlightMark = ctx.schema.marks.highlight;
-      const wasActive = highlightMark
-        ? isMarkActive(view.state, highlightMark)
-        : false;
-      execMarkCmd(def, ctx.schema, view);
-      if (!wasActive && currentHtmlOk) {
-        openMobileColorSheet(ctx.app, ctx.schema, view, "highlight");
-      }
+      openMobileColorSheet(ctx.app, ctx.schema, view, "highlight", currentHtmlOk);
       return;
     }
     // Insert button - opens the mobile insert drawer (slash-menu
@@ -560,6 +552,7 @@ function openMobileVariantsPopover(
   ctx: RenderCtx,
 ) {
   ctx.closePopover();
+  if (!isToolbarItemFormattingAllowed(item, isMobileHtmlFormattingEnabled(ctx))) return;
   const popup = activeWindow.createDiv();
   popup.classList.add("butter-mobile-variants-popover");
   for (const child of item.children) {
@@ -599,7 +592,7 @@ function openMobileVariantsPopover(
     }
     const def = BUTTON_REGISTRY.get(child.id);
     if (!def) continue;
-    if (!isFormattingMarkAllowed(def.markName, isMobileHtmlFormattingEnabled(ctx))) continue;
+    if (!isFormattingActionAllowed(def, isMobileHtmlFormattingEnabled(ctx))) continue;
     const row = createMobileActionButton(false, "butter-mobile-variant-row");
     const icon = activeWindow.createSpan();
     icon.classList.add("butter-mobile-variant-icon");
@@ -616,9 +609,11 @@ function openMobileVariantsPopover(
       ctx.closePopover();
       const view = ctx.getView();
       if (!view || !view.editable) return;
-      if (!isFormattingMarkAllowed(def.markName, isMobileHtmlFormattingEnabled(ctx))) return;
+      if (!isFormattingActionAllowed(def, isMobileHtmlFormattingEnabled(ctx))) return;
       if (def.id === "link" || def.id === "insert-link-md") {
         openMobileAddLinkModal(ctx.app, view, ctx.getSourcePath());
+      } else if (def.id === "highlight") {
+        openMobileColorSheet(ctx.app, ctx.schema, view, "highlight", isMobileHtmlFormattingEnabled(ctx));
       } else if (def.kind === "alignment") execAlignmentCmd(def, view);
       else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
       else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
@@ -703,9 +698,11 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
   const dispatchDef = (def: BtnDef) => {
     const view = ctx.getView();
     if (!view || !view.editable) return;
-    if (!isFormattingMarkAllowed(def.markName, isMobileHtmlFormattingEnabled(ctx))) return;
+    if (!isFormattingActionAllowed(def, isMobileHtmlFormattingEnabled(ctx))) return;
     if (def.id === "link" || def.id === "insert-link-md") {
       openMobileAddLinkModal(ctx.app, view, ctx.getSourcePath());
+    } else if (def.id === "highlight") {
+      openMobileColorSheet(ctx.app, ctx.schema, view, "highlight", isMobileHtmlFormattingEnabled(ctx));
     } else if (def.kind === "alignment") execAlignmentCmd(def, view);
     else if (def.kind === "mark") execMarkCmd(def, ctx.schema, view);
     else if (def.kind === "block") execBlockCmd(def, ctx.schema, view);
@@ -772,7 +769,7 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
       }
       const def = BUTTON_REGISTRY.get(item.id);
       if (!def) continue;
-      if (!isFormattingMarkAllowed(def.markName, isMobileHtmlFormattingEnabled(ctx))) continue;
+      if (!isFormattingActionAllowed(def, isMobileHtmlFormattingEnabled(ctx))) continue;
       if (def.markName && !ctx.schema.marks[def.markName]) continue;
       if (def.nodeName && !ctx.schema.nodes[def.nodeName]) continue;
       addRow(def);

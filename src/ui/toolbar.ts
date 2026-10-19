@@ -23,6 +23,7 @@ import { toggleExternalLink } from "../editor/link-mark-policy";
 import { setHeadingBlockType, setParagraphBlockType, setLiteralCodeBlock } from "../editor/textblock-command";
 import { setTextAlignment, selectedTextAlignment } from "../editor/text-alignment";
 import type { TextAlignment } from "../core/text-alignment";
+import { nativeHighlightColor, nativeHighlightName } from "../core/native-highlight";
 
 /** PM command shape - mirrors `Command` from prosemirror-state, which
  *  isn't exported by name from prosemirror-commands. */
@@ -31,7 +32,7 @@ type PMCommand = (
   dispatch?: (tr: import("prosemirror-state").Transaction) => void,
   view?: EditorView,
 ) => boolean;
-import { undo, redo, undoDepth, redoDepth } from "prosemirror-history";
+import { undo, redo, undoDepth, redoDepth, closeHistory } from "prosemirror-history";
 import type { Layout, LayoutItem } from "./toolbar-layout";
 import {
   commandActionIcon,
@@ -42,7 +43,7 @@ import {
 } from "./command-actions";
 import { openUnifiedLinkEditor } from "./link-editor";
 import { tx, txKnown, tv, type MessageKey } from "../i18n";
-import { isFormattingMarkAllowed } from "./rich-formatting-actions";
+import { isFormattingActionAllowed } from "./rich-formatting-actions";
 import {
   cleanupMobileToolbarOverflowIndicators,
   renderMobile,
@@ -124,12 +125,8 @@ const BUTTONS = {
     { id: "underline",     icon: "underline",     label: "Underline",     kind: "mark" as const, markName: "underline" },
     { id: "strikethrough", icon: "strikethrough",  label: "Strikethrough", kbd: "Ctrl+Shift+S", kind: "mark" as const, markName: "strikethrough" },
     { id: "code",          icon: "code-2",        label: "Inline code",   kbd: "Ctrl+E", kind: "mark" as const, markName: "code" },
-    // `highlight` is a split button when HTML formatting is enabled:
-    // the main face toggles `==text==` (markdown highlight); a small
-    // chevron next to it opens the color palette to write `<mark
-    // style="background: …">…</mark>`. When HTML formatting is
-    // off (Editor → Formatting), only the main face renders so the
-    // user can't author HTML inline. See renderRegularButton.
+    // The picker always offers standard/native Markdown highlights.
+    // HTML formatting additionally enables custom highlight colors.
     { id: "highlight",     icon: "highlighter",   label: "Highlight",     kbd: "Ctrl+Shift+H", kind: "mark" as const, markName: "highlight" },
     { id: "text-color",    icon: "palette",       label: "Text color",    kind: "mark" as const, markName: "font" },
     { id: "link",          icon: "link",          label: "Link",          kbd: "Ctrl+K", kind: "mark" as const, markName: "link" },
@@ -950,6 +947,18 @@ const TEXT_PALETTE_PRESETS = ["Red", "Orange", "Green", "Blue", "Purple"] as con
 const HIGHLIGHT_PALETTE_PRESETS = ["Yellow", "Orange", "Green", "Blue", "Gray"] as const;
 
 type ColorKind = "text" | "highlight";
+// UI-only value: the ordinary Markdown mark stores color:null.
+const STANDARD_HIGHLIGHT_COLOR = "var(--text-highlight-bg)";
+
+function nativeHighlightPresets(): ReadonlyArray<{ name: string; value: string }> {
+  const names: ReadonlyArray<{ label: MessageKey; color: string }> = [
+    { label: "Red", color: "red" }, { label: "Orange", color: "orange" },
+    { label: "Yellow", color: "yellow" }, { label: "Green", color: "green" },
+    { label: "Blue", color: "blue" }, { label: "Purple", color: "purple" },
+  ];
+  return [{ name: tx("Highlight"), value: STANDARD_HIGHLIGHT_COLOR },
+    ...names.map(({ label, color }) => ({ name: tx(label), value: nativeHighlightColor(color)! }))];
+}
 type RGBColor = { r: number; g: number; b: number };
 type RGBAColor = RGBColor & { a: number };
 type HSVColor = { h: number; s: number; v: number };
@@ -1093,6 +1102,24 @@ function formatAlpha(alpha: number): string {
   return String(Math.round(clamp(alpha, 0, 1) * 100) / 100);
 }
 
+/** Resolve the theme's native tint only for initializing the custom picker.
+ * The saved mark retains its native token until the user chooses a custom color. */
+function pickerColor(raw: unknown): RGBAColor | null {
+  const direct = parseCssColor(raw);
+  if (direct) return direct;
+  const nativeName = nativeHighlightName(raw);
+  if (!nativeName && raw !== STANDARD_HIGHLIGHT_COLOR) return null;
+  const probe = activeWindow.createSpan();
+  probe.hidden = true;
+  probe.style.backgroundColor = String(raw);
+  activeDocument.body.appendChild(probe);
+  try {
+    return parseCssColor(activeWindow.getComputedStyle(probe).backgroundColor)
+      ?? parseCssColor(HIGHLIGHT_SWATCHES.find(swatch => swatch.name.toLowerCase() === nativeName)?.value
+        ?? DEFAULT_HIGHLIGHT_CUSTOM_COLOR);
+  } finally { probe.remove(); }
+}
+
 function formatPickedColor(kind: ColorKind, rgb: RGBColor, alpha = CUSTOM_HIGHLIGHT_ALPHA): string {
   if (kind === "text") return rgbToHex(rgb);
   return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${formatAlpha(alpha)})`;
@@ -1152,6 +1179,7 @@ function palettePresets(kind: ColorKind): ReadonlyArray<{ name: string; value: s
 }
 
 function colorsEquivalent(a: unknown, b: unknown): boolean {
+  if (typeof a === "string" && a === b) return true;
   const ca = parseCssColor(a);
   const cb = parseCssColor(b);
   if (!ca || !cb) return false;
@@ -1203,11 +1231,12 @@ function captureColorSnapshot(
 function snapshotFirstColor(snapshot: ColorSnapshot, kind: ColorKind): string | null {
   if (snapshot.empty) {
     const mark = snapshot.marks?.find((m) => m.type.name === colorMarkName(kind));
-    return colorAttr(mark?.attrs);
+    return colorAttr(mark?.attrs) ?? (mark && kind === "highlight" ? STANDARD_HIGHLIGHT_COLOR : null);
   }
   for (const range of snapshot.ranges) {
     const color = range.attrs.color;
     if (typeof color === "string") return color;
+    if (kind === "highlight") return STANDARD_HIGHLIGHT_COLOR;
   }
   return null;
 }
@@ -1267,14 +1296,18 @@ function applyHighlightColor(
   if (empty) {
     const marks = view.state.storedMarks ?? view.state.selection.$from.marks();
     const filtered = marks.filter((m) => m.type !== markType);
-    if (color) filtered.push(markType.create({ color }));
+    if (color !== null) filtered.push(markType.create({ color: color === STANDARD_HIGHLIGHT_COLOR ? null : color }));
     tr.setStoredMarks(filtered);
   } else {
     tr.removeMark(from, to, markType);
-    if (color) tr.addMark(from, to, markType.create({ color }));
+    if (color !== null) tr.addMark(from, to, markType.create({ color: color === STANDARD_HIGHLIGHT_COLOR ? null : color }));
+  }
+  if (!empty && tr.doc.eq(view.state.doc)) {
+    if (options.refocusEditor ?? true) view.focus();
+    return;
   }
   if (options.addToHistory === false) tr.setMeta("addToHistory", false);
-  view.dispatch(tr);
+  view.dispatch(options.addToHistory === false ? tr : closeHistory(tr));
   if (options.refocusEditor ?? true) view.focus();
 }
 
@@ -1295,21 +1328,25 @@ export function applyToolbarColor(
   apply(schema, view, color);
 }
 
-/** Build a compact color palette popover with default/custom slots,
- *  five preset swatches, and a Butter-owned custom picker. */
+/** Simple highlights use Obsidian's fixed Markdown palette. Rich formatting
+ * uses the configured HTML colors and custom picker. */
 function createColorPalette(
   schema: Schema,
   view: EditorView,
   kind: ColorKind,
   onClose: () => void,
   activeStyle: string = "filled",
+  allowHtml: boolean = true,
 ): HTMLElement {
   const wrap = activeWindow.createDiv() as ColorPaletteElement;
   wrap.classList.add("butter-toolbar-submenu-popup", "butter-color-palette");
   wrap.dataset.kind = kind;
   wrap.dataset.activeStyle = activeStyle;
+  wrap.dataset.htmlFormatting = String(allowHtml);
 
-  const swatches = palettePresets(kind);
+  const swatches = kind === "highlight" && !allowHtml
+    ? nativeHighlightPresets()
+    : palettePresets(kind);
   const apply = kind === "text" ? applyTextColor : applyHighlightColor;
   const paletteSnapshot = captureColorSnapshot(schema, view, kind);
   const ownership = captureDeferredUiOwnership(view);
@@ -1350,13 +1387,15 @@ function createColorPalette(
   }
   setIcon(defaultBtn, "eraser");
   appendCheck(defaultBtn);
-  defaultBtn.addEventListener("mousedown", (e) => {
+  const chooseDefault = (e: Event) => {
     e.preventDefault();
-    if (!ownership.canMutate({ explicit: true })) return;
+    if (committed || !ownership.canMutate({ explicit: true })) return;
     committed = true;
     apply(schema, view, null);
     onClose();
-  });
+  };
+  defaultBtn.addEventListener("mousedown", chooseDefault);
+  defaultBtn.addEventListener("click", chooseDefault);
   grid.appendChild(defaultBtn);
 
   const customBtn = makeCell("Custom color", "Custom color");
@@ -1377,11 +1416,12 @@ function createColorPalette(
   setIcon(customIcon, "pipette");
   customBtn.appendChild(customIcon);
   appendCheck(customBtn);
-  grid.appendChild(customBtn);
+  if (allowHtml) grid.appendChild(customBtn);
 
   for (const sw of swatches) {
     const swatchName = sw.name;
     const cell = makeCell(swatchName);
+    cell.dataset.color = sw.value;
     if (colorsEquivalent(currentColor, sw.value)) {
       cell.classList.add("is-selected");
       cell.setAttribute("aria-current", "true");
@@ -1393,13 +1433,15 @@ function createColorPalette(
     fill.style.backgroundColor = sw.value;
     cell.appendChild(fill);
     appendCheck(cell);
-    cell.addEventListener("mousedown", (e) => {
+    const chooseSwatch = (e: Event) => {
       e.preventDefault();
-      if (!ownership.canMutate({ explicit: true })) return;
+      if (committed || !ownership.canMutate({ explicit: true })) return;
       committed = true;
       apply(schema, view, sw.value);
       onClose();
-    });
+    };
+    cell.addEventListener("mousedown", chooseSwatch);
+    cell.addEventListener("click", chooseSwatch);
     grid.appendChild(cell);
   }
 
@@ -1480,7 +1522,7 @@ function createCustomColorPicker(args: {
     ? DEFAULT_TEXT_CUSTOM_COLOR
     : DEFAULT_HIGHLIGHT_CUSTOM_COLOR;
   const initialColor =
-    parseCssColor(initialRawColor) ??
+    pickerColor(initialRawColor) ??
     parseCssColor(defaultColor)!;
   const initialRgb: RGBColor = {
     r: initialColor.r,
@@ -1899,6 +1941,8 @@ interface ColorTarget {
   scrollAfterOpen(px: number): void;
   elevated?: boolean;
   showClose?: boolean;
+  nativeHighlights?: boolean;
+  allowCustom?: boolean;
 }
 
 export function openMobileColorSheet(
@@ -1906,18 +1950,22 @@ export function openMobileColorSheet(
   schema: Schema,
   view: EditorView,
   kind: "text" | "highlight",
+  allowHtmlFormatting?: boolean,
 ): void {
   const apply = kind === "text" ? applyTextColor : applyHighlightColor;
   const plugin = app.plugins?.plugins["butter-editor"] as
-    | { openSettings?: (subtab?: "general" | "editor" | "drag-drop" | "toolbar" | "context-menu" | "advanced" | "license" | "support", section?: string) => void }
+    | { settings?: { enableHtmlFormatting?: boolean }; openSettings?: (subtab?: "general" | "editor" | "drag-drop" | "toolbar" | "context-menu" | "advanced" | "license" | "support", section?: string) => void }
     | undefined;
   const snapshot = captureColorSnapshot(schema, view, kind);
   const ownership = captureDeferredUiOwnership(view);
   const previewToken = Symbol("mobile-color-preview");
+  const allowHtml = allowHtmlFormatting ?? (plugin?.settings?.enableHtmlFormatting !== false);
   openColorDrawer({
     kind,
     initial: snapshotFirstColor(snapshot, kind),
     allowDefault: true,
+    nativeHighlights: kind === "highlight" && !allowHtml,
+    allowCustom: allowHtml,
     preview: (color) => {
       if (!ownership.canMutate({ explicit: true })) return;
       showColorPreview(view, previewToken, kind, color);
@@ -1977,7 +2025,7 @@ function openColorDrawer(target: ColorTarget): void {
   const drawerPrepare = prepareMobileDrawerOpen();
 
   const kind = target.kind;
-  const presets = palettePresets(kind);
+  const presets = target.nativeHighlights ? nativeHighlightPresets() : palettePresets(kind);
   const initialColor = target.initial;
   const selectedPreset = presets.find((sw) => colorsEquivalent(initialColor, sw.value));
   // activeSource is "default", "custom", or a preset's colour value.
@@ -2006,10 +2054,10 @@ function openColorDrawer(target: ColorTarget): void {
   // Seed the HSV (+ alpha) model from a css colour (no apply).
   const seedFromColor = (value: string | null): void => {
     const parsed =
-      (value ? parseCssColor(value) : null) ??
+      (value ? pickerColor(value) : null) ??
       parseCssColor(kind === "text" ? DEFAULT_TEXT_CUSTOM_COLOR : DEFAULT_HIGHLIGHT_CUSTOM_COLOR)!;
     hsv = rgbToHsv({ r: parsed.r, g: parsed.g, b: parsed.b });
-    if (kind === "highlight" && value && /^rgba\(/i.test(value.trim())) {
+    if (kind === "highlight" && value && (/^rgba\(/i.test(value.trim()) || nativeHighlightName(value) || value === STANDARD_HIGHLIGHT_COLOR)) {
       alpha = parsed.a;
     }
   };
@@ -2126,6 +2174,7 @@ function openColorDrawer(target: ColorTarget): void {
     const { cell, fill } = makeCell();
     cell.setAttribute("aria-label", swatch.name);
     cell.title = swatch.name;
+    cell.dataset.color = swatch.value;
     fill.style.backgroundColor = swatch.value;
     const value = swatch.value;
     cell.addEventListener("click", () => selectSwatch(value));
@@ -2133,11 +2182,11 @@ function openColorDrawer(target: ColorTarget): void {
     presetRow.appendChild(cell);
   }
 
-  // Row 2: shades of the currently selected preset (its hue), light -> dark.
+  // Native highlights have a fixed palette; HTML colors include a shade ramp.
   const shadeRow = makeRow();
   const shadeButtons: HTMLButtonElement[] = [];
   const shadeFills: HTMLElement[] = [];
-  for (let i = 0; i < SHADE_STOPS.length; i++) {
+  for (let i = 0; !target.nativeHighlights && i < SHADE_STOPS.length; i++) {
     const { cell, fill } = makeCell("butter-mobile-color-shade-cell");
     cell.setAttribute("aria-label", `${tx("Shade")} ${i + 1}`);
     const idx = i;
@@ -2146,6 +2195,7 @@ function openColorDrawer(target: ColorTarget): void {
     shadeButtons.push(cell);
     shadeFills.push(fill);
   }
+  shadeRow.hidden = target.allowCustom === false;
 
   // Row 3: Clear (editor only) + Custom. Each flexes to fill, so with both
   // present they're half-width; with only Custom (settings preset slots,
@@ -2179,7 +2229,7 @@ function openColorDrawer(target: ColorTarget): void {
   const preciseLabel = activeWindow.createSpan();
   preciseLabel.textContent = tx("Custom");
   preciseLink.appendChild(preciseLabel);
-  actionRow.appendChild(preciseLink);
+  if (target.allowCustom !== false) actionRow.appendChild(preciseLink);
 
   // ── Page 2 (precise): H / S / V sliders (+ opacity) ──
   const page2 = activeWindow.createDiv();
@@ -2670,7 +2720,7 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
   if (renderNodeName && !ctx.schema.nodes[renderNodeName]) return null;
 
   const htmlOk = isHtmlFormattingEnabled(ctx);
-  if (!isFormattingMarkAllowed(def.markName, htmlOk)) return null;
+  if (!isFormattingActionAllowed(def, htmlOk)) return null;
 
   const el = activeWindow.createEl("button");
   el.classList.add("butter-btn", "clickable-icon");
@@ -2680,7 +2730,7 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
   );
   el.dataset.btnId = def.id;
   setIcon(el, def.icon);
-  if (def.id === "text-color" || (def.id === "highlight" && htmlOk)) {
+  if (def.id === "text-color" || def.id === "highlight") {
     el.setAttribute("aria-haspopup", "menu");
     const dot = activeWindow.createSpan();
     dot.classList.add("butter-submenu-dot");
@@ -2694,7 +2744,7 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
     const view = ctx.getView();
     if (!view || !view.editable) return;
     const currentHtmlOk = isHtmlFormattingEnabled(ctx);
-    if (!isFormattingMarkAllowed(def.markName, currentHtmlOk)) return;
+    if (!isFormattingActionAllowed(def, currentHtmlOk)) return;
 
     if (def.id === "link" || def.id === "insert-link-md") {
       openToolbarLinkMenu(ctx.app, ctx.schema, view, el, ctx.getSourcePath());
@@ -2726,29 +2776,18 @@ function renderRegularButton(id: string, ctx: RenderCtx): HTMLElement | null {
       return;
     }
 
-    // Highlight does double-duty when HTML formatting is on: the
-    // click toggles `==text==` AND opens the color swatch popover so
-    // the user can refine to a custom colour without a second click.
-    // On toggle-OFF (the click is removing a highlight already in the
-    // selection) we skip the popover - opening swatches right after
-    // the user cleared a highlight would be noise.
+    // Opening the picker never edits the document. The current preference
+    // selects the fixed Markdown palette or the HTML color picker.
     if (def.id === "highlight") {
-      const highlightMark = ctx.schema.marks.highlight;
-      const wasActive = highlightMark
-        ? isMarkActive(view.state, highlightMark)
-        : false;
-      execMarkCmd(def, ctx.schema, view);
-      if (!wasActive && currentHtmlOk) {
-        const palette = createColorPalette(
-          ctx.schema,
-          view,
-          "highlight",
-          ctx.closePopover,
-          el.closest<HTMLElement>(".butter-toolbar")?.dataset.activeStyle ?? "filled",
-        );
-        ctx.setPopover(palette, el);
-      }
-      window.setTimeout(() => view.focus(), 0);
+      const palette = createColorPalette(
+        ctx.schema,
+        view,
+        "highlight",
+        ctx.closePopover,
+        el.closest<HTMLElement>(".butter-toolbar")?.dataset.activeStyle ?? "filled",
+        currentHtmlOk,
+      );
+      ctx.setPopover(palette, el);
       return;
     }
 
@@ -2810,6 +2849,7 @@ function renderSubmenuButton(
     e.preventDefault();
     ctx.closePopover();
 
+    if (!isToolbarItemFormattingAllowed(item, isHtmlFormattingEnabled(ctx))) return;
     const popup = activeWindow.createDiv();
     popup.classList.add("butter-toolbar-submenu-popup");
     popup.dataset.activeStyle =
@@ -2954,11 +2994,25 @@ function installRovingTabindex(toolbar: HTMLElement): void {
   });
 }
 
+/** Omit groups whose actions are all unavailable without changing saved layouts. */
+export function isToolbarItemFormattingAllowed(item: LayoutItem, html: boolean): boolean {
+  if (item.type === "button") {
+    const definition = BUTTON_REGISTRY.get(item.id);
+    return !!definition && isFormattingActionAllowed(definition, html);
+  }
+  if (item.type === "submenu") {
+    return item.children.some(child => child.type !== "separator" &&
+      child.type !== "overflow" && isToolbarItemFormattingAllowed(child, html));
+  }
+  return true;
+}
+
 function renderItem(
   item: LayoutItem,
   ctx: RenderCtx,
   nested = false,
 ): HTMLElement | null {
+  if (!isToolbarItemFormattingAllowed(item, isHtmlFormattingEnabled(ctx))) return null;
   if (item.type === "separator") return makeSep();
   if (item.type === "submenu") {
     // Single-level nesting cap: a submenu inside a submenu just

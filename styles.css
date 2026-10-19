@@ -2286,6 +2286,9 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   width: max-content;
   max-width: 100%;
 }
+.butter-color-palette[data-kind="highlight"][data-html-formatting="false"] .butter-color-grid {
+  grid-template-columns: repeat(4, 30px);
+}
 .butter-color-cell {
   position: relative;
   width: 30px;

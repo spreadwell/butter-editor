@@ -2620,6 +2620,7 @@ export default class ButterEditorPlugin extends Plugin {
       this.addCommand({
         id, name: tx(button.label),
         checkCallback: checking => {
+          if (!this.settings.enableHtmlFormatting) return false;
           const view = this.app.workspace.getActiveViewOfType(ButterEditorView);
           const editor = view?.pmViewRef();
           if (!view?.isEditable() || !editor?.editable || !canExecuteConversion(button, editor.state)) return false;

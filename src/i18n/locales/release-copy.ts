@@ -1,5 +1,10 @@
 // Release-discovery copy, grouped here so every supported locale stays in lockstep.
 export const recentDe = {
+  "Highlight and alignment fixes": "Korrekturen für Hervorhebungen und Ausrichtung",
+  "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 passt die Hervorhebungsfarben und Ausrichtungsfunktionen an Ihre Formatierungseinstellungen an.",
+  "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "Wählen Sie bei deaktivierter erweiterter Formatierung Obsidian-Hervorhebungsfarben in der Symbolleiste oder bei aktivierter Einstellung HTML-Hervorhebungen.",
+  "Choose left alignment to remove paragraph alignment HTML and restore the default.": "Wählen Sie linksbündige Ausrichtung, um das HTML zur Absatzausrichtung zu entfernen und den Standard wiederherzustellen.",
+  "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.": "Ausrichtungsfunktionen und -befehle erfordern jetzt die erweiterte Formatierung; vorhandene ausgerichtete Inhalte bleiben bearbeitbar und erhalten.",
   "Alignment and Obsidian highlight colors": "Absatzausrichtung und Hervorhebungsfarben von Obsidian",
   "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 bietet Absatzausrichtung, unterstützt die sechs Hervorhebungsfarben von Obsidian und sorgt für zuverlässige Untermenüs im Kontextmenü.",
   "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Richten Sie Absätze über die Symbolleiste oder Befehlspalette linksbündig, zentriert, rechtsbündig oder im Blocksatz aus.",
@@ -124,6 +129,11 @@ export const recentDe = {
 } as const;
 
 export const recentEs = {
+  "Highlight and alignment fixes": "Correcciones de resaltado y alineación",
+  "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 adapta las opciones de resaltado y los controles de alineación a tus preferencias de formato.",
+  "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "Elige colores de resaltado de Obsidian en la barra de herramientas con el formato enriquecido desactivado, o resaltados HTML con él activado.",
+  "Choose left alignment to remove paragraph alignment HTML and restore the default.": "Elige la alineación izquierda para eliminar el HTML de alineación del párrafo y restaurar el valor predeterminado.",
+  "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.": "Los controles y comandos de alineación ahora requieren formato enriquecido; el contenido ya alineado se conserva y sigue siendo editable.",
   "Alignment and Obsidian highlight colors": "Alineación y colores de resaltado de Obsidian",
   "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 añade alineación de párrafos y admite los seis colores de resaltado de Obsidian, con submenús contextuales fiables.",
   "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Alinea los párrafos a la izquierda, al centro, a la derecha o justificados desde la barra de herramientas o la paleta de comandos.",
@@ -248,6 +258,11 @@ export const recentEs = {
 } as const;
 
 export const recentFr = {
+  "Highlight and alignment fixes": "Corrections du surlignage et de l’alignement",
+  "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 adapte les choix de surlignage et les commandes d’alignement à vos préférences de mise en forme.",
+  "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "Choisissez les couleurs de surlignage d’Obsidian dans la barre d’outils lorsque la mise en forme enrichie est désactivée, ou des surlignages HTML lorsqu’elle est activée.",
+  "Choose left alignment to remove paragraph alignment HTML and restore the default.": "Choisissez l’alignement à gauche pour supprimer le HTML d’alignement du paragraphe et rétablir le réglage par défaut.",
+  "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.": "Les commandes d’alignement nécessitent désormais la mise en forme enrichie ; le contenu déjà aligné reste modifiable et est préservé.",
   "Alignment and Obsidian highlight colors": "Alignement et couleurs de surlignage d’Obsidian",
   "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 ajoute l’alignement des paragraphes et prend en charge les six couleurs de surlignage d’Obsidian, avec des sous-menus contextuels fiables.",
   "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Alignez les paragraphes à gauche, au centre, à droite ou en mode justifié depuis la barre d’outils ou la palette de commandes.",
@@ -372,6 +387,11 @@ export const recentFr = {
 } as const;
 
 export const recentJa = {
+  "Highlight and alignment fixes": "ハイライトと配置の修正",
+  "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 では、ハイライトの選択肢と配置の操作が書式設定に従うようになります。",
+  "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "リッチ書式がオフの場合はツールバーで Obsidian のハイライト色を、オンの場合は HTML ハイライトを選択できます。",
+  "Choose left alignment to remove paragraph alignment HTML and restore the default.": "左揃えを選ぶと、段落の配置用 HTML が削除され、既定の配置に戻ります。",
+  "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.": "配置の操作とコマンドにはリッチ書式が必要になりました。既存の配置済みコンテンツは引き続き編集でき、保持されます。",
   "Alignment and Obsidian highlight colors": "段落の配置と Obsidian のハイライト色",
   "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 では段落の配置を設定でき、Obsidian の6色のハイライトに対応しました。コンテキストメニューのサブメニューも安定して操作できます。",
   "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "ツールバーやコマンドパレットから、段落を左揃え、中央揃え、右揃え、両端揃えにできます。",
@@ -496,6 +516,11 @@ export const recentJa = {
 } as const;
 
 export const recentKo = {
+  "Highlight and alignment fixes": "강조 및 정렬 수정",
+  "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1에서는 강조 선택 항목과 정렬 도구가 서식 설정을 따릅니다.",
+  "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "리치 서식이 꺼져 있으면 도구 모음에서 Obsidian 강조 색상을, 켜져 있으면 HTML 강조를 선택하세요.",
+  "Choose left alignment to remove paragraph alignment HTML and restore the default.": "왼쪽 정렬을 선택하면 문단 정렬 HTML이 제거되고 기본 정렬로 돌아갑니다.",
+  "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.": "이제 정렬 도구와 명령에는 리치 서식이 필요합니다. 기존에 정렬된 내용은 계속 편집할 수 있으며 보존됩니다.",
   "Alignment and Obsidian highlight colors": "문단 정렬과 Obsidian 강조 색상",
   "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0은 문단 정렬과 Obsidian의 여섯 가지 강조 색상을 지원하며, 상황에 맞는 메뉴의 하위 메뉴가 안정적으로 동작합니다.",
   "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "도구 모음이나 명령 팔레트에서 문단을 왼쪽, 가운데, 오른쪽 또는 양쪽으로 정렬할 수 있습니다.",
@@ -620,6 +645,11 @@ export const recentKo = {
 } as const;
 
 export const recentPt = {
+  "Highlight and alignment fixes": "Correções de realce e alinhamento",
+  "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "O Butter Editor 0.13.1 adapta as opções de realce e os controlos de alinhamento às suas preferências de formatação.",
+  "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "Escolha cores de realce do Obsidian na barra de ferramentas com a formatação avançada desativada, ou realces HTML com a opção ativada.",
+  "Choose left alignment to remove paragraph alignment HTML and restore the default.": "Escolha o alinhamento à esquerda para remover o HTML de alinhamento do parágrafo e repor a predefinição.",
+  "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.": "Os controlos e comandos de alinhamento passam a exigir formatação avançada; o conteúdo já alinhado continua editável e é preservado.",
   "Alignment and Obsidian highlight colors": "Alinhamento e cores de realce do Obsidian",
   "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "O Butter Editor 0.13.0 acrescenta alinhamento de parágrafos e suporte para as seis cores de realce do Obsidian, com submenus de contexto fiáveis.",
   "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Alinhe parágrafos à esquerda, ao centro, à direita ou justificados a partir da barra de ferramentas ou da paleta de comandos.",
@@ -744,6 +774,11 @@ export const recentPt = {
 } as const;
 
 export const recentPtBR = {
+  "Highlight and alignment fixes": "Correções de destaque e alinhamento",
+  "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "O Butter Editor 0.13.1 adapta as opções de destaque e os controles de alinhamento às suas preferências de formatação.",
+  "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "Escolha cores de destaque do Obsidian na barra de ferramentas com a formatação avançada desativada, ou destaques HTML com a opção ativada.",
+  "Choose left alignment to remove paragraph alignment HTML and restore the default.": "Escolha o alinhamento à esquerda para remover o HTML de alinhamento do parágrafo e restaurar o padrão.",
+  "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.": "Os controles e comandos de alinhamento agora exigem formatação avançada; o conteúdo já alinhado continua editável e é preservado.",
   "Alignment and Obsidian highlight colors": "Alinhamento e cores de destaque do Obsidian",
   "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "O Butter Editor 0.13.0 adiciona alinhamento de parágrafos e suporte às seis cores de destaque do Obsidian, com submenus de contexto confiáveis.",
   "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Alinhe parágrafos à esquerda, ao centro, à direita ou justificados pela barra de ferramentas ou pela paleta de comandos.",
@@ -868,6 +903,11 @@ export const recentPtBR = {
 } as const;
 
 export const recentRu = {
+  "Highlight and alignment fixes": "Исправления выделения и выравнивания",
+  "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "В Butter Editor 0.13.1 выбор выделения и элементы управления выравниванием учитывают ваши настройки форматирования.",
+  "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "При отключённом расширенном форматировании выбирайте цвета выделения Obsidian на панели инструментов, а при включённом — выделение HTML.",
+  "Choose left alignment to remove paragraph alignment HTML and restore the default.": "Выберите выравнивание по левому краю, чтобы удалить HTML выравнивания абзаца и восстановить значение по умолчанию.",
+  "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.": "Элементы управления и команды выравнивания теперь требуют расширенного форматирования; ранее выровненный текст сохраняется и остаётся доступным для редактирования.",
   "Alignment and Obsidian highlight colors": "Выравнивание и цвета выделения Obsidian",
   "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 добавляет выравнивание абзацев, поддержку шести цветов выделения Obsidian и надёжную работу подменю контекстного меню.",
   "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "Выравнивайте абзацы по левому краю, по центру, по правому краю или по ширине через панель инструментов или палитру команд.",
@@ -992,6 +1032,11 @@ export const recentRu = {
 } as const;
 
 export const recentZhCN = {
+  "Highlight and alignment fixes": "高亮与对齐修复",
+  "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 让高亮选项和对齐控件遵循你的格式偏好设置。",
+  "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "关闭富文本格式时，可从工具栏选择 Obsidian 高亮颜色；开启后则可选择 HTML 高亮。",
+  "Choose left alignment to remove paragraph alignment HTML and restore the default.": "选择左对齐可移除段落对齐 HTML，并恢复默认对齐方式。",
+  "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.": "对齐控件和命令现在需要开启富文本格式；现有的对齐内容仍可编辑并会得到保留。",
   "Alignment and Obsidian highlight colors": "段落对齐与 Obsidian 高亮颜色",
   "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 新增段落对齐，支持 Obsidian 的六种高亮颜色，并让右键菜单的子菜单稳定运行。",
   "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "通过工具栏或命令面板，将段落设为左对齐、居中、右对齐或两端对齐。",
@@ -1116,6 +1161,11 @@ export const recentZhCN = {
 } as const;
 
 export const recentZhTW = {
+  "Highlight and alignment fixes": "螢光標記與對齊修正",
+  "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 讓螢光標記選項和對齊控制項遵循你的格式偏好設定。",
+  "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "關閉豐富格式時，可從工具列選擇 Obsidian 螢光標記顏色；開啟後則可選擇 HTML 螢光標記。",
+  "Choose left alignment to remove paragraph alignment HTML and restore the default.": "選擇靠左對齊可移除段落對齊 HTML，並還原預設對齊方式。",
+  "Alignment controls and commands now require Rich formatting; existing aligned content remains editable and preserved.": "對齊控制項和指令現在需要開啟豐富格式；現有的對齊內容仍可編輯並會保留。",
   "Alignment and Obsidian highlight colors": "段落對齊與 Obsidian 螢光標記顏色",
   "Butter Editor 0.13.0 adds paragraph alignment and supports Obsidian's six highlight colors, with reliable context-menu submenus.": "Butter Editor 0.13.0 新增段落對齊，支援 Obsidian 的六種螢光標記顏色，並讓右鍵選單的子選單穩定運作。",
   "Align paragraphs left, center, right, or justified from the toolbar or command palette.": "透過工具列或命令面板，將段落設為靠左、置中、靠右或左右對齊。",

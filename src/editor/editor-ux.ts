@@ -12,7 +12,7 @@ import {
   runClipboardCommand,
 } from "../util/dom-utils";
 import { keymap } from "prosemirror-keymap";
-import { isFormattingMarkAllowed } from "../ui/rich-formatting-actions";
+import { isFormattingActionAllowed } from "../ui/rich-formatting-actions";
 import {
   chainCommands,
   newlineInCode,
@@ -91,6 +91,7 @@ import {
   MAIN_TOOLBAR_BUTTON_DEFS,
   applyToolbarColor,
   canExecuteConversion,
+  execAlignmentCmd,
   execBlockCmd,
   execHistoryCmd,
   execInsertCmd,
@@ -1542,7 +1543,7 @@ export function populateGeneralContextMenu(
       const plugin = host?.app.plugins?.plugins["butter-editor"] as
         | { settings?: { enableHtmlFormatting?: boolean } }
         | undefined;
-      return isFormattingMarkAllowed(definition.markName, plugin?.settings?.enableHtmlFormatting);
+      return isFormattingActionAllowed(definition, plugin?.settings?.enableHtmlFormatting);
     };
     if (!formattingAllowed()) return null;
     if (["insert", "turn-into", "block-actions", "text-color"].includes(definition.id)) {
@@ -1584,6 +1585,8 @@ export function populateGeneralContextMenu(
           });
         } else if (definition.id === "table") {
           insertTable(schema, view, 3, 3);
+        } else if (definition.kind === "alignment") {
+          execAlignmentCmd(definition, view);
         } else if (definition.kind === "mark") {
           execMarkCmd(definition, schema, view);
         } else if (definition.kind === "block") {
