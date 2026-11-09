@@ -1,6 +1,5 @@
 import { Setting } from "obsidian";
 import { ButterSettingTab, NormalizeWarningModal } from "../settings-tab";
-import { appendInlineNotice } from "../inline-notice";
 import { tx } from "../../i18n";
 
 export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
@@ -90,7 +89,7 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
 
     const presSection = this.createSettingGroup(root, tx("Source preservation"));
 
-    const preserveSetting = new Setting(presSection)
+    new Setting(presSection)
       .setName(tx("Preserve original formatting exactly"))
       .setDesc(
         tx("Parts of the note you didn't edit stay exactly as they were in the original file: spacing, formatting style, and blank lines all preserved. Sections you edited are saved in Butter's standard clean format."),
@@ -103,7 +102,6 @@ export function renderSourceSection(this: ButterSettingTab, root: HTMLElement) {
             await this.plugin.saveSettings();
           }),
       );
-    appendInlineNotice(preserveSetting.descEl, tx("Experimental"), "warning");
 
     const normSection = this.createSettingGroup(root, tx("Source normalizers"));
 

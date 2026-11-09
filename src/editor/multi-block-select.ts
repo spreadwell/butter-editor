@@ -783,7 +783,7 @@ export function multiBlockSelectPlugin(
         let skipNodeSelClear = false;
         if (hasNodeSel) {
           const selDom = editorView.nodeDOM(pmSel.from);
-          if (selDom instanceof HTMLElement && selDom.contains(target)) {
+          if (selDom?.instanceOf(HTMLElement) && selDom.contains(target)) {
             skipNodeSelClear = true;
           }
         }

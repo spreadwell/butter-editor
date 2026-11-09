@@ -10,12 +10,13 @@ A focused WYSIWYG editing view for [Obsidian](https://obsidian.md). Butter rende
 
 ## Why Butter?
 
-Butter adds a visual editing view to the Markdown notes already in your vault. Unlike Live Preview, it keeps supported Markdown syntax out of the editing surface while you write. Your notes remain ordinary `.md` files, with no import step and no lock-in.
+Butter adds a visual editing view to the Markdown notes already in your vault. Unlike Live Preview, it keeps supported Markdown syntax out of the editing surface while you write. Your notes remain ordinary `.md` files, with no import step and no lock-in, and text you don't edit is saved exactly as written.
 
 ## Highlights
 
 - **Visual Markdown editing:** Format headings, lists, tasks, links, tables, code, math, callouts, and more in place.
 - **Obsidian-aware:** Work with wikilinks, embeds, tags, footnotes, block IDs, properties, and Bases embeds.
+- **Works with popular plugins:** Many plugins that insert text or show suggestions, such as templates, dates, autocomplete, and Tasks, work inside Butter.
 - **Block editing:** Select, drag, reorder, and transform complete blocks.
 - **Fast insertion:** Type `/` at the start of a block to add common blocks and Obsidian structures.
 - **Desktop and mobile:** Use the same plugin and license, with controls adapted for mouse, keyboard, and touch.

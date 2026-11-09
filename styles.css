@@ -4345,6 +4345,22 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
 .butter-mobile-insert-drawer.is-open {
   transform: translateY(0);
 }
+/* A dragged drawer follows the finger without easing. */
+.butter-mobile-insert-drawer.butter-drawer-dragging {
+  transition: none;
+}
+/* A drag past the dismiss threshold slides the rest of the way out. */
+.butter-mobile-insert-drawer.butter-drawer-dismissing {
+  transform: translateY(100%);
+}
+/* Opened from the settings modal: one above Obsidian's modal layer (100);
+   the menu layer (65) is below it. */
+.butter-mobile-insert-drawer.butter-mobile-drawer-elevated {
+  z-index: calc(var(--layer-modal, 100) + 1);
+}
+.butter-drawer-grab {
+  touch-action: none;
+}
 .butter-mobile-color-drawer {
   --butter-alpha-pattern: repeating-linear-gradient(
     135deg,
@@ -4579,6 +4595,9 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   border: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
   touch-action: none;
+}
+.butter-mobile-color-slider.butter-mobile-color-hue-track {
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
 }
 .butter-mobile-color-slider-thumb {
   position: absolute;

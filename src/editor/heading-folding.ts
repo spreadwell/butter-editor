@@ -45,7 +45,7 @@ function toggleHeadingFold(
   const sectionElements: HTMLElement[] = [];
   for (const pos of section.slice(1)) {
     const dom = view.nodeDOM(pos);
-    if (dom instanceof HTMLElement) sectionElements.push(dom);
+    if (dom?.instanceOf(HTMLElement)) sectionElements.push(dom);
   }
 
   let tr: Transaction = view.state.tr.setMeta(headingFoldKey, {

@@ -732,7 +732,7 @@ export function inlineAtomEditPlugin(
 
       const blurEditorIfFocused = (): void => {
         const active = ownerDocument.activeElement;
-        if (active instanceof HTMLElement && editorView.dom.contains(active)) {
+        if (active?.instanceOf(HTMLElement) && editorView.dom.contains(active)) {
           active.blur();
         }
       };

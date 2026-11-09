@@ -53,7 +53,7 @@ const INLINE_TAP_TARGET_SELECTOR = [
 
 function clampHandleRailLeft(view: EditorView, desiredLeft: number): number {
   const pane = view.dom.closest(".workspace-leaf");
-  const paneLeft = pane instanceof HTMLElement
+  const paneLeft = pane?.instanceOf(HTMLElement)
     ? pane.getBoundingClientRect().left
     : 0;
   return Math.max(desiredLeft, paneLeft);
@@ -596,7 +596,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
 
         // Plain click -> arm drag
         const blockDom = editorView.nodeDOM(blockPos);
-        if (!(blockDom instanceof HTMLElement)) return;
+        if (!(blockDom?.instanceOf(HTMLElement))) return;
         const blockRect = blockDom.getBoundingClientRect();
 
         // Exclude the block itself from the container search - for a
@@ -941,7 +941,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         let hit: BlockHit | null = null;
         if (onCalloutChrome) {
           const calloutDom = targetEl?.closest?.(".butter-callout-view");
-          if (calloutDom instanceof HTMLElement) {
+          if (calloutDom?.instanceOf(HTMLElement)) {
             const rect = calloutDom.getBoundingClientRect();
             const posInfo = editorView.posAtCoords({
               left: rect.left + 5,
@@ -1028,7 +1028,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
             return;
           }
           const blockDom = editorView.nodeDOM(hit.pos);
-          if (!(blockDom instanceof HTMLElement)) {
+          if (!(blockDom?.instanceOf(HTMLElement))) {
             removeTouchPressNativeGuard();
             return;
           }
@@ -1115,7 +1115,6 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
         // Determine drag set
         const multi = getMultiBlockSelection(editorView.state);
         let draggedPositions: number[];
-        let collapsedHeadingSection = false;
         const multiSelectionDrag =
           multi.positions.length >= 2 &&
           multi.positions.includes(armed.hitPos);
@@ -1131,8 +1130,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
             editorView.state,
             armed.hitPos,
           );
-          collapsedHeadingSection = section.length > 1;
-          draggedPositions = collapsedHeadingSection
+          draggedPositions = section.length > 1
             ? section
             : [armed.hitPos];
         } else {
@@ -1146,7 +1144,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           if (!node) continue;
           draggedNodes.push(node);
           const dom = editorView.nodeDOM(pos);
-          if (dom instanceof HTMLElement) {
+          if (dom?.instanceOf(HTMLElement)) {
             draggedDoms.push(dom);
           }
         }
@@ -1340,7 +1338,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           alwaysLayer?.update(editorView, chromeY());
         } else if (phase.kind === "idle" && currentMode === "hover" && currentHit) {
           const dom = editorView.nodeDOM(currentHit.pos);
-          if (dom instanceof HTMLElement) {
+          if (dom?.instanceOf(HTMLElement)) {
             const rect = dom.getBoundingClientRect();
             currentHit = { ...currentHit, rect };
             showHoverHandle(currentHit);
@@ -1455,7 +1453,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
               // margins, neighbor edits shifted layout, etc.). Re-read
               // its position so the handle stays attached to the block.
               const dom = view.nodeDOM(currentHit.pos);
-              if (dom instanceof HTMLElement) {
+              if (dom?.instanceOf(HTMLElement)) {
                 const rect = dom.getBoundingClientRect();
                 currentHit = { ...currentHit, node, dom, rect };
                 showHoverHandle(currentHit);
@@ -1482,7 +1480,7 @@ export function dragHandlesPlugin(config: DragHandlesConfig): PMPlugin {
           }
           window.removeEventListener("resize", onScroll);
           window.removeEventListener("blur", onWindowBlur);
-          if (hoverThrottleRAF) cancelAnimationFrame(hoverThrottleRAF);
+          if (hoverThrottleRAF) viewWindow.cancelAnimationFrame(hoverThrottleRAF);
           if (activeMenu) {
             try { activeMenu.hide(); } catch { /* */ }
           }

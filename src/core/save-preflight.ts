@@ -1,6 +1,12 @@
 import type { Node as PMNode } from "prosemirror-model";
 import { docSemanticFingerprint, semanticDifference, type SemanticDifference } from "./doc-fingerprint";
 import { normalizeDocForSave } from "./doc-normalize";
+import {
+  hasOptionalEncodings,
+  optionalEncodingAttemptBudget,
+  reduceOptionalEncodings,
+  withOptionalEncodingMarks,
+} from "./optional-encodings";
 import { parser } from "./parser";
 import { serializer, type CanonicalFormOptions } from "./serializer";
 
@@ -127,6 +133,28 @@ function errorText(error: unknown): string {
   return String(error);
 }
 
+/** One finalized candidate that reparses to the exact expected fingerprint,
+ *  or null. Used to test reduced encodings, so failures are not reported. */
+function acceptCandidate(
+  input: SavePreflightInput,
+  runtime: SavePreflightRuntime,
+  normalizedDoc: PMNode,
+  expectedFingerprint: string,
+  serializedBody: string,
+): { candidate: string; reparsedDoc: PMNode } | null {
+  try {
+    const candidate = input.finalizeBody(serializedBody, normalizedDoc);
+    if (typeof candidate !== "string") return null;
+    const reparsedDoc = runtime.parseBody(candidate);
+    if (reparsedDoc === null) return null;
+    return runtime.semanticFingerprint(reparsedDoc) === expectedFingerprint
+      ? { candidate, reparsedDoc }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function freezeAttempts<T extends SavePreflightAttempt>(
   attempts: readonly T[],
 ): readonly T[] {
@@ -207,17 +235,47 @@ export function preflightExactSave(
       continue;
     }
 
+    const serializePath = (): string =>
+      path === "canonical"
+        ? runtime.serializeCanonical(normalizedDoc, canonicalOptions)
+        : runtime.serializeSourcePreserving(
+            normalizedDoc,
+            input.originalBody,
+            input.originalDoc!,
+            canonicalOptions,
+          );
     let serializedBody: string;
     try {
-      serializedBody =
-        path === "canonical"
-          ? runtime.serializeCanonical(normalizedDoc, canonicalOptions)
-          : runtime.serializeSourcePreserving(
-              normalizedDoc,
-              input.originalBody,
-              input.originalDoc!,
-              canonicalOptions,
-            );
+      serializedBody = withOptionalEncodingMarks(serializePath);
+      if (hasOptionalEncodings(serializedBody)) {
+        // Keep an escape only where dropping it changes the reparsed note.
+        const reduced = reduceOptionalEncodings(
+          serializedBody,
+          (body) => acceptCandidate(input, runtime, normalizedDoc, expectedFingerprint, body),
+          optionalEncodingAttemptBudget(serializedBody),
+        );
+        if (reduced) {
+          attempts.push({
+            ok: true,
+            path,
+            stage: "compare",
+            candidate: reduced.result.candidate,
+            reparsedDoc: reduced.result.reparsedDoc,
+            expectedFingerprint,
+            actualFingerprint: expectedFingerprint,
+          });
+          return {
+            ok: true,
+            path,
+            candidate: reduced.result.candidate,
+            normalizedDoc,
+            reparsedDoc: reduced.result.reparsedDoc,
+            attempts: freezeAttempts(attempts),
+          };
+        }
+        // Nothing reduced verified: report on the conservative encoding.
+        serializedBody = serializePath();
+      }
     } catch (error) {
       attempts.push({
         ok: false,

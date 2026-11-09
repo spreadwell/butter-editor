@@ -350,7 +350,6 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
       const sep = activeWindow.createDiv();
       sep.className = "menu-separator";
       body.appendChild(sep);
-      lastSepEmitted = true;
     }
     const actionEl = activeWindow.createDiv();
     actionEl.className = "menu-item tappable butter-rich-menu-action";
@@ -445,7 +444,7 @@ export function openRichContextMenu(opts: RichMenuOptions): RichMenuHandle {
   // Click-outside dismisses - capture phase so we beat any handlers
   // that might re-focus the editor and trigger a save side-effect.
   const onDown = (ev: MouseEvent) => {
-    if (ev.target instanceof Node && dom.contains(ev.target)) return;
+    if (ev.targetNode?.instanceOf(Node) && dom.contains(ev.targetNode)) return;
     if (opts.onCancel) opts.onCancel();
     close();
   };

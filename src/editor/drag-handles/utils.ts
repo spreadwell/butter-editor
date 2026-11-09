@@ -51,6 +51,15 @@ export function handlePlacementFor(
       if (glyph.height > 0) glyphCenter = glyph.top + glyph.height / 2;
     } catch { /* detached text node */ }
   }
+  if (glyphCenter == null && node.isTextblock) {
+    // An empty line has no glyph to measure. Centre on its content box so
+    // spacing drawn as padding (the click-to-spawn paragraph) cannot lift
+    // the handle above the caret.
+    const style = getComputedStyle(dom);
+    const top = rect.top + (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.paddingTop) || 0);
+    const bottom = rect.bottom - (parseFloat(style.borderBottomWidth) || 0) - (parseFloat(style.paddingBottom) || 0);
+    if (bottom > top) glyphCenter = (top + bottom) / 2;
+  }
 
   return {
     top: glyphCenter == null
@@ -69,7 +78,7 @@ export function collectSiblings(
   parent.forEach((child, offset) => {
     const pos = basePos + offset;
     const dom = view.nodeDOM(pos);
-    if (!(dom instanceof HTMLElement)) return;
+    if (!(dom?.instanceOf(HTMLElement))) return;
     const rect = dom.getBoundingClientRect();
     if (rect.height <= 0) return;
     siblings.push({
@@ -107,7 +116,7 @@ export function findContainerContext(
       }
       if (isContainer(child)) {
         const dom = view.nodeDOM(pos);
-        if (dom instanceof HTMLElement) {
+        if (dom?.instanceOf(HTMLElement)) {
           const rect = dom.getBoundingClientRect();
           if (
             clientX >= rect.left && clientX <= rect.right &&
@@ -222,7 +231,7 @@ export function findBlockUnderPointer(
       const pos = resolved.before(1);
       const node = view.state.doc.nodeAt(pos);
       const dom = view.nodeDOM(pos);
-      if (node && dom instanceof HTMLElement) {
+      if (node && dom?.instanceOf(HTMLElement)) {
         topHit = { pos, node, dom, rect: dom.getBoundingClientRect(), context: null };
       }
     }

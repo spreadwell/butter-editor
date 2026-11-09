@@ -22,7 +22,7 @@ export function installStartupSaveRecovery(
     started = true;
     void (async () => {
       let retained = false;
-      let unavailable = false;
+      let unavailable: boolean;
       try {
         const store = getStore();
         retained = (await store.list()).length > 0;

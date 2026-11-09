@@ -1,5 +1,16 @@
 // Release-discovery copy, grouped here so every supported locale stays in lockstep.
 export const recentDe = {
+  "Works with more of your plugins": "Funktioniert mit mehr Ihrer Plugins",
+  "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Mit Butter Editor 0.14.0 funktionieren Plugins, die Text einfügen oder Vorschläge anzeigen, auch in Butter, und Text, den Sie nicht bearbeitet haben, bleibt exakt erhalten.",
+  "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Übernehmen Sie Vorschläge zur automatischen Vervollständigung anderer Plugins, etwa für Datumsangaben oder Wörter, mit Enter oder per Klick.",
+  "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.": "Fügen Sie Vorlagen, Datumsangaben und anderen Plugin-Text an der Cursorposition ein, auch in einer neuen leeren Zeile, und machen Sie jedes Einfügen in einem Schritt rückgängig.",
+  "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.": "Ist das Plugin Tasks installiert, ergänzt das Abhaken einer Aufgabe ihr Erledigungsdatum und die nächste Wiederholung.",
+  "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.": "Nicht bearbeiteter Text bleibt jetzt für alle exakt erhalten. Sie können dies unter „Quelltexterhaltung“ in den Einstellungen unter „Erweitert“ ändern.",
+  "Saving no longer adds backslashes to lines you didn't edit.": "Beim Speichern erhalten Zeilen, die Sie nicht bearbeitet haben, keine Backslashes mehr.",
+  "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.": "Nicht unterstütztes Inline-HTML, etwa eigene Tags, sperrt nicht mehr die ganze Notiz; nur sein Block bleibt unverändert.",
+  "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.": "Vorschläge anderer Plugins öffnen sich nur noch beim Tippen, auch nachdem Sie eine Notiz von der Live-Vorschau zu Butter gewechselt haben.",
+  "The drag handle stays aligned on a new empty line.": "Der Ziehgriff bleibt auch in einer neuen leeren Zeile richtig ausgerichtet.",
+  "Notes changed by another plugin update without replaying the opening animation.": "Von einem anderen Plugin geänderte Notizen werden aktualisiert, ohne die Öffnungsanimation erneut abzuspielen.",
   "Highlight and alignment fixes": "Korrekturen für Hervorhebungen und Ausrichtung",
   "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 passt die Hervorhebungsfarben und Ausrichtungsfunktionen an Ihre Formatierungseinstellungen an.",
   "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "Wählen Sie bei deaktivierter erweiterter Formatierung Obsidian-Hervorhebungsfarben in der Symbolleiste oder bei aktivierter Einstellung HTML-Hervorhebungen.",
@@ -129,6 +140,17 @@ export const recentDe = {
 } as const;
 
 export const recentEs = {
+  "Works with more of your plugins": "Funciona con más de tus complementos",
+  "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0 permite que los complementos que insertan texto o muestran sugerencias funcionen dentro de Butter, y conserva exactamente el texto que no editaste.",
+  "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Acepta sugerencias de autocompletar de otros complementos, como fechas o palabras, con Enter o con un clic.",
+  "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.": "Inserta plantillas, fechas y otro texto de complementos en el cursor, incluso en una línea vacía nueva, y deshaz cada inserción en un solo paso.",
+  "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.": "Si tienes instalado el complemento Tasks, al marcar una tarea se añaden su fecha de finalización y la siguiente repetición.",
+  "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.": "El texto que no editaste ahora se conserva exactamente para todos. Puedes cambiarlo en Conservación del código fuente, en la configuración Avanzado.",
+  "Saving no longer adds backslashes to lines you didn't edit.": "Al guardar ya no se añaden barras invertidas a las líneas que no editaste.",
+  "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.": "El HTML en línea no compatible, como las etiquetas personalizadas, ya no bloquea toda la nota; solo su bloque se mantiene tal como está escrito.",
+  "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.": "Las sugerencias de otros complementos solo se abren mientras escribes, incluso después de cambiar una nota de la vista previa en vivo a Butter.",
+  "The drag handle stays aligned on a new empty line.": "El controlador de arrastre se mantiene alineado en una línea vacía nueva.",
+  "Notes changed by another plugin update without replaying the opening animation.": "Las notas modificadas por otro complemento se actualizan sin repetir la animación de apertura.",
   "Highlight and alignment fixes": "Correcciones de resaltado y alineación",
   "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 adapta las opciones de resaltado y los controles de alineación a tus preferencias de formato.",
   "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "Elige colores de resaltado de Obsidian en la barra de herramientas con el formato enriquecido desactivado, o resaltados HTML con él activado.",
@@ -258,6 +280,17 @@ export const recentEs = {
 } as const;
 
 export const recentFr = {
+  "Works with more of your plugins": "Compatible avec davantage de vos plugins",
+  "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0 permet aux plugins qui insèrent du texte ou affichent des suggestions de fonctionner dans Butter, et conserve exactement le texte que vous n’avez pas modifié.",
+  "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Acceptez les suggestions de saisie semi-automatique d’autres plugins, comme les dates ou les mots, avec la touche Entrée ou d’un clic.",
+  "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.": "Insérez des modèles, des dates et d’autres textes de plugins au curseur, même sur une nouvelle ligne vide, et annulez chaque insertion en une seule étape.",
+  "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.": "Si le plugin Tasks est installé, cocher une tâche ajoute sa date d’achèvement et sa prochaine récurrence.",
+  "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.": "Le texte que vous n’avez pas modifié reste désormais exactement tel quel pour tous. Vous pouvez changer cela dans Préservation du code source, dans les paramètres Avancé.",
+  "Saving no longer adds backslashes to lines you didn't edit.": "L’enregistrement n’ajoute plus de barres obliques inverses aux lignes que vous n’avez pas modifiées.",
+  "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.": "Le HTML en ligne non pris en charge, comme les balises personnalisées, ne verrouille plus toute la note ; seul son bloc reste tel quel.",
+  "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.": "Les suggestions des autres plugins ne s’ouvrent plus qu’au fil de la saisie, y compris après être passé de l’aperçu en direct à Butter.",
+  "The drag handle stays aligned on a new empty line.": "La poignée de glissement reste alignée sur une nouvelle ligne vide.",
+  "Notes changed by another plugin update without replaying the opening animation.": "Les notes modifiées par un autre plugin se mettent à jour sans rejouer l’animation d’ouverture.",
   "Highlight and alignment fixes": "Corrections du surlignage et de l’alignement",
   "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 adapte les choix de surlignage et les commandes d’alignement à vos préférences de mise en forme.",
   "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "Choisissez les couleurs de surlignage d’Obsidian dans la barre d’outils lorsque la mise en forme enrichie est désactivée, ou des surlignages HTML lorsqu’elle est activée.",
@@ -387,6 +420,17 @@ export const recentFr = {
 } as const;
 
 export const recentJa = {
+  "Works with more of your plugins": "より多くのプラグインと連携",
+  "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0 では、テキストを挿入したり候補を表示したりするプラグインが Butter 内で動作し、編集していないテキストは元のまま正確に保持されます。",
+  "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "日付や単語補完など、他のプラグインのオートコンプリート候補を Enter またはクリックで確定できます。",
+  "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.": "テンプレートや日付などのプラグインのテキストを、新しい空行も含めてカーソル位置に挿入でき、挿入ごとに 1 回で元に戻せます。",
+  "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.": "Tasks プラグインがインストールされている場合、タスクにチェックを入れると完了日と次の繰り返しが追加されます。",
+  "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.": "編集していないテキストは、すべてのユーザーで元のまま正確に保持されるようになりました。この設定は「高度な設定」の「ソース保持」で変更できます。",
+  "Saving no longer adds backslashes to lines you didn't edit.": "保存時に、編集していない行へバックスラッシュが追加されなくなりました。",
+  "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.": "カスタムタグなど未対応のインライン HTML があってもノート全体がロックされなくなり、そのブロックだけが元のまま保持されます。",
+  "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.": "他のプラグインの候補は入力中にのみ表示されます。ライブプレビューから Butter に切り替えた後も同様です。",
+  "The drag handle stays aligned on a new empty line.": "新しい空行でもドラッグハンドルの位置が揃うようになりました。",
+  "Notes changed by another plugin update without replaying the opening animation.": "他のプラグインがノートを変更しても、開くときのアニメーションを再生せずに更新されます。",
   "Highlight and alignment fixes": "ハイライトと配置の修正",
   "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 では、ハイライトの選択肢と配置の操作が書式設定に従うようになります。",
   "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "リッチ書式がオフの場合はツールバーで Obsidian のハイライト色を、オンの場合は HTML ハイライトを選択できます。",
@@ -516,6 +560,17 @@ export const recentJa = {
 } as const;
 
 export const recentKo = {
+  "Works with more of your plugins": "더 많은 플러그인과 함께 작동",
+  "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0에서는 텍스트를 삽입하거나 제안을 표시하는 플러그인이 Butter 안에서 작동하며, 편집하지 않은 텍스트는 원래대로 정확히 유지됩니다.",
+  "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "날짜나 단어 완성 등 다른 플러그인의 자동 완성 제안을 Enter 또는 클릭으로 적용할 수 있습니다.",
+  "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.": "템플릿, 날짜 등 플러그인 텍스트를 새 빈 줄을 포함해 커서 위치에 삽입하고, 각 삽입을 한 번에 실행 취소할 수 있습니다.",
+  "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.": "Tasks 플러그인이 설치되어 있으면 작업을 체크할 때 완료 날짜와 다음 반복이 추가됩니다.",
+  "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.": "편집하지 않은 텍스트는 이제 모든 사용자에게 원래대로 정확히 유지됩니다. 고급 설정의 원본 보존에서 변경할 수 있습니다.",
+  "Saving no longer adds backslashes to lines you didn't edit.": "저장할 때 편집하지 않은 줄에 더 이상 백슬래시가 추가되지 않습니다.",
+  "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.": "사용자 지정 태그 등 지원되지 않는 인라인 HTML이 더 이상 노트 전체를 잠그지 않으며, 해당 블록만 원래대로 유지됩니다.",
+  "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.": "다른 플러그인의 제안은 입력할 때만 열리며, 라이브 미리보기에서 Butter로 전환한 후에도 마찬가지입니다.",
+  "The drag handle stays aligned on a new empty line.": "새 빈 줄에서도 드래그 핸들이 올바르게 정렬됩니다.",
+  "Notes changed by another plugin update without replaying the opening animation.": "다른 플러그인이 노트를 변경해도 열기 애니메이션을 다시 재생하지 않고 업데이트됩니다.",
   "Highlight and alignment fixes": "강조 및 정렬 수정",
   "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1에서는 강조 선택 항목과 정렬 도구가 서식 설정을 따릅니다.",
   "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "리치 서식이 꺼져 있으면 도구 모음에서 Obsidian 강조 색상을, 켜져 있으면 HTML 강조를 선택하세요.",
@@ -645,6 +700,17 @@ export const recentKo = {
 } as const;
 
 export const recentPt = {
+  "Works with more of your plugins": "Funciona com mais dos seus plug-ins",
+  "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "O Butter Editor 0.14.0 permite que os plug-ins que inserem texto ou mostram sugestões funcionem dentro do Butter e mantém exatamente o texto que não editou.",
+  "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Aceite sugestões de preenchimento automático de outros plug-ins, como datas ou palavras, com Enter ou com um clique.",
+  "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.": "Insira modelos, datas e outro texto de plug-ins no cursor, mesmo numa nova linha vazia, e anule cada inserção num só passo.",
+  "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.": "Com o plug-in Tasks instalado, marcar uma tarefa acrescenta a data de conclusão e a próxima repetição.",
+  "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.": "O texto que não editou passa a manter-se exatamente como foi escrito para todos. Pode alterar isto em Preservação do código-fonte, nas definições Avançadas.",
+  "Saving no longer adds backslashes to lines you didn't edit.": "Guardar já não acrescenta barras invertidas a linhas que não editou.",
+  "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.": "O HTML inline não suportado, como etiquetas personalizadas, já não bloqueia a nota inteira; apenas o seu bloco se mantém como foi escrito.",
+  "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.": "As sugestões de outros plug-ins só abrem enquanto escreve, incluindo depois de mudar uma nota da pré-visualização em tempo real para o Butter.",
+  "The drag handle stays aligned on a new empty line.": "A pega de arrasto mantém-se alinhada numa nova linha vazia.",
+  "Notes changed by another plugin update without replaying the opening animation.": "As notas alteradas por outro plug-in atualizam-se sem repetir a animação de abertura.",
   "Highlight and alignment fixes": "Correções de realce e alinhamento",
   "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "O Butter Editor 0.13.1 adapta as opções de realce e os controlos de alinhamento às suas preferências de formatação.",
   "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "Escolha cores de realce do Obsidian na barra de ferramentas com a formatação avançada desativada, ou realces HTML com a opção ativada.",
@@ -774,6 +840,17 @@ export const recentPt = {
 } as const;
 
 export const recentPtBR = {
+  "Works with more of your plugins": "Funciona com mais dos seus plug-ins",
+  "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "O Butter Editor 0.14.0 permite que plug-ins que inserem texto ou mostram sugestões funcionem dentro do Butter e mantém exatamente o texto que você não editou.",
+  "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Aceite sugestões de preenchimento automático de outros plug-ins, como datas ou palavras, com Enter ou um clique.",
+  "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.": "Insira modelos, datas e outros textos de plug-ins no cursor, até mesmo em uma nova linha vazia, e desfaça cada inserção em uma única etapa.",
+  "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.": "Com o plug-in Tasks instalado, marcar uma tarefa adiciona a data de conclusão e a próxima recorrência.",
+  "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.": "O texto que você não editou agora permanece exatamente como foi escrito para todos. Você pode alterar isso em Preservação do código-fonte, nas configurações Avançado.",
+  "Saving no longer adds backslashes to lines you didn't edit.": "Salvar não adiciona mais barras invertidas às linhas que você não editou.",
+  "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.": "HTML inline sem suporte, como tags personalizadas, não bloqueia mais a nota inteira; apenas o bloco dele permanece como foi escrito.",
+  "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.": "As sugestões de outros plug-ins só abrem enquanto você digita, inclusive depois de trocar uma nota da visualização ao vivo para o Butter.",
+  "The drag handle stays aligned on a new empty line.": "A alça de arrastar permanece alinhada em uma nova linha vazia.",
+  "Notes changed by another plugin update without replaying the opening animation.": "Notas alteradas por outro plug-in são atualizadas sem repetir a animação de abertura.",
   "Highlight and alignment fixes": "Correções de destaque e alinhamento",
   "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "O Butter Editor 0.13.1 adapta as opções de destaque e os controles de alinhamento às suas preferências de formatação.",
   "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "Escolha cores de destaque do Obsidian na barra de ferramentas com a formatação avançada desativada, ou destaques HTML com a opção ativada.",
@@ -903,6 +980,17 @@ export const recentPtBR = {
 } as const;
 
 export const recentRu = {
+  "Works with more of your plugins": "Работает с большим числом ваших плагинов",
+  "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "В Butter Editor 0.14.0 плагины, которые вставляют текст или показывают подсказки, работают внутри Butter, а текст, который вы не редактировали, сохраняется в точности как был.",
+  "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Принимайте подсказки автозаполнения из других плагинов, например даты или слова, клавишей Enter или щелчком.",
+  "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.": "Вставляйте шаблоны, даты и другой текст плагинов в позицию курсора, даже на новой пустой строке, и отменяйте каждую вставку за один шаг.",
+  "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.": "Если установлен плагин Tasks, отметка задачи добавляет дату выполнения и следующее повторение.",
+  "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.": "Текст, который вы не редактировали, теперь у всех сохраняется в точности как был. Это можно изменить в разделе «Сохранение исходного текста» в расширенных настройках.",
+  "Saving no longer adds backslashes to lines you didn't edit.": "При сохранении к строкам, которые вы не редактировали, больше не добавляются обратные косые черты.",
+  "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.": "Неподдерживаемый встроенный HTML, например пользовательские теги, больше не блокирует всю заметку; без изменений остаётся только его блок.",
+  "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.": "Подсказки других плагинов открываются только во время ввода, в том числе после переключения заметки из живого предпросмотра в Butter.",
+  "The drag handle stays aligned on a new empty line.": "Маркер перетаскивания остаётся выровненным на новой пустой строке.",
+  "Notes changed by another plugin update without replaying the opening animation.": "Заметки, изменённые другим плагином, обновляются без повторной анимации открытия.",
   "Highlight and alignment fixes": "Исправления выделения и выравнивания",
   "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "В Butter Editor 0.13.1 выбор выделения и элементы управления выравниванием учитывают ваши настройки форматирования.",
   "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "При отключённом расширенном форматировании выбирайте цвета выделения Obsidian на панели инструментов, а при включённом — выделение HTML.",
@@ -1032,6 +1120,17 @@ export const recentRu = {
 } as const;
 
 export const recentZhCN = {
+  "Works with more of your plugins": "兼容更多插件",
+  "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0 让插入文本或显示建议的插件可以在 Butter 中使用，并按原样保留你未编辑的文本。",
+  "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "按 Enter 或点击即可接受其他插件的自动补全建议，例如日期或单词补全。",
+  "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.": "在光标处插入模板、日期和其他插件文本，包括在新的空行中，并且每次插入都可一步撤销。",
+  "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.": "安装 Tasks 插件后，勾选任务会添加完成日期和下一次重复。",
+  "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.": "现在所有用户未编辑的文本都会按原样完整保留。你可以在“高级”设置的“源码保留”中更改此选项。",
+  "Saving no longer adds backslashes to lines you didn't edit.": "保存时不再给未编辑的行添加反斜杠。",
+  "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.": "不受支持的行内 HTML（例如自定义标签）不再锁定整篇笔记；只有其所在的块会保持原样。",
+  "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.": "其他插件的建议现在只会在输入时打开，包括将笔记从实时预览切换到 Butter 之后。",
+  "The drag handle stays aligned on a new empty line.": "拖动手柄在新的空行上也能保持对齐。",
+  "Notes changed by another plugin update without replaying the opening animation.": "其他插件修改笔记后，笔记会直接更新，不再重放打开动画。",
   "Highlight and alignment fixes": "高亮与对齐修复",
   "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 让高亮选项和对齐控件遵循你的格式偏好设置。",
   "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "关闭富文本格式时，可从工具栏选择 Obsidian 高亮颜色；开启后则可选择 HTML 高亮。",
@@ -1161,6 +1260,17 @@ export const recentZhCN = {
 } as const;
 
 export const recentZhTW = {
+  "Works with more of your plugins": "相容更多外掛程式",
+  "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0 讓插入文字或顯示建議的外掛程式可以在 Butter 中運作，並依原樣保留你未編輯的文字。",
+  "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "按 Enter 或點按即可接受其他外掛程式的自動完成建議，例如日期或單字補全。",
+  "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.": "在游標處插入範本、日期和其他外掛程式文字，包括在新的空白行中，且每次插入都能一步復原。",
+  "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.": "安裝 Tasks 外掛程式後，勾選任務會加入完成日期和下一次重複。",
+  "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.": "現在所有使用者未編輯的文字都會依原樣完整保留。你可以在「進階」設定的「原始碼保留」中變更此選項。",
+  "Saving no longer adds backslashes to lines you didn't edit.": "儲存時不再為未編輯的行加入反斜線。",
+  "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.": "不支援的行內 HTML（例如自訂標籤）不再鎖定整份筆記；只有其所在的區塊會保持原樣。",
+  "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.": "其他外掛程式的建議現在只會在輸入時開啟，包括將筆記從即時預覽切換到 Butter 之後。",
+  "The drag handle stays aligned on a new empty line.": "拖曳控點在新的空白行上也能保持對齊。",
+  "Notes changed by another plugin update without replaying the opening animation.": "其他外掛程式修改筆記後，筆記會直接更新，不再重播開啟動畫。",
   "Highlight and alignment fixes": "螢光標記與對齊修正",
   "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.": "Butter Editor 0.13.1 讓螢光標記選項和對齊控制項遵循你的格式偏好設定。",
   "Choose Obsidian highlight colors from the toolbar when Rich formatting is off, or HTML highlights when it is on.": "關閉豐富格式時，可從工具列選擇 Obsidian 螢光標記顏色；開啟後則可選擇 HTML 螢光標記。",

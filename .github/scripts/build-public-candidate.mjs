@@ -816,13 +816,22 @@ function parseTrustedJson(bytes, label) {
   }
 }
 
-export function validateTrustedPackageForInstall(packageBytes, lockBytes) {
+// The frozen private source may also pin eslint's minimatch. The public
+// exporter drops this exact override, so public packages stay moment-only.
+const PRIVATE_SOURCE_TOOLING_OVERRIDE = Object.freeze(["minimatch@>=7.0.0 <11.0.1", "11.0.5"]);
+
+export function validateTrustedPackageForInstall(packageBytes, lockBytes, { privateSource = false } = {}) {
   const packageJson = parseTrustedJson(packageBytes, "Trusted package.json");
   const packageLock = parseTrustedJson(lockBytes, "Trusted package-lock.json");
   const packageName = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/u;
   const registrySpecifier = /^(?:(?:\^|~)?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?|latest)$/u;
   if (Object.hasOwn(packageJson, "overrides")) {
-    const overrides = packageJson.overrides;
+    let overrides = packageJson.overrides;
+    const [toolingName, toolingVersion] = PRIVATE_SOURCE_TOOLING_OVERRIDE;
+    if (
+      privateSource && overrides && typeof overrides === "object" && !Array.isArray(overrides)
+      && Object.hasOwn(overrides, toolingName) && overrides[toolingName] === toolingVersion
+    ) overrides = Object.fromEntries(Object.entries(overrides).filter(([name]) => name !== toolingName));
     if (
       !overrides || typeof overrides !== "object" || Array.isArray(overrides)
       || JSON.stringify(Object.keys(overrides)) !== JSON.stringify(["moment"])
@@ -1237,7 +1246,9 @@ async function runPrivateControl(options) {
       options.trustedMaster,
       "package-lock.json",
     );
-    const trustedPackage = validateTrustedPackageForInstall(packageBytes, lockBytes);
+    const trustedPackage = validateTrustedPackageForInstall(packageBytes, lockBytes, {
+      privateSource: Boolean(options.sourceCommit),
+    });
     writeExact(controlRoot, "package.json", packageBytes);
     writeExact(controlRoot, "package-lock.json", lockBytes);
     const {

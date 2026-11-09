@@ -1,5 +1,5 @@
 import { Node as PMNode, Fragment, Mark, MarkType, NodeType } from "prosemirror-model";
-import type Token from "markdown-it/lib/token.mjs";
+import Token from "markdown-it/lib/token.mjs";
 import { schema } from "../schema";
 import { allowsInlineMark } from "../inline-mark-policy";
 import { stampLinkOccurrenceLabels, canonicalizeLinkOccurrences, seedLinkOccurrences } from "../link-occurrence";
@@ -612,6 +612,12 @@ function buildHandlers(): Record<string, TokenHandler> {
       reason: "Native HTML source block",
       sourceKind: "native-html-block",
     });
+  h.native_source_block = (s, t) =>
+    s.addNode(schema.nodes.raw_block, {
+      raw: t.content,
+      reason: "Unsupported source kept as written",
+      sourceKind: "native-source-block",
+    });
   h.obsidian_embed = (s, t) =>
     s.addNode(schema.nodes.obsidian_embed, { src: t.content });
   h.footnote_def = (s, t) =>
@@ -957,6 +963,54 @@ function firstUnhandledToken(tokens: readonly Token[]): Token | null {
   return null;
 }
 
+/**
+ * Confine unsupported HTML to the top-level block that owns it. Each such
+ * block becomes one opaque `native_source_block` holding its exact lines, so
+ * the rest of the note stays editable. Returns null (whole-file fallback) for
+ * any other unhandled token: unknown token types are parser failures, and
+ * unsupported anchors change navigation/footnote scope beyond their block.
+ */
+function onlyUnsupportedHtml(tokens: readonly Token[]): boolean {
+  return tokens.every(token => {
+    const sourceMeta = token.meta as { nativeUnsupportedAnchor?: boolean; nativeUnsupportedHtml?: boolean } | null;
+    if (sourceMeta?.nativeUnsupportedAnchor || !handlers[token.type]) return false;
+    return token.type !== "inline" || !token.children || onlyUnsupportedHtml(token.children);
+  });
+}
+
+function isolateUnhandledTopLevelBlocks(tokens: readonly Token[], markdown: string): Token[] | null {
+  const lineStarts = computeLineStarts(markdown);
+  const lineToOffset = (line: number): number =>
+    line < lineStarts.length ? lineStarts[line] : markdown.length;
+  const result: Token[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const open = tokens[index];
+    let end = index;
+    if (open.nesting === 1) {
+      for (let depth = 0; end < tokens.length; end++) {
+        depth += tokens[end].nesting;
+        if (depth === 0) break;
+      }
+      if (end >= tokens.length) return null;
+    } else if (open.nesting === -1) return null;
+    const group = tokens.slice(index, end + 1);
+    if (!firstUnhandledToken(group)) { result.push(...group); index = end; continue; }
+    if (!onlyUnsupportedHtml(group)) return null;
+    if (!open.map || open.level !== 0) return null;
+    const startLine = open.map[0];
+    let endLine = Math.max(...group.map(token => token.map?.[1] ?? startLine + 1));
+    // Trailing blank lines are inter-block separators, not island content.
+    while (endLine > startLine + 1 && /^[ \t]*(?:\r\n?|\n)?$/.test(markdown.slice(lineToOffset(endLine - 1), lineToOffset(endLine)))) endLine--;
+    const island = new Token("native_source_block", "", 0);
+    island.content = markdown.slice(lineToOffset(startLine), lineToOffset(endLine)).replace(/\r\n?/g, "\n").replace(/\n$/, "");
+    island.block = true;
+    island.map = [startLine, endLine];
+    result.push(island);
+    index = end;
+  }
+  return firstUnhandledToken(result) ? null : result;
+}
+
 // ── Task-list post-processing ──
 
 // Matches the task-item marker at the start of a list item's first
@@ -1023,9 +1077,11 @@ function transformTaskItems(node: PMNode): PMNode {
 // ── Public parse ──
 
 export function parse(markdown: string): PMNode | null {
-  const tokens = md.parse(markdown, {});
+  let tokens = md.parse(markdown, {});
   const unhandled = firstUnhandledToken(tokens);
-  if (unhandled) {
+  const isolated = unhandled ? isolateUnhandledTopLevelBlocks(tokens, markdown) : null;
+  if (isolated) tokens = isolated;
+  else if (unhandled) {
     return rawBlockFallbackDocument(
       markdown,
       `unhandled Markdown token: ${unhandled.type}`,
@@ -1406,9 +1462,11 @@ function parseWithSourceMapInner(markdown: string): SourceMapResult | null {
     };
   }
 
-  const tokens = md.parse(markdown, {});
+  let tokens = md.parse(markdown, {});
   const unhandled = firstUnhandledToken(tokens);
-  if (unhandled) {
+  const isolated = unhandled ? isolateUnhandledTopLevelBlocks(tokens, markdown) : null;
+  if (isolated) tokens = isolated;
+  else if (unhandled) {
     return rawBlockFallback(
       markdown,
       `unhandled Markdown token: ${unhandled.type}`,

@@ -1,6 +1,6 @@
 {
   "name": "butter-editor",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "description": "Butter Editor — WYSIWYG editing mode for Obsidian (ProseMirror + markdown-it, custom bridge)",
   "main": "main.js",
   "license": "UNLICENSED",
@@ -10,7 +10,7 @@
   "dependencies": {
     "@codemirror/view": "6.43.13",
     "canvas-confetti": "^1.9.4",
-    "markdown-it": "14.3.2",
+    "markdown-it": "14.3.3",
     "nanoid": "^5.1.11",
     "prosemirror-commands": "^1.6.2",
     "prosemirror-dropcursor": "^1.8.1",

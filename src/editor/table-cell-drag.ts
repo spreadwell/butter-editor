@@ -118,7 +118,7 @@ function cellRangeViewportRect(
     tableStart + map.map[(rect.bottom - 1) * map.width + (rect.right - 1)];
   const tlDom = view.nodeDOM(tlPos);
   const brDom = view.nodeDOM(brPos);
-  if (!(tlDom instanceof HTMLElement) || !(brDom instanceof HTMLElement))
+  if (!(tlDom?.instanceOf(HTMLElement)) || !(brDom?.instanceOf(HTMLElement)))
     return null;
   const tl = tlDom.getBoundingClientRect();
   const br = brDom.getBoundingClientRect();
@@ -593,7 +593,7 @@ function startAutoscroll(view: EditorView): void {
 }
 
 function stopAutoscroll(): void {
-  if (autoscrollRAF) cancelAnimationFrame(autoscrollRAF);
+  if (autoscrollRAF) window.cancelAnimationFrame(autoscrollRAF);
   autoscrollRAF = 0;
 }
 

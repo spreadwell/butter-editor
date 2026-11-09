@@ -999,7 +999,6 @@ export function calloutPlugin(md: MarkdownIt) {
           openTok === "heading_open" && closeTok === "heading_close";
         if (isParaTrio || isHeadingTrio) {
           tokens.splice(openIdx, 3);
-          closeIdx -= 3;
         } else {
           tokens[firstInlineIdx].content = "";
         }

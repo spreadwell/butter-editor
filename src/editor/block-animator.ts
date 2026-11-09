@@ -192,7 +192,7 @@ function animateStructuralContent(
 ): void {
   if (targetId !== "blockquote") return;
   const content = element.firstElementChild;
-  if (!(content instanceof HTMLElement)) return;
+  if (!(content?.instanceOf(HTMLElement))) return;
   const newRect = rectOf(content);
   const dx = oldRect.left - newRect.left;
   const dy = oldRect.top - newRect.top;
@@ -234,7 +234,7 @@ function snapshotAffectedLane(
     const location = locations.get(id);
     if (!location) continue;
     const dom = view.nodeDOM(location.pos);
-    if (!(dom instanceof HTMLElement)) continue;
+    if (!(dom?.instanceOf(HTMLElement))) continue;
     const rect = rectOf(dom);
     if (
       !targets.has(id) &&
@@ -267,7 +267,7 @@ function runTurnIntoAnimations(
     const location = locations.get(id);
     if (!location) continue;
     const dom = view.nodeDOM(location.pos);
-    if (!(dom instanceof HTMLElement) || !dom.isConnected) continue;
+    if (!(dom?.instanceOf(HTMLElement)) || !dom.isConnected) continue;
     const record = targets.get(id);
     if (!record) {
       animateElement(dom, oldRect.outer, rectOf(dom), false);
@@ -294,7 +294,7 @@ function runTurnIntoAnimations(
       const replacement = siblings[firstIndex + i];
       if (!replacement) break;
       const replacementDom = view.nodeDOM(replacement.pos);
-      if (!(replacementDom instanceof HTMLElement) || !replacementDom.isConnected) continue;
+      if (!(replacementDom?.instanceOf(HTMLElement)) || !replacementDom.isConnected) continue;
       animateElement(
         replacementDom,
         oldRect.parts[i] ?? oldRect.content,

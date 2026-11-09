@@ -2,6 +2,7 @@ import { Node as PMNode, Fragment, Mark } from "prosemirror-model";
 import { schema } from "../schema";
 import { CANONICAL_DEFAULTS, type CanonicalFormOptions } from "./common";
 import { isDigitCode } from "../inline-math-delimiters";
+import { OPTIONAL_ENTITY, OPTIONAL_ESCAPE, optionalEncodingMarksEnabled } from "../optional-encodings";
 import { isObsidianTagCharacter } from "../tag-characters";
 import { blockCommentSource, hasUnclosedHtmlCommentTail } from "../html-comments";
 import { alignmentOpening, textAlignment } from "../text-alignment";
@@ -166,14 +167,20 @@ function backticksFor(parent: PMNode, index: number, side: number): string {
 
 // ── Escape helpers ──
 
-function escapeTildeRuns(str: string): string {
+/** Backslash that marks the next character literal. During a file save it is
+ *  tagged optional: the save drops it wherever the reparse is unchanged. */
+function escapePrefix(): string {
+  return optionalEncodingMarksEnabled() ? OPTIONAL_ESCAPE + "\\" : "\\";
+}
+
+function escapeTildeRuns(str: string, escape: string): string {
   // Native strike/fence grammar needs a run of at least two tildes. Interior
   // single tildes remain readable approximation text. Protect text-node and
   // physical-line edges, where a neighboring emitted delimiter can extend
   // the run even though this literal node contains only one tilde.
   return str.replace(/~+/g, (run: string, index: number) =>
     run.length > 1 || index === 0 || index + run.length === str.length
-      ? run.replace(/~/g, "\\~") : run);
+      ? run.replace(/~/g, escape + "~") : run);
 }
 
 function protectEntityLikeAmpersands(
@@ -192,7 +199,8 @@ export function htmlAttribute(value: string): string {
 }
 
 function encodeBoundaryWhitespace(value: string): string {
-  return value.replace(/ /g, "&#32;").replace(/\t/g, "&#9;");
+  const mark = optionalEncodingMarksEnabled() ? OPTIONAL_ENTITY : "";
+  return value.replace(/ /g, mark + "&#32;").replace(/\t/g, mark + "&#9;");
 }
 
 function longestCharacterRun(value: string, character: "`" | "~"): number {
@@ -247,12 +255,13 @@ const DOLLAR_ESCAPE_PATTERNS = {
 } as const;
 
 function esc(str: string, startOfLine = false, preserveCurrency = false): string {
-  str = str.replace(/[`*\\[\]_<>=%^#!]/g, "\\$&");
+  const escape = escapePrefix();
+  str = str.replace(/[`*\\[\]_<>=%^#!]/g, escape + "$&");
   // A currency-only literal textblock has no emitted math/code/comment
   // token seam. Its digit-followed dollars cannot close each other under
   // the native inline-math grammar; every other dollar remains protected.
-  str = str.replace(DOLLAR_ESCAPE_PATTERNS[preserveCurrency ? "currency" : "text"], "\\$&");
-  str = escapeTildeRuns(str);
+  str = str.replace(DOLLAR_ESCAPE_PATTERNS[preserveCurrency ? "currency" : "text"], escape + "$&");
+  str = escapeTildeRuns(str, escape);
   // Literal entity-looking text must remain literal text. markdown-it decodes
   // `&nbsp;`, `&#160;`, etc. during parse, so a user typing those characters
   // would otherwise get a different document after save/reload. Protect the
@@ -261,8 +270,8 @@ function esc(str: string, startOfLine = false, preserveCurrency = false): string
   str = str.replace(/\u00a0/g, "&nbsp;");
   if (startOfLine)
     str = str
-      .replace(/^[-+>]/, "\\$&")
-      .replace(/^(\s*\d+)([.)])/, "$1\\$2");
+      .replace(/^[-+>]/, escape + "$&")
+      .replace(/^(\s*\d+)([.)])/, "$1" + escape + "$2");
   return str;
 }
 
@@ -1339,13 +1348,15 @@ export class SerState {
     if (blockId) this.write(` ^${String(blockId.attrs.id)}`);
   }
 
-  renderInline(parent: PMNode) {
+  renderInline(parent: PMNode, atBlockStart = true, atBlockEnd = true) {
     let hasOwner = false;
     parent.forEach(node => { if (linkOccurrence(node)) hasOwner = true; });
     if (hasOwner) {
       let owner: Mark | undefined;
+      let previousOwner: Mark | undefined;
       let run: PMNode[] = [];
-      const flush = (): void => {
+      let runStart = 0;
+      const flush = (nextOwner?: Mark): void => {
         if (!run.length) return;
         // A mark spanning the complete occurrence surrounds its source
         // wrapper. Opening it inside the anchor can let a native tag close
@@ -1377,19 +1388,28 @@ export class SerState {
           // as label syntax by the native host and lose hidden ownership.
           this.renderOwnedLabel(parent, clean, true);
         } else if (owner) this.renderOwnedLabel(parent, clean);
-        else this.renderInline(parent.copy(Fragment.fromArray(clean)));
+        else {
+          // A reference such as [ ] can acquire native checkbox meaning at
+          // a list-body boundary. Retain its established separator encoding.
+          const referenceBoundary = previousOwner?.attrs.syntax === "reference" || nextOwner?.attrs.syntax === "reference";
+          this.renderInline(parent.copy(Fragment.fromArray(clean)),
+            referenceBoundary || atBlockStart && runStart === 0,
+            referenceBoundary || atBlockEnd && runStart + run.length === parent.childCount);
+        }
         if (owner) {
           if (owner.attrs.syntax === "html") this.write("</a>");
           else if (owner.attrs.syntax === "reference") this.write(owner.attrs.referenceForm === "shortcut" ? "]" : owner.attrs.referenceForm === "collapsed" ? "][]" : `][${owner.attrs.reference as string}]`);
           else this.write(`](${markdownDestination(owner.attrs.href as string, Boolean(owner.attrs.title))}${owner.attrs.title ? ` "${markdownTitle(owner.attrs.title as string)}"` : ""})`);
         }
         for (let index = surrounding.length - 1; index >= 0; index--) this.write(this.markClose(surrounding[index], parent, parent.childCount, true));
+        previousOwner = owner;
         run = [];
       };
-      parent.forEach(node => {
+      parent.forEach((node, _offset, index) => {
         const next = linkOccurrence(node);
-        if (Boolean(owner) !== Boolean(next) || owner && next && !owner.eq(next)) flush();
+        if (Boolean(owner) !== Boolean(next) || owner && next && !owner.eq(next)) flush(next);
         owner = next;
+        if (!run.length) runStart = index;
         run.push(node);
       });
       flush();
@@ -1532,7 +1552,7 @@ export class SerState {
             !entry.forceHtml && (entry.mark.type.name === "comment" || !this.isOverlap(entry.mark)),
         );
         let text = child.text!;
-        if ((index === 0 || followsBreak) && !noEsc) {
+        if ((index === 0 && atBlockStart || followsBreak) && !noEsc) {
           const boundary = /^[ \t]+/.exec(text)?.[0] ?? "";
           if (boundary) {
             this.write(encodeBoundaryWhitespace(boundary));
@@ -1552,7 +1572,7 @@ export class SerState {
           // entity spelling. Retain the final actual separator character.
           const last = rawIdSeparator.slice(-1);
           const prefix = text.slice(0, -1);
-          if (prefix) this.writeTextAfterInlineMath(prefix, !noEsc, index === 0 || followsBreak, preserveCurrency);
+          if (prefix) this.writeTextAfterInlineMath(prefix, !noEsc, index === 0 && atBlockStart || followsBreak, preserveCurrency);
           this.write(last);
         } else if (text && !noEsc && active.some((entry) => entry.forceHtml &&
           (entry.mark.type.name === "code" || entry.mark.type.name === "comment"))) {
@@ -1561,13 +1581,13 @@ export class SerState {
           // or an unmarked break, and literal entity text remains escaped.
           // URL/email punctuation is also literal here: native autolinking
           // must not manufacture navigation inside an opaque HTML fallback.
-          let semanticStart = index === 0 || followsBreak;
+          let semanticStart = index === 0 && atBlockStart || followsBreak;
           for (const part of text.split(/([\r\n.:@])/)) {
             if (/^[\r\n.:@]$/.test(part)) this.write(`&#${part.charCodeAt(0)};`);
             else if (part) this.writeTextAfterInlineMath(part, !noEsc, semanticStart, preserveCurrency);
             if (part) semanticStart = false;
           }
-        } else if (text) this.writeTextAfterInlineMath(text, !noEsc, index === 0 || followsBreak, preserveCurrency);
+        } else if (text) this.writeTextAfterInlineMath(text, !noEsc, index === 0 && atBlockStart || followsBreak, preserveCurrency);
       } else {
         this.renderNode(child, parent, index);
       }
@@ -1585,7 +1605,7 @@ export class SerState {
     // so paragraphs, list rows, headings, and container text share one exact
     // representation without changing explicit hard_break nodes.
     if (
-      lastChild?.isText &&
+      atBlockEnd && lastChild?.isText &&
       !lastChild.marks.some(
         (mark) => markSpecs[mark.type.name]?.escape === false,
       ) &&

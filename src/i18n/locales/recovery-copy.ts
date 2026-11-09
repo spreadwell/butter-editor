@@ -1,4 +1,5 @@
 export const recoveryZhCN = {
+  "Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.": "Butter 保持了此任务不变。请使用 Obsidian 源码模式安全地切换任务状态。",
   "Attachments kept after an interrupted insertion": "插入中断后保留的附件",
   "Butter could not insert these attachments. Review the saved files before trying again.": "Butter 无法插入这些附件。请先检查已保存的文件，再重试。",
   "Use Obsidian's file menu to remove unwanted attachments. Your deletion preference applies.": "请使用 Obsidian 的文件菜单删除不需要的附件。将遵循您的删除偏好设置。",
@@ -46,6 +47,7 @@ export const recoveryZhCN = {
 } as const;
 
 export const recoveryZhTW = {
+  "Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.": "Butter 保持此任務不變。請使用 Obsidian 原始碼模式安全地切換任務狀態。",
   "Attachments kept after an interrupted insertion": "插入中斷後保留的附件",
   "Butter could not insert these attachments. Review the saved files before trying again.": "Butter 無法插入這些附件。請先檢查已儲存的檔案，再重試。",
   "Use Obsidian's file menu to remove unwanted attachments. Your deletion preference applies.": "請使用 Obsidian 的檔案選單刪除不需要的附件。會依照您的刪除偏好設定處理。",
@@ -93,6 +95,7 @@ export const recoveryZhTW = {
 } as const;
 
 export const recoveryDe = {
+  "Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.": "Butter hat diese Aufgabe unverändert gelassen. Ändern Sie ihren Status sicher im Quelltextmodus von Obsidian.",
   "Attachments kept after an interrupted insertion": "Behaltene Anhänge nach unterbrochenem Einfügen",
   "Butter could not insert these attachments. Review the saved files before trying again.": "Butter konnte diese Anhänge nicht einfügen. Prüfen Sie die gespeicherten Dateien, bevor Sie es erneut versuchen.",
   "Use Obsidian's file menu to remove unwanted attachments. Your deletion preference applies.": "Verwenden Sie das Dateimenü von Obsidian, um unerwünschte Anhänge zu entfernen. Ihre Einstellung zum Löschen gilt dabei.",
@@ -140,6 +143,7 @@ export const recoveryDe = {
 } as const;
 
 export const recoveryEs = {
+  "Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.": "Butter ha mantenido esta tarea sin cambios. Usa el modo de código fuente de Obsidian para cambiar su estado de forma segura.",
   "Attachments kept after an interrupted insertion": "Adjuntos conservados tras una inserción interrumpida",
   "Butter could not insert these attachments. Review the saved files before trying again.": "Butter no pudo insertar estos adjuntos. Revise los archivos guardados antes de volver a intentarlo.",
   "Use Obsidian's file menu to remove unwanted attachments. Your deletion preference applies.": "Utilice el menú de archivos de Obsidian para eliminar los adjuntos que no necesite. Se aplica su preferencia de eliminación.",
@@ -187,6 +191,7 @@ export const recoveryEs = {
 } as const;
 
 export const recoveryFr = {
+  "Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.": "Butter a conservé cette tâche sans modification. Utilisez le mode source d’Obsidian pour changer son état en toute sécurité.",
   "Attachments kept after an interrupted insertion": "Pièces jointes conservées après une insertion interrompue",
   "Butter could not insert these attachments. Review the saved files before trying again.": "Butter n’a pas pu insérer ces pièces jointes. Vérifiez les fichiers enregistrés avant de réessayer.",
   "Use Obsidian's file menu to remove unwanted attachments. Your deletion preference applies.": "Utilisez le menu des fichiers d’Obsidian pour supprimer les pièces jointes inutiles. Votre préférence de suppression s’applique.",
@@ -234,6 +239,7 @@ export const recoveryFr = {
 } as const;
 
 export const recoveryJa = {
+  "Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.": "Butter はこのタスクを変更しませんでした。Obsidian のソースモードで安全に状態を切り替えてください。",
   "Attachments kept after an interrupted insertion": "挿入の中断後に保持した添付ファイル",
   "Butter could not insert these attachments. Review the saved files before trying again.": "Butter はこれらの添付ファイルを挿入できませんでした。再試行する前に、保存済みのファイルを確認してください。",
   "Use Obsidian's file menu to remove unwanted attachments. Your deletion preference applies.": "不要な添付ファイルを削除するには、Obsidian のファイルメニューを使ってください。削除方法の設定が適用されます。",
@@ -281,6 +287,7 @@ export const recoveryJa = {
 } as const;
 
 export const recoveryKo = {
+  "Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.": "Butter가 이 작업을 변경하지 않았습니다. Obsidian 소스 모드에서 안전하게 상태를 전환하세요.",
   "Attachments kept after an interrupted insertion": "삽입이 중단된 뒤 보관된 첨부 파일",
   "Butter could not insert these attachments. Review the saved files before trying again.": "Butter가 이 첨부 파일들을 삽입하지 못했습니다. 다시 시도하기 전에 저장된 파일을 확인하세요.",
   "Use Obsidian's file menu to remove unwanted attachments. Your deletion preference applies.": "원치 않는 첨부 파일은 Obsidian의 파일 메뉴에서 삭제하세요. 설정한 삭제 방식이 적용됩니다.",
@@ -328,6 +335,7 @@ export const recoveryKo = {
 } as const;
 
 export const recoveryPt = {
+  "Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.": "O Butter manteve esta tarefa inalterada. Use o modo de código-fonte do Obsidian para alterar o seu estado em segurança.",
   "Attachments kept after an interrupted insertion": "Anexos mantidos após uma inserção interrompida",
   "Butter could not insert these attachments. Review the saved files before trying again.": "O Butter não conseguiu inserir estes anexos. Reveja os ficheiros guardados antes de tentar novamente.",
   "Use Obsidian's file menu to remove unwanted attachments. Your deletion preference applies.": "Utilize o menu de ficheiros do Obsidian para remover anexos indesejados. A sua preferência de eliminação aplica-se.",
@@ -375,6 +383,7 @@ export const recoveryPt = {
 } as const;
 
 export const recoveryPtBR = {
+  "Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.": "O Butter manteve esta tarefa inalterada. Use o modo de código-fonte do Obsidian para alterar seu estado com segurança.",
   "Attachments kept after an interrupted insertion": "Anexos mantidos após uma inserção interrompida",
   "Butter could not insert these attachments. Review the saved files before trying again.": "O Butter não conseguiu inserir estes anexos. Confira os arquivos salvos antes de tentar novamente.",
   "Use Obsidian's file menu to remove unwanted attachments. Your deletion preference applies.": "Use o menu de arquivos do Obsidian para remover anexos indesejados. Sua preferência de exclusão se aplica.",
@@ -422,6 +431,7 @@ export const recoveryPtBR = {
 } as const;
 
 export const recoveryRu = {
+  "Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.": "Butter оставил эту задачу без изменений. Используйте режим исходного кода Obsidian, чтобы безопасно изменить её состояние.",
   "Attachments kept after an interrupted insertion": "Вложения сохранены после прерванной вставки",
   "Butter could not insert these attachments. Review the saved files before trying again.": "Butter не удалось вставить эти вложения. Проверьте сохранённые файлы перед повторной попыткой.",
   "Use Obsidian's file menu to remove unwanted attachments. Your deletion preference applies.": "Используйте меню файла в Obsidian, чтобы удалить ненужные вложения. Действует выбранный вами способ удаления.",

@@ -120,6 +120,11 @@ const PUBLIC_PACKAGE_KEYS = [
   "scripts",
   "version",
 ];
+// Exact private overrides for lint tooling that is not a public dependency.
+// The exporter drops them; any other override still reaches the public check.
+const PRIVATE_TOOLING_OVERRIDES = new Map([
+  ["minimatch@>=7.0.0 <11.0.1", "11.0.5"],
+]);
 const REGISTRY_PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/u;
 const REGISTRY_SEMVER = /^(?:\^|~)?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$/u;
 
@@ -370,6 +375,15 @@ function exactStringRecord(value) {
   const entries = Object.entries(value);
   if (entries.some(([, specifier]) => typeof specifier !== "string")) return null;
   return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function publicOverridesField(privatePackage) {
+  if (!Object.hasOwn(privatePackage, "overrides")) return {};
+  const overrides = privatePackage.overrides;
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) return { overrides };
+  const entries = Object.entries(overrides);
+  const kept = entries.filter(([name, specifier]) => PRIVATE_TOOLING_OVERRIDES.get(name) !== specifier);
+  return kept.length || kept.length === entries.length ? { overrides: Object.fromEntries(kept) } : {};
 }
 
 export function publicDependencyOverrideErrors(overrides) {
@@ -647,7 +661,7 @@ export function createPublicExport({
       Object.entries(privatePackage.devDependencies ?? {})
       .filter(([name]) => PUBLIC_DEV_DEPENDENCIES.has(name)),
     ),
-    ...(Object.hasOwn(privatePackage, "overrides") ? { overrides: privatePackage.overrides } : {}),
+    ...publicOverridesField(privatePackage),
   };
   assertSafePublicPackageMetadata(packageJson, version);
   writeJson(packagePath, packageJson);

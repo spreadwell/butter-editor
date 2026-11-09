@@ -286,7 +286,7 @@ function arrowInTable(dir: "up" | "down" | "left" | "right"): Command {
 
     let targetRow = row;
     let targetCol = col;
-    let placeAt: "start" | "end" = "start";
+    let placeAt: "start" | "end";
 
     if (dir === "up") {
       if (row === 0) return escape(tablePos, -1);
@@ -447,12 +447,12 @@ function extendCellSelection(dir: "up" | "down" | "left" | "right"): Command {
     const { selection, doc } = state;
 
     type DocNode = ReturnType<typeof doc.resolve>;
-    let anchorCellPos = -1;
-    let headRow = -1;
-    let headCol = -1;
+    let anchorCellPos: number;
+    let headRow: number;
+    let headCol: number;
     let tableNode = null as ReturnType<DocNode["node"]> | null;
     let tablePos = -1;
-    let map = null as TableMap | null;
+    let map: TableMap | null;
 
     if (selection instanceof CellSelection) {
       tableNode = selection.$anchorCell.node(-1);

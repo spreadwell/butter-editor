@@ -681,7 +681,7 @@ export function linkOccurrencePlugin(md: MarkdownIt): void {
       } = md.helpers;
       const original = helpers.parseLinkLabel;
       md.helpers.parseLinkLabel = (inner, pos) => original(inner, pos, false);
-      let accepted: boolean, end = -1;
+      let accepted: boolean, end: number;
       const env = state.env as { references?: Record<string, { href: string; title: string }>; butterLinkOccurrenceOrdinal?: number };
       const references = env.references;
       let unresolved = false;

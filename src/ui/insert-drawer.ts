@@ -418,7 +418,7 @@ export function openMobileDrawer(
   // to viewport bottom before the body class lands.
   window.setTimeout(() => {
     view.dom.blur();
-    if (activeDocument.activeElement instanceof HTMLElement) {
+    if (activeDocument.activeElement?.instanceOf(HTMLElement)) {
       activeDocument.activeElement.blur();
     }
   }, 0);
@@ -840,7 +840,7 @@ export function installDrawerDismissGestures(
     startY = lastY = e.clientY;
     lastT = e.timeStamp;
     velocity = 0;
-    drawer.setCssStyles({ transition: "none" });
+    drawer.addClass("butter-drawer-dragging");
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -864,20 +864,17 @@ export function installDrawerDismissGestures(
     dragging = false;
     pointerId = null;
     const dy = Math.max(0, e.clientY - startY);
+    // Drop the drag's own styles so the drawer's 220ms transition runs
+    // from where the finger let go.
+    drawer.removeClass("butter-drawer-dragging");
+    drawer.style.removeProperty("transform");
     if (dy > DISMISS_PX || velocity > FLICK_VELOCITY) {
       // Animate the rest of the way out; onDismiss removes the node
       // after its own timeout, which matches this transition.
-      drawer.setCssStyles({
-        transition: `transform ${DRAWER_TRANSITION_MS}ms cubic-bezier(0.2, 0.7, 0.2, 1)`,
-        transform: "translateY(100%)",
-      });
+      drawer.addClass("butter-drawer-dismissing");
       onDismiss();
-    } else {
-      // Snap back: drop the inline overrides so `.is-open`'s
-      // translateY(0) + the drawer's 220ms transition take over.
-      drawer.style.removeProperty("transition");
-      drawer.style.removeProperty("transform");
     }
+    // Otherwise `.is-open`'s translateY(0) snaps it back.
   };
 
   const grabCleanups = grabEls.map((el) => {
@@ -885,7 +882,7 @@ export function installDrawerDismissGestures(
     el.addEventListener("pointermove", onPointerMove);
     el.addEventListener("pointerup", finishDrag);
     el.addEventListener("pointercancel", finishDrag);
-    el.setCssStyles({ touchAction: "none" });
+    el.addClass("butter-drawer-grab");
     return () => {
       el.removeEventListener("pointerdown", onPointerDown);
       el.removeEventListener("pointermove", onPointerMove);

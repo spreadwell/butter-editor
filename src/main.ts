@@ -1,3 +1,5 @@
+import { installEditorViewDiscovery } from "./util/editor-view-discovery";
+import { canUseBodyEditor, installActiveEditorDiscovery } from "./util/active-editor-discovery";
 import { restoreOwnedViewport } from "./util/viewport-operation";
 import { fileViewRouting, type FileViewOwner, type FileViewRouting } from "./util/file-view-routing";
 import {
@@ -255,7 +257,7 @@ function mappedReadingElements(
   for (const section of previewMode?.renderer?.sections ?? []) {
     const element = section.el;
     const line = section.start?.line;
-    if (!(element instanceof HTMLElement) || !Number.isFinite(line) || (line ?? -1) < 0) {
+    if (!(element?.instanceOf(HTMLElement)) || !Number.isFinite(line) || (line ?? -1) < 0) {
       continue;
     }
     const rect = element.getBoundingClientRect();
@@ -817,20 +819,20 @@ export interface ButterSettings {
    * pair stays adjacent; reorders/inserts/deletes break the pair
    * and use a default 1-blank-line gap.
    *
-   * When OFF (default), Butter writes canonical markdown - clean,
-   * consistent output matching the convention every other WYSIWYG
-   * editor uses (Typora, Milkdown, Live Preview's Source Mode). One
-   * canonical form: `**bold**`, `-` bullets, single blanks, LF
+   * When OFF, Butter writes canonical markdown - clean, consistent
+   * output with one form: `**bold**`, `-` bullets, single blanks, LF
    * endings. The "first save" of a legacy file may produce a one-
    * time formatting diff as Butter normalizes it; subsequent saves
    * are stable.
    *
-   * Off-by-default reflects the dominant ecosystem convention. Turn
-   * on if you specifically need byte-for-byte source fidelity for
-   * git-tracked vaults, hand-formatted source, or workflows
-   * involving non-WYSIWYG tools editing the same files.
+   * On by default: editing one line must not rewrite the rest of the
+   * user's file. Explicit cleanup stays available through the rewrite
+   * commands and by turning this off.
    */
   preserveOriginalSource: boolean;
+  /** Schema version for the source-preservation default. Version 1 moved
+   *  every install from the old canonical default to preservation. */
+  sourcePolicyVersion: 1;
   /**
    * Advanced: ensure at least 1 blank line separates an ATX heading
    * from the following block on save. Off by default (canonical
@@ -1110,7 +1112,7 @@ export const StatusState = { statusBarHideTimer: null as number | null };
 export function refreshButterMobileBodyClass(): void {
   const active = activeDocument.activeElement;
   const inButter =
-    (active instanceof Element && active.closest(".butter-editor-view") !== null)
+    (active?.instanceOf(Element) && active.closest(".butter-editor-view") !== null)
     || activeDocument.querySelector(".butter-mobile-toolbar-visible") !== null;
   activeDocument.body.classList.toggle("butter-mobile-active", inButter);
 }
@@ -1166,7 +1168,8 @@ const DEFAULT_SETTINGS: ButterSettings = {
   canonicalBold: "**",
   canonicalCodeFence: "```",
   canonicalHorizontalRule: "---",
-  preserveOriginalSource: false,
+  preserveOriginalSource: true,
+  sourcePolicyVersion: 1,
   normalizeHeadingGap: false,
   condenseBlankLines: false,
   closeUnclosedFences: false,
@@ -1824,21 +1827,14 @@ export default class ButterEditorPlugin extends Plugin {
     );
     setPluginVersion(this.manifest.version);
 
-    const origGetActiveViewOfType = this.app.workspace.getActiveViewOfType.bind(this.app.workspace);
-    const wsPatched = this.app.workspace as unknown as {
-      getActiveViewOfType: (type: { name?: string }) => unknown;
-      _butterActiveEditorProxied?: boolean;
-      activeEditor: unknown;
-    };
-    wsPatched.getActiveViewOfType = (type: { name?: string }) => {
-      if (type && type.name === "MarkdownView") {
-        const activeLeaf = this.app.workspace.getMostRecentLeaf();
-        if (activeLeaf && activeLeaf.view instanceof ButterEditorView) {
-          return activeLeaf.view;
-        }
-      }
-      return origGetActiveViewOfType(type as Parameters<typeof origGetActiveViewOfType>[0]);
-    };
+    this.register(installEditorViewDiscovery(
+      this.app.workspace as unknown as { getActiveViewOfType: (type: unknown) => unknown },
+      MarkdownView,
+      () => {
+        const view = this.app.workspace.getActiveViewOfType(ButterEditorView);
+        return view instanceof ButterEditorView && view.isEditorSourceReady() ? view : null;
+      },
+    ));
 
     const origGetLeavesOfType = this.app.workspace.getLeavesOfType.bind(this.app.workspace);
     this.app.workspace.getLeavesOfType = (type: string) => {
@@ -1851,37 +1847,19 @@ export default class ButterEditorPlugin extends Plugin {
       return leaves;
     };
 
-    // Safely proxy activeEditor for widgets. We check the call stack
-    // to ensure we return the real activeEditor (usually undefined for Butter)
-    // during Obsidian's internal layout lifecycle, preventing crashes.
-    const wsEditor = this.app.workspace as import("obsidian").Workspace & {
-      _butterActiveEditorProxied?: boolean;
-      activeEditor?: unknown;
-    };
-    if (!wsEditor._butterActiveEditorProxied) {
-      wsEditor._butterActiveEditorProxied = true;
-      const origDescriptor = Object.getOwnPropertyDescriptor(wsEditor, "activeEditor") || { value: wsEditor.activeEditor, writable: true, configurable: true };
-      Object.defineProperty(wsEditor, "activeEditor", {
-        get: () => {
-          const stack = new Error().stack || "";
-          if (stack.includes("updateViewState") || stack.includes("_onFileOpen") || stack.includes("activeLeafEvents")) {
-            if (origDescriptor.get) return origDescriptor.get.call(wsEditor) as unknown;
-            return origDescriptor.value as unknown;
-          }
-          const butterView = this.resolveButterEditor()?.view ?? null;
-          if (butterView) {
-            return butterView;
-          }
-          if (origDescriptor.get) return origDescriptor.get.call(wsEditor) as unknown;
-          return origDescriptor.value as unknown;
-        },
-        set: (val: unknown) => {
-          if (origDescriptor.set) origDescriptor.set.call(wsEditor, val);
-          else origDescriptor.value = val;
-        },
-        configurable: true
-      });
-    }
+    this.register(installActiveEditorDiscovery(this.app.workspace,
+      () => {
+        const view = this.app.workspace.getActiveViewOfType(ButterEditorView);
+        return view instanceof ButterEditorView ? { value: view, ready: view.isEditorSourceReady() } : null;
+      },
+      value => {
+        const candidate = value as { getViewType?: () => unknown } | null;
+        if (value instanceof ButterEditorView) return true;
+        if (typeof candidate?.getViewType !== "function") return false;
+        const type = candidate.getViewType();
+        return type === VIEW_TYPE_BUTTER || type === VIEW_TYPE_BUTTER_LOCKED;
+      },
+    ));
 
     // Initialize the license client and resolve the initial status
     // before any view mounts - read-only gating in ButterEditorView
@@ -2511,7 +2489,7 @@ export default class ButterEditorPlugin extends Plugin {
           return true;
         }
         const md = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (md?.file) {
+        if (md instanceof MarkdownView && md.file) {
           if (!checking) void swapMarkdownToButter(md);
           return true;
         }
@@ -2524,7 +2502,7 @@ export default class ButterEditorPlugin extends Plugin {
       name: tx("Open current note in WYSIWYG view"),
       checkCallback: (checking) => {
         const md = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!md?.file) return false;
+        if (!(md instanceof MarkdownView) || !md.file) return false;
         if (!checking) void swapMarkdownToButter(md);
         return true;
       },
@@ -2659,6 +2637,7 @@ export default class ButterEditorPlugin extends Plugin {
     for (const view of candidates) {
       const pm = view.pmViewRef();
       if (!pm) continue;
+      if (!canUseBodyEditor(this.app.workspace.activeEditor, view.editor)) continue;
       if (
         view === activeButterView ||
         pm.hasFocus() ||
@@ -3563,6 +3542,15 @@ export default class ButterEditorPlugin extends Plugin {
         this.settings.mobileToolbarStyle = "attached";
         hadUnknownKeys = true;
       }
+    }
+    // Installs from before source policy v1 stored the old canonical
+    // default (off), which rewrote untouched text on every save. The toggle
+    // was labelled experimental then, so a stored false is the old default
+    // rather than a choice; move everyone to preservation once.
+    if (raw.sourcePolicyVersion !== 1) {
+      this.settings.preserveOriginalSource = true;
+      this.settings.sourcePolicyVersion = 1;
+      hadUnknownKeys = true;
     }
     // Push verbose-logging state to the module flag so debug() calls
     // across the plugin pick up the current setting without having

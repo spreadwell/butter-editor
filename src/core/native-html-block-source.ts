@@ -65,7 +65,10 @@ export function isNativeHtmlSourceBlock(source: string): boolean {
   return stack.length === 0;
 }
 
+/** Source islands render through the host and never lock the whole note.
+ * `native-source-block` is one top-level block Butter keeps exactly as written. */
 export function isNativeHtmlSourceKind(kind: unknown, raw: unknown): boolean {
   return kind === "native-html-comment" ||
+    kind === "native-source-block" && typeof raw === "string" && raw.length > 0 ||
     kind === "native-html-block" && typeof raw === "string" && isNativeHtmlSourceBlock(raw);
 }

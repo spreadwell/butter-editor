@@ -534,7 +534,7 @@ function resolveCurrentBlock(
   return {
     pos,
     node,
-    blockDom: dom instanceof HTMLElement ? dom : undefined,
+    blockDom: dom?.instanceOf(HTMLElement) ? dom : undefined,
     serializeNode,
     selectionScope: true,
   };
@@ -668,7 +668,7 @@ function openMobileToolbarSheet(ctx: RenderCtx) {
   // bar along with it, leaving a clean stage for the sheet.
   const view = ctx.getView();
   if (view) view.dom.blur();
-  if (activeDocument.activeElement instanceof HTMLElement) {
+  if (activeDocument.activeElement?.instanceOf(HTMLElement)) {
     activeDocument.activeElement.blur();
   }
   const layout = ctx.getLayout();
@@ -1028,7 +1028,7 @@ function renderButterMain(
       // provide the owning-view dismissal callback above.
       suppressNativeMobileToolbar();
       const active = activeDocument.activeElement;
-      if (active instanceof HTMLElement) active.blur();
+      if (active?.instanceOf(HTMLElement)) active.blur();
     }
   });
   chrome.appendChild(hideKbBtn);

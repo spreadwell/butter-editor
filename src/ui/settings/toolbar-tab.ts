@@ -1415,7 +1415,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         }
         autoScrollDir = 0;
         if (autoScrollFrame !== null) {
-          cancelAnimationFrame(autoScrollFrame);
+          window.cancelAnimationFrame(autoScrollFrame);
           autoScrollFrame = null;
         }
 

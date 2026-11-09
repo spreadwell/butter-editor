@@ -434,7 +434,7 @@ export class ButterOutlineView extends ItemView {
     // since the previous tick, the active heading cannot have moved,
     // and the O(N) rect scan below would be pure waste. On big docs
     // with the outline open, this is what makes typing not stutter.
-    let pollKey = "";
+    let pollKey: string;
     if (source === "pm" && pmView) {
       const host =
         scrollHost(pmView.dom) ?? (pmView.dom.parentElement);
@@ -474,7 +474,7 @@ export class ButterOutlineView extends ItemView {
         // setInterval would otherwise spam to the console once a
         // doc transitions through a transient state.
         const dom = pmView.nodeDOM(pmPos);
-        if (!(dom instanceof HTMLElement)) continue;
+        if (!(dom?.instanceOf(HTMLElement))) continue;
         const top = dom.getBoundingClientRect().top;
         if (top <= threshold && top > bestTop) {
           bestTop = top;
@@ -666,7 +666,7 @@ export class ButterOutlineView extends ItemView {
 
       const host = scrollHost(pmView.dom);
       const headingDom = pmView.nodeDOM(h.pmPos);
-      if (host && headingDom instanceof HTMLElement) {
+      if (host && headingDom?.instanceOf(HTMLElement)) {
         const hostRect = host.getBoundingClientRect();
         const headingRect = headingDom.getBoundingClientRect();
         // If a detached/floating toolbar is sitting INSIDE this scroll

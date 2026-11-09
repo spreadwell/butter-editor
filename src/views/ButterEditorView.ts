@@ -78,6 +78,8 @@ import { codeHighlightPlugin } from "../editor/code-highlight";
 import { codeEditContainmentPlugin } from "../editor/code-edit-containment";
 import { imageView } from "../editor/image-view";
 import { PMEditorShim } from "../util/editor-shim";
+import { toggleTaskWithAPI } from "../util/task-toggle";
+import { editorSourceText, editorSourceDocumentsEqual, type EditorSourceHost, type EditorSourceSnapshot } from "../core/editor-source-edit";
 import {
   type SaveState,
   type SaveStatusOwner,
@@ -100,7 +102,6 @@ import { tableRowColDragPlugin } from "../editor/table-row-col-drag";
 import { tableCellDragPlugin } from "../editor/table-cell-drag";
 import {
   rawBlockSafetyPlugin,
-  isWholeSourceFallback,
   RAW_BLOCK_SYNC_META,
 } from "../core/raw-block-safety";
 import { tx } from "../i18n";
@@ -311,7 +312,7 @@ export class ButterEditorView extends TextFileView {
     suppressNativeMobileToolbar();
     this.pmView?.dom.blur();
     const active = activeDocument.activeElement;
-    if (active instanceof HTMLElement) active.blur();
+    if (active?.instanceOf(HTMLElement)) active.blur();
   }
 
   private clearMobileKeyboardDismissal(): void {
@@ -586,7 +587,7 @@ export class ButterEditorView extends TextFileView {
 
     const focusIsInEditorOrToolbar = (): boolean => {
       const active = editorDocument.activeElement;
-      if (!(active instanceof Element)) return false;
+      if (!(active?.instanceOf(Element))) return false;
       // Toolbar-button taps briefly steal focus from the editor;
       // treat focus-on-toolbar as "still editing" so the bar
       // doesn't self-hide on tap.
@@ -599,7 +600,7 @@ export class ButterEditorView extends TextFileView {
       toolbarDom.classList.toggle("butter-mobile-toolbar-owner", isActiveView());
       const focused = focusIsInEditorOrToolbar();
       const active = editorDocument.activeElement;
-      const otherInputFocused = active instanceof Element && !focused
+      const otherInputFocused = active?.instanceOf(Element) && !focused
         && active.matches("input, textarea, [contenteditable=true]");
       const isAndroid = Boolean(
         (Platform as { isAndroidApp?: boolean }).isAndroidApp,
@@ -647,7 +648,7 @@ export class ButterEditorView extends TextFileView {
           setEditable(false);
           this.pmView?.dom.blur();
           const active = editorDocument.activeElement;
-          if (active instanceof HTMLElement && focusIsInEditorOrToolbar()) active.blur();
+          if (active?.instanceOf(HTMLElement) && focusIsInEditorOrToolbar()) active.blur();
           suppressNativeMobileToolbar();
           schedule();
           return;
@@ -1117,7 +1118,7 @@ export class ButterEditorView extends TextFileView {
         range.end < range.start
       ) return true;
       const dom = this.pmView?.nodeDOM(pos);
-      if (!(dom instanceof HTMLElement)) return true;
+      if (!(dom?.instanceOf(HTMLElement))) return true;
       const rect = dom.getBoundingClientRect();
       if (rect.height <= 0 || rect.bottom < hostRect.top || rect.top > hostRect.bottom) {
         return true;
@@ -1249,7 +1250,7 @@ export class ButterEditorView extends TextFileView {
         typeof range.end !== "number"
       ) return true;
       const dom = this.pmView?.nodeDOM(pos);
-      if (!(dom instanceof HTMLElement)) return true;
+      if (!(dom?.instanceOf(HTMLElement))) return true;
       const rect = dom.getBoundingClientRect();
       if (rect.height <= 0) return true;
       const span = Math.max(0, range.end - range.start);
@@ -1343,6 +1344,12 @@ export class ButterEditorView extends TextFileView {
     if (!this.mobileEditable || !this.isNativeFileSourceReady()) return false;
     const s = this.plugin.licenseStatus;
     return s === "valid" || s === "trial";
+  }
+
+  /** The public Editor surface is usable only after physical source binding. */
+  isEditorSourceReady(): boolean {
+    return !this.destroyed && !!this.editor && !!this.pmView && !this.pmView.isDestroyed &&
+      !!this.file && this.isNativeFileSourceReady();
   }
 
   private isNativeFileSourceReady(): boolean {
@@ -2598,6 +2605,16 @@ export class ButterEditorView extends TextFileView {
       toolbarPlugin,
       autocompletePlugin(this.app, schema),
       slashMenuPlugin(this.app, schema),
+      // Other plugins' suggestion pop-ups take Enter, Tab, the arrows and
+      // Esc before Butter's own keymaps, as Obsidian's suggestion scope does.
+      ...(this.settings.enableSuggestBridge
+        ? [suggestBridgePlugin(
+          this.app,
+          (d) => serializer.serialize(d),
+          getFile,
+          (pm) => this.createEditorSourceHost(pm),
+        )]
+        : []),
       buildInputRules(schema, {
         markdownShortcuts: this.settings.markdownShortcuts,
       }),
@@ -2640,7 +2657,7 @@ export class ButterEditorView extends TextFileView {
       ),
       blockAnimatorPlugin(),
       commentOnlyParagraphPlugin(),
-      checkboxPlugin(),
+      checkboxPlugin((_view, position) => { this.toggleTaskCheckbox(position); }),
       listNumberingPlugin(),
       footnotePresentationPlugin((content, container) => {
         const component = new Component();
@@ -2765,16 +2782,6 @@ export class ButterEditorView extends TextFileView {
       plugins.push(pasteDropPlugin(this.app, schema, parser, getSourcePath, (d) => serializer.serialize(d)));
     }
 
-    if (this.settings.enableSuggestBridge) {
-      plugins.push(
-        suggestBridgePlugin(
-          this.app,
-          (d) => serializer.serialize(d),
-          getFile,
-        ),
-      );
-    }
-
     plugins.push(
       new PMPlugin({
         view: () => ({
@@ -2893,9 +2900,7 @@ export class ButterEditorView extends TextFileView {
     this.editor = new PMEditorShim(
       this.pmView,
       (d) => serializer.serialize(d),
-      (newMarkdown) => {
-        this.replaceLocalMarkdown(newMarkdown);
-      },
+      this.createEditorSourceHost(this.pmView),
       (cycle) => {
         const pmView = this.pmView;
         if (!pmView) return;
@@ -4131,29 +4136,78 @@ export class ButterEditorView extends TextFileView {
     );
   }
 
-  /** Apply a plugin/shim-authored Markdown replacement as a local PM edit.
-   *
-   * This deliberately does not call setViewData(): that method represents a
-   * host/file load and advances the persisted source baseline. Treating a
-   * local replacement as persisted caused later saves to splice against bytes
-   * that had never reached disk. */
-  private replaceLocalMarkdown(markdown: string): void {
-    if (!this.pmView) return;
-    const parsed = parser.parseWithSourceMap(markdown);
-    if (!parsed?.doc || isWholeSourceFallback(parsed.doc)) {
-      new Notice(
-        `${tx("Butter: save failed -")} invalid plugin Markdown`,
-        6000,
-      );
-      return;
-    }
-    const replacement = ensureBlockIds(parsed.doc);
-    const tr = this.pmView.state.tr.replaceWith(
-      0,
-      this.pmView.state.doc.content.size,
-      replacement.content,
-    );
-    this.pmView.dispatch(tr);
+  /** Only checkbox activation uses the optional Tasks transformation.
+   * Ordinary checklist commands and list cycling retain their own semantics. */
+  private toggleTaskCheckbox(position: number): void {
+    const pm = this.pmView;
+    if (!pm || !pm.editable || pm.isDestroyed || pm.composing) return;
+    const handled = toggleTaskWithAPI(pm, position, this.createEditorSourceHost(pm), () => this.file,
+      () => {
+        const manager = this.app.plugins;
+        return manager?.enabledPlugins?.has("obsidian-tasks-plugin") === false
+          ? null : manager?.plugins["obsidian-tasks-plugin"] ?? null;
+      },
+      () => { new Notice(tx("Butter kept this task unchanged. Use Obsidian Source mode to toggle it safely.")); });
+    if (handled !== null) return;
+    const item = pm.state.doc.nodeAt(position);
+    if (item?.type.name !== "list_item" || item.attrs.kind !== "task") return;
+    pm.dispatch(pm.state.tr.setNodeMarkup(position, undefined, {
+      ...item.attrs, checked: item.attrs.checked !== true, sourceRange: null,
+    }));
+  }
+
+  /** Plugin edits use the same source projection and verification as saving,
+   * without changing the persisted baseline or creating recovery on probes. */
+  private createEditorSourceHost(pm: EditorView): EditorSourceHost {
+    const owners = new WeakMap<EditorSourceSnapshot, { file: TFile; request: number }>();
+    const cache = new WeakMap<PMNode, { policy: ButterSavePolicy; text: string }>();
+    const guard = () => {
+      if (this.destroyed || this.pmView !== pm || pm.isDestroyed || !this.file ||
+        (this.file as TFile & { deleted?: boolean }).deleted ||
+        !this.isNativeFileSourceReady()) throw new Error("Butter plugin edit: file source is unavailable");
+    };
+    const certify = (doc: PMNode): string => {
+      guard();
+      const policy = this.savePolicy(), cached = cache.get(doc);
+      if (cached && (Object.keys(policy) as Array<keyof ButterSavePolicy>).every(key => key === "canonicalOptions"
+        ? JSON.stringify(policy[key]) === JSON.stringify(cached.policy[key]) : policy[key] === cached.policy[key])) return cached.text;
+      const result = this.preflightCurrent(doc);
+      if (!result?.ok) throw new Error("Butter plugin edit: source verification failed");
+      const text = editorSourceText(result.text);
+      cache.set(doc, { policy, text });
+      return text;
+    };
+    return {
+      snapshot: () => {
+        guard();
+        const file = this.file!, request = this.nativeSourceRequest, doc = pm.state.doc;
+        const snapshot = { doc, text: certify(doc) };
+        guard();
+        if (file !== this.file || request !== this.nativeSourceRequest || doc !== pm.state.doc) throw new Error("Butter plugin edit: editor changed");
+        owners.set(snapshot, { file, request });
+        return snapshot;
+      },
+      certify,
+      apply: (snapshot, tr) => {
+        guard();
+        const owner = owners.get(snapshot);
+        if (!pm.editable || pm.composing || snapshot.doc !== pm.state.doc ||
+          !owner || owner.file !== this.file || owner.request !== this.nativeSourceRequest ||
+          snapshot.text !== certify(pm.state.doc)) throw new Error("Butter plugin edit: editor changed");
+        const expected = certify(tr.doc);
+        if (pm.props?.dispatchTransaction) throw new Error("Butter plugin edit: custom dispatch is unsupported");
+        const before = pm.state, preview = before.applyTransaction(tr);
+        if (!preview.transactions.includes(tr) || certify(preview.state.doc) !== expected ||
+          !editorSourceDocumentsEqual(preview.state.doc, tr.doc)) throw new Error("Butter plugin edit: transaction was not accepted");
+        guard();
+        if (pm.state !== before || owner.file !== this.file || owner.request !== this.nativeSourceRequest) throw new Error("Butter plugin edit: editor changed");
+        // Match EditorView's default dispatch, applying filters/append hooks
+        // exactly once. updateState runs the normal view listeners and writer.
+        pm.updateState(preview.state);
+        // The operation has committed. A plugin view may synchronously make
+        // another edit during update; do not report our accepted edit failed.
+      },
+    };
   }
 
   setViewData(data: string, clear: boolean) {
@@ -4255,9 +4309,11 @@ export class ButterEditorView extends TextFileView {
     // this, content paints at full opacity for ~2 frames before the
     // double-rAF below adds `.butter-just-loaded` and snaps it to
     // hidden - a visible flash on every note open. Skipped entirely
-    // when the user has disabled animations.
+    // when the user has disabled animations, and for external changes
+    // (another plugin or sync rewriting the open note), which update in
+    // place rather than opening the note again.
     const animsOff = this.plugin.settings.disableAnimations;
-    const animEl = animsOff ? null : this.contentEl;
+    const animEl = animsOff || !clear ? null : this.contentEl;
     if (animEl) {
       animEl.classList.remove("butter-just-loaded");
       animEl.classList.add("butter-anim-prepped");

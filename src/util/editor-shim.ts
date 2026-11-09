@@ -4,15 +4,20 @@
  * language dates, file/tag/heading suggestions, custom completions)
  * can operate against our view.
  *
- * The shim translates Obsidian's line/ch coordinates to PM positions
- * by serializing the current document to markdown, then maps back on
- * replaceRange. Round-trip accuracy is good enough for suggest-style
- * integrations (local inserts/replacements), not arbitrary tool use.
+ * Source edits are diffed and certified before dispatch. Unsupported source
+ * ranges fail explicitly; visible-text matching must never choose a target.
  */
 import type { EditorView } from "prosemirror-view";
-import { Selection } from "prosemirror-state";
+import type { Node as PMNode } from "prosemirror-model";
+import { TextSelection, type Transaction } from "prosemirror-state";
 import { toggleMark } from "prosemirror-commands";
+import { closeHistory } from "prosemirror-history";
 import type { Serializer } from "../core/serializer-types";
+import {
+  editorSourceText, editorPositionToSource, editorSourceToPosition,
+  planEditorSourceEdit, planProjectedSourceEdit, projectEmptyLineCursor, projectedSourceToPosition,
+  type EditorSourceHost, type EditorSourceProjection, type EditorSourceSnapshot,
+} from "../core/editor-source-edit";
 
 export interface EditorPosition {
   line: number;
@@ -22,15 +27,31 @@ export interface EditorPosition {
 interface LineMap {
   text: string;
   lines: string[];
-  /** Cumulative markdown offsets at start of each line (length = lines.length + 1). */
+  /** UTF-16 source offsets at the start of each line. */
   lineStarts: number[];
+}
+
+/** Install an already certified plugin edit through the normal host and history. */
+export function applyEditorSourceTransaction(
+  pm: EditorView, snapshot: EditorSourceSnapshot, tr: Transaction, sourceHost?: EditorSourceHost,
+): void {
+  if (pm.isDestroyed || pm.composing || !pm.editable || snapshot.doc !== pm.state.doc) {
+    throw new Error("Butter plugin edit: editor is unavailable");
+  }
+  const previousDoc = pm.state.doc;
+  try {
+    if (sourceHost) sourceHost.apply(snapshot, tr);
+    else pm.dispatch(tr);
+  } finally {
+    if (!pm.isDestroyed && pm.state.doc !== previousDoc) pm.dispatch(closeHistory(pm.state.tr));
+  }
 }
 
 function buildLineMap(text: string): LineMap {
   const lines = text.split("\n");
   const lineStarts: number[] = [0];
   let offset = 0;
-  for (const line of lines) {
+  for (const line of lines.slice(0, -1)) {
     offset += line.length + 1;
     lineStarts.push(offset);
   }
@@ -43,47 +64,62 @@ function buildLineMap(text: string): LineMap {
  */
 export class PMEditorShim {
   private lineMap: LineMap;
-  private textBlocks: Array<{ pos: number; text: string; ordinal: number }> = [];
+  private snapshot: EditorSourceSnapshot | null = null;
+  /** The cursor's empty line, while the cursor sits in an empty paragraph. */
+  private projection: EditorSourceProjection | null = null;
 
   constructor(
     private pm: EditorView,
     private serialize: Serializer,
-    private fallbackReplace?: (newMarkdown: string) => void,
+    private sourceHost?: EditorSourceHost,
     private toggleChecklist?: (cycle: boolean) => void,
   ) {
-    this.lineMap = buildLineMap(this.currentMarkdown());
-    this.rebuildTextBlockIndex();
+    // Plugin views are constructed before the owning file view finishes mount.
+    // Read the authoritative source only when an Editor method is invoked.
+    this.lineMap = buildLineMap("");
   }
 
   /** Recompute when the PM doc changes. */
   refresh() {
-    this.lineMap = buildLineMap(this.currentMarkdown());
-    this.rebuildTextBlockIndex();
+    this.snapshot = null;
+    this.projection = null;
   }
 
-  private rebuildTextBlockIndex(): void {
-    const blocks: Array<{ pos: number; text: string; ordinal: number }> = [];
-    this.pm.state.doc.descendants((node, pos) => {
-      if (node.isTextblock) {
-        blocks.push({ pos, text: node.textContent, ordinal: blocks.length });
-        return false;
-      }
-      return true;
-    });
-    this.textBlocks = blocks;
+  private readSource(): EditorSourceSnapshot {
+    this.snapshot = this.currentSource();
+    this.projection = projectEmptyLineCursor(this.pm.state, this.snapshot, this.certify);
+    this.lineMap = buildLineMap(this.projection?.text ?? this.snapshot.text);
+    return this.snapshot;
   }
 
-  private currentMarkdown(): string {
+  private currentSource(): EditorSourceSnapshot {
+    if (this.pm.isDestroyed) throw new Error("Butter plugin edit: editor is closed");
+    return this.sourceHost?.snapshot() ?? { doc: this.pm.state.doc, text: editorSourceText(this.serialize(this.pm.state.doc)) };
+  }
+
+  private certify = (doc: PMNode): string => {
+    return this.sourceHost?.certify(doc) ?? editorSourceText(this.serialize(doc));
+  };
+
+  private applySourceRange(replacement: string, from: number, to: number): void {
+    if (this.pm.isDestroyed || this.pm.composing) throw new Error("Butter plugin edit: editor is unavailable");
+    if (!this.snapshot) throw new Error("Butter plugin edit: source is unavailable");
+    const start = Math.min(from, to), end = Math.max(from, to);
+    const tr = this.projection
+      ? planProjectedSourceEdit(this.pm.state, this.projection, start, end, replacement, this.certify)
+      : planEditorSourceEdit(this.pm.state, this.snapshot, start, end, replacement, this.certify);
+    if (!tr) return;
     try {
-      return this.serialize(this.pm.state.doc);
-    } catch {
-      return "";
+      applyEditorSourceTransaction(this.pm, this.snapshot, tr, this.sourceHost);
+    } finally {
+      this.refresh();
     }
   }
 
   // ── Position translation ──
 
   private posToLineCh(offset: number): EditorPosition {
+    offset = Math.max(0, Math.min(offset, this.lineMap.text.length));
     const { lineStarts } = this.lineMap;
     let lo = 0;
     let hi = lineStarts.length - 1;
@@ -96,79 +132,92 @@ export class PMEditorShim {
   }
 
   private lineChToPos(p: EditorPosition): number {
+    if (!Number.isSafeInteger(p.line) || !Number.isSafeInteger(p.ch)) throw new Error("Butter plugin edit: invalid source position");
     const { lineStarts, lines } = this.lineMap;
     const line = Math.max(0, Math.min(p.line, lines.length - 1));
     const ch = Math.max(0, Math.min(p.ch, lines[line].length));
     return lineStarts[line] + ch;
   }
 
-  // ── PM selection → markdown offset ──
-
-  private pmSelectionToOffset(): number {
-    // The mapping between PM positions and markdown offsets is not
-    // 1:1. We approximate by serializing the doc up to the selection
-    // by slicing the PM doc and running serialize on the slice.
-    // For the typical EditorSuggest use case (tracking the cursor on
-    // a fresh input) this is accurate enough.
-    const { head } = this.pm.state.selection;
-    try {
-      const slice = this.pm.state.doc.cut(0, head);
-      const md = this.serialize(slice);
-      return md.length;
-    } catch {
-      return 0;
-    }
-  }
-
   // ── Public API (subset of Obsidian Editor) ──
 
   getValue(): string {
+    this.readSource();
     return this.lineMap.text;
   }
 
   setValue(_: string): void {
-    // Intentionally no-op: plugins shouldn't overwrite the whole doc.
+    throw new Error("Butter plugin edit: whole-file replacement is not supported");
   }
 
   getLine(n: number): string {
+    this.readSource();
     return this.lineMap.lines[n] ?? "";
   }
 
+  setLine(n: number, text: string): void {
+    if (!this.pm.editable) return;
+    this.readSource();
+    if (!Number.isSafeInteger(n) || n < 0 || n >= this.lineMap.lines.length) {
+      throw new Error("Butter plugin edit: invalid source line");
+    }
+    const start = this.lineMap.lineStarts[n];
+    this.applySourceRange(text, start, start + this.lineMap.lines[n].length);
+  }
+
   lineCount(): number {
+    this.readSource();
     return this.lineMap.lines.length;
   }
 
   lastLine(): number {
+    this.readSource();
     return this.lineMap.lines.length - 1;
   }
 
-  getCursor(_string?: string): EditorPosition {
-    this.refresh();
-    return this.posToLineCh(this.pmSelectionToOffset());
+  getCursor(side = "head"): EditorPosition {
+    const snapshot = this.readSource();
+    // A projection exists only for a collapsed cursor, so every side is on its line.
+    if (this.projection) return this.posToLineCh(this.projection.offset);
+    const selection = this.pm.state.selection;
+    const position = side === "from" ? selection.from : side === "to" ? selection.to
+      : side === "anchor" ? selection.anchor : selection.head;
+    return this.posToLineCh(editorPositionToSource(this.pm.state, snapshot, position, this.certify));
   }
 
   getClickableTokenAt(_pos: EditorPosition): unknown {
     return null;
   }
 
-  setCursor(pos: EditorPosition | number): void {
-    const off =
-      typeof pos === "number" ? pos : this.lineChToPos(pos);
-    // Find a PM position near `off`. This is approximate - use it
-    // sparingly. We anchor by placing the caret at the end of the
-    // matching text on the relevant line.
-    const targetLine = typeof pos === "number"
-      ? this.posToLineCh(off).line
-      : pos.line;
-    const pmPos = this.findPMPosForLine(targetLine, typeof pos === "number" ? off - this.lineMap.lineStarts[targetLine] : pos.ch);
-    if (pmPos < 0) return;
-    const sel = Selection.near(this.pm.state.doc.resolve(pmPos));
-    this.pm.dispatch(this.pm.state.tr.setSelection(sel));
+  setCursor(pos: EditorPosition | number, ch = 0): void {
+    this.setSelection(typeof pos === "number" ? { line: pos, ch } : pos);
+  }
+
+  listSelections(): Array<{ anchor: EditorPosition; head: EditorPosition }> {
+    return [{ anchor: this.getCursor("anchor"), head: this.getCursor("head") }];
+  }
+
+  setSelections(ranges: Array<{ anchor: EditorPosition; head?: EditorPosition }>, main = 0): void {
+    // ProseMirror has one authoritative selection. Never silently drop cursors.
+    if (ranges.length !== 1 || main !== 0) throw new Error("Butter plugin edit: multiple selections are not supported");
+    this.setSelection(ranges[0].anchor, ranges[0].head);
+  }
+
+  setSelection(anchor: EditorPosition, head = anchor): void {
+    const snapshot = this.readSource(), projection = this.projection;
+    const state = this.pm.state;
+    const position = (p: EditorPosition) => projection
+      ? projectedSourceToPosition(projection, this.lineChToPos(p), this.certify)
+      : editorSourceToPosition(state, snapshot, this.lineChToPos(p), this.certify);
+    const a = position(anchor), h = position(head);
+    if (!state.doc.resolve(a).parent.inlineContent || !state.doc.resolve(h).parent.inlineContent) {
+      throw new Error("Butter plugin edit: selection is not an editable text range");
+    }
+    this.pm.dispatch(state.tr.setSelection(TextSelection.create(state.doc, a, h)));
   }
 
   getSelection(): string {
-    const { from, to } = this.pm.state.selection;
-    return this.pm.state.doc.textBetween(from, to, "\n");
+    return this.getRange(this.getCursor("from"), this.getCursor("to"));
   }
 
   somethingSelected(): boolean {
@@ -237,6 +286,7 @@ export class PMEditorShim {
   }
 
   getRange(from: EditorPosition, to: EditorPosition): string {
+    this.readSource();
     const fromOff = this.lineChToPos(from);
     const toOff = this.lineChToPos(to);
     return this.lineMap.text.slice(fromOff, toOff);
@@ -248,29 +298,15 @@ export class PMEditorShim {
     to?: EditorPosition,
   ): void {
     if (!this.pm.editable) return;
+    this.readSource();
     const end = to ?? from;
-    const pmFrom = this.findPMPosForLine(from.line, from.ch);
-    const pmTo = this.findPMPosForLine(end.line, end.ch);
-    if (pmFrom < 0 || pmTo < 0) {
-      if (this.fallbackReplace) {
-        const fromOff = this.lineChToPos(from);
-        const toOff = this.lineChToPos(end);
-        const newText = this.lineMap.text.slice(0, fromOff) + replacement + this.lineMap.text.slice(toOff);
-        this.fallbackReplace(newText);
-        this.refresh();
-      }
-      return;
-    }
-    this.pm.dispatch(
-      this.pm.state.tr.insertText(replacement, pmFrom, pmTo),
-    );
-    this.refresh();
+    this.applySourceRange(replacement, this.lineChToPos(from), this.lineChToPos(end));
   }
 
   replaceSelection(replacement: string): void {
     if (!this.pm.editable) return;
-    this.pm.dispatch(this.pm.state.tr.insertText(replacement));
-    this.refresh();
+    const from = this.getCursor("from"), to = this.getCursor("to");
+    this.replaceRange(replacement, from, to);
   }
 
   getDoc(): PMEditorShim {
@@ -290,45 +326,13 @@ export class PMEditorShim {
   }
 
   posToOffset(p: EditorPosition): number {
+    this.readSource();
     return this.lineChToPos(p);
   }
 
   offsetToPos(offset: number): EditorPosition {
+    this.readSource();
+    if (!Number.isFinite(offset)) throw new Error("Butter plugin edit: invalid source offset");
     return this.posToLineCh(offset);
-  }
-
-  // ── Internal: rough line-to-PM-pos mapping ──
-
-  /**
-   * For the given markdown line + column, find a PM doc position whose
-   * text content corresponds. Works for paragraph / heading / list
-   * content; for structured nodes it snaps to the nearest text node.
-   */
-  private findPMPosForLine(line: number, ch: number): number {
-    const lineText = this.lineMap.lines[line] ?? "";
-    const prefix = lineText.slice(0, ch);
-
-    let best = -1;
-    let bestDistance = Infinity;
-
-    for (const block of this.textBlocks) {
-      const blockText = block.text;
-      if (!blockText && !prefix) {
-        // Empty block matches empty-prefix searches
-        if (line === 0 && best < 0) best = block.pos + 1;
-        continue;
-      }
-      const idx = blockText.indexOf(prefix);
-      if (idx >= 0) {
-        const candidate = block.pos + 1 + idx + prefix.length;
-        const distance = Math.abs(line - block.ordinal);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          best = candidate;
-        }
-      }
-    }
-
-    return best;
   }
 }

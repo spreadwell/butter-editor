@@ -243,9 +243,9 @@ function blockBoundaryFor(view: EditorView, clientY: number) {
 
 function inlineTargetFor(view: EditorView, clientX: number, clientY: number) {
   const hit = activeDocument.elementFromPoint(clientX, clientY);
-  if (!(hit instanceof Element) || !view.dom.contains(hit)) return null;
+  if (!(hit?.instanceOf(Element)) || !view.dom.contains(hit)) return null;
   const textblock = hit.closest("p, h1, h2, h3, h4, h5, h6");
-  if (!(textblock instanceof HTMLElement) || !view.dom.contains(textblock)) return null;
+  if (!(textblock?.instanceOf(HTMLElement)) || !view.dom.contains(textblock)) return null;
   const rect = textblock.getBoundingClientRect();
   if (clientY < rect.top || clientY > rect.bottom || clientX < rect.left || clientX > rect.right) return null;
   const coords = view.posAtCoords({ left: clientX, top: clientY });
@@ -328,7 +328,7 @@ export function attachImageBodyPlacementDrag(options: {
       view.dom !== source.editorDOM || !view.dom.isConnected || !image.isConnected || !view.dom.contains(image)
     ) return false;
     const nodeDOM = view.nodeDOM(source.pos);
-    return nodeDOM instanceof Element && nodeDOM.contains(image);
+    return nodeDOM?.instanceOf(Element) && nodeDOM.contains(image);
   };
   const ownsClickIntent = () => Boolean(
     armed && pendingClick && ownsGesture(armed) &&

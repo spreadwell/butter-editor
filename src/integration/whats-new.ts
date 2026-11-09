@@ -30,6 +30,25 @@ export interface WhatsNewState {
 
 export const WHATS_NEW_RELEASES: readonly WhatsNewRelease[] = [
   {
+    version: "0.14.0",
+    headline: "Works with more of your plugins",
+    summary: "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.",
+    demos: [],
+    improvements: [
+      "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.",
+      "Insert templates, dates, and other plugin text at the cursor, even on a new empty line, and undo each insertion in one step.",
+      "Checking a task box applies the Tasks plugin's done date and next recurrence when Tasks is installed.",
+      "Text you didn't edit now stays exactly as written for everyone. You can change this under Source preservation in Advanced settings.",
+    ],
+    fixed: [
+      "Saving no longer adds backslashes to lines you didn't edit.",
+      "Unsupported inline HTML, such as custom tags, no longer locks the whole note; only its block stays as written.",
+      "Other plugins' suggestions open only as you type, including after you switch a note from Live Preview to Butter.",
+      "The drag handle stays aligned on a new empty line.",
+      "Notes changed by another plugin update without replaying the opening animation.",
+    ],
+  },
+  {
     version: "0.13.1",
     headline: "Highlight and alignment fixes",
     summary: "Butter Editor 0.13.1 makes highlight choices and alignment controls follow your formatting preferences.",

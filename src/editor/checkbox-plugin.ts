@@ -16,7 +16,8 @@ import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorState } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 
-function buildDecorations(state: EditorState): DecorationSet {
+type Toggle = (view: EditorView, position: number) => void;
+function buildDecorations(state: EditorState, toggle?: Toggle): DecorationSet {
   const decos: Decoration[] = [];
 
   state.doc.descendants((node, pos) => {
@@ -36,7 +37,7 @@ function buildDecorations(state: EditorState): DecorationSet {
     decos.push(
       Decoration.widget(
         widgetPos,
-        (view: EditorView) => {
+        (view: EditorView, getPos) => {
           // The wrapper occupies the same zero-net-width marker column as
           // bullet and ordered marker widgets. It is deliberately static
           // inline content: relative positioning or native form-control
@@ -73,12 +74,28 @@ function buildDecorations(state: EditorState): DecorationSet {
           visual.setAttribute("aria-hidden", "true");
           visual.textContent = checked ? "\u2713" : "";
 
+          const itemPosition = (): number | undefined => {
+            const widget = getPos();
+            if (widget === undefined) return;
+            const $pos = view.state.doc.resolve(widget), depth = $pos.depth - 1;
+            if (depth < 1 || $pos.parent.type.name !== "paragraph" || $pos.parentOffset !== 0 ||
+              $pos.node(depth).type.name !== "list_item" || $pos.index(depth) !== 0) return;
+            return $pos.before(depth);
+          };
+
           const setChecked = (next: boolean) => {
-            const li = view.state.doc.nodeAt(pos);
+            const position = itemPosition();
+            if (position === undefined || !view.editable || view.composing) return;
+            const li = view.state.doc.nodeAt(position);
             if (!li || li.type.name !== "list_item") return;
             if (li.attrs.checked === next) return;
+            if (toggle) {
+              toggle(view, position);
+              input.checked = view.state.doc.nodeAt(position)?.attrs.checked === true;
+              return;
+            }
             view.dispatch(
-              view.state.tr.setNodeMarkup(pos, undefined, {
+              view.state.tr.setNodeMarkup(position, undefined, {
                 ...li.attrs,
                 checked: next,
                 sourceRange: null,
@@ -86,10 +103,24 @@ function buildDecorations(state: EditorState): DecorationSet {
             );
           };
           wrap.addEventListener("mousedown", (e) => {
+            if (e.button !== 0) return;
             e.preventDefault();
-            const li = view.state.doc.nodeAt(pos);
+            const position = itemPosition();
+            if (position === undefined) return;
+            const li = view.state.doc.nodeAt(position);
             if (!li || li.type.name !== "list_item") return;
             setChecked(li.attrs.checked !== true);
+          });
+          wrap.addEventListener("click", (e) => {
+            // The primary pointer gesture already ran on mousedown. Cancel
+            // the native input's default toggle, including after a refusal.
+            // Keyboard/screen-reader activation has no pointer click count.
+            e.preventDefault();
+            if (e.detail !== 0) return;
+            const position = itemPosition();
+            if (position === undefined) return;
+            const li = view.state.doc.nodeAt(position);
+            if (li?.type.name === "list_item") setChecked(li.attrs.checked !== true);
           });
           input.addEventListener("change", () => {
             setChecked(input.checked);
@@ -132,12 +163,12 @@ function rangeTouchesListItem(
   return found;
 }
 
-export function checkboxPlugin() {
+export function checkboxPlugin(toggle?: Toggle) {
   return new Plugin<DecorationSet>({
     key,
     state: {
       init(_, state) {
-        return buildDecorations(state);
+        return buildDecorations(state, toggle);
       },
       apply(tr, old, oldState, newState) {
         if (!tr.docChanged) return old;
@@ -156,7 +187,7 @@ export function checkboxPlugin() {
           });
         }
         if (!touched) return old.map(tr.mapping, tr.doc);
-        return buildDecorations(newState);
+        return buildDecorations(newState, toggle);
       },
     },
     props: {

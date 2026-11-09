@@ -179,7 +179,7 @@ export function resolveInterBlockGap(
   for (let i = 0; i < doc.childCount; i++) {
     const node = doc.child(i);
     const dom = view.nodeDOM(posCursor);
-    if (dom instanceof HTMLElement) {
+    if (dom?.instanceOf(HTMLElement)) {
       const rect = dom.getBoundingClientRect();
       if (rect.width !== 0 || rect.height !== 0) {
         const marginLeft = parseFloat(getComputedStyle(dom).marginLeft) || 0;
@@ -202,7 +202,7 @@ export function resolveInterBlockGap(
     if (isEmptyParagraph(before.node) || isEmptyParagraph(after.node)) return null;
     const visualLeft = Math.min(before.visualLeft, after.visualLeft);
     const pane = view.dom.closest(".workspace-leaf");
-    const paneLeft = pane instanceof HTMLElement
+    const paneLeft = pane?.instanceOf(HTMLElement)
       ? pane.getBoundingClientRect().left
       : 0;
     const left = Math.max(visualLeft - HANDLE_OFFSET_LEFT, paneLeft);
@@ -253,7 +253,7 @@ function hitTestInterBlockGap(view: EditorView, event: MouseEvent): GapHit | nul
   for (let i = 0; i < n; i++) {
     const child = doc.child(i);
     const dom = view.nodeDOM(posCursor);
-    if (dom instanceof HTMLElement) {
+    if (dom?.instanceOf(HTMLElement)) {
       const rect = dom.getBoundingClientRect();
       // Skip blocks that don't take layout space. `display:none` nodes
       // return an all-zero rect, and including them would extend
@@ -746,7 +746,7 @@ export function clickToSpawnPlugin(
             (view.state.selection.node.isAtom || view.state.selection.node.isLeaf)
           ) {
             const selDom = view.nodeDOM(view.state.selection.from);
-            if (selDom instanceof HTMLElement && selDom.contains(event.target as Node)) {
+            if (selDom?.instanceOf(HTMLElement) && selDom.contains(event.target as Node)) {
               event.preventDefault();
               return deselectSelectedLeaf(view);
             }

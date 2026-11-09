@@ -323,7 +323,7 @@ export function execAlignmentCmd(btn: BtnDef, view: EditorView) {
 export function canExecuteConversion(btn: BtnDef, state: EditorState): boolean {
   if (btn.kind === "alignment") return !!btn.textAlignment && setTextAlignment(btn.textAlignment, getMultiBlockSelection(state).positions)(state);
   if (!hasTextSelection(state)) return true;
-  let target: SelectionTarget | null = null;
+  let target: SelectionTarget | null;
   if (btn.kind === "heading") target = btn.headingLevel ? `h${btn.headingLevel}` : "paragraph";
   else if (btn.kind === "block" || btn.kind === "list") target = selectionTarget(btn.nodeName ?? "");
   else if (btn.id.startsWith("callout-")) target = "obsidian_callout";
@@ -1575,11 +1575,10 @@ function createCustomColorPicker(args: {
   hue.appendChild(hueThumb);
   picker.appendChild(hue);
 
-  let alphaWrap: HTMLElement | null = null;
   let alphaSlider: HTMLInputElement | null = null;
   let alphaValue: HTMLElement | null = null;
   if (kind === "highlight") {
-    alphaWrap = activeWindow.createEl("label");
+    const alphaWrap = activeWindow.createEl("label");
     alphaWrap.classList.add("butter-color-alpha");
     const alphaLabel = activeWindow.createSpan();
     alphaLabel.classList.add("butter-color-alpha-label");
@@ -1981,7 +1980,7 @@ export function openMobileColorSheet(
     openPresetSettings: () => plugin?.openSettings?.("toolbar", "preset-colors"),
     onMount: () => {
       view.dom.blur();
-      if (activeDocument.activeElement instanceof HTMLElement) {
+      if (activeDocument.activeElement?.instanceOf(HTMLElement)) {
         activeDocument.activeElement.blur();
       }
     },
@@ -2010,7 +2009,7 @@ export function openMobilePresetColorSheet(args: {
       if (changed && color) void args.commit(color);
     },
     onMount: () => {
-      if (activeDocument.activeElement instanceof HTMLElement) {
+      if (activeDocument.activeElement?.instanceOf(HTMLElement)) {
         activeDocument.activeElement.blur();
       }
     },
@@ -2088,7 +2087,7 @@ function openColorDrawer(target: ColorTarget): void {
   // When invoked from the settings modal (preset editing) the drawer must
   // sit above that modal. Obsidian's modal layer is --layer-modal (100);
   // the menu layer (65) is below it, so go one above the modal layer.
-  if (target.elevated) drawer.setCssStyles({ zIndex: "calc(var(--layer-modal, 100) + 1)" });
+  if (target.elevated) drawer.addClass("butter-mobile-drawer-elevated");
 
   const shell = activeWindow.createDiv();
   shell.classList.add("butter-mobile-color-shell");
@@ -2302,9 +2301,7 @@ function openColorDrawer(target: ColorTarget): void {
     (f) => setHue(f * 360),
     (d) => setHue((hsv.h + d * 6 + 360) % 360),
   );
-  hueSlider.track.setCssStyles({
-    background: "linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)",
-  });
+  hueSlider.track.addClass("butter-mobile-color-hue-track");
   const satSlider = buildSlider(
     "Saturation",
     100,
