@@ -9,6 +9,7 @@
 import { Plugin as PMPlugin, PluginKey, type Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
+import { EASE_OUT, MOTION_EMPHASIS_MS } from "../ui/motion-tokens";
 
 const key = new PluginKey("butter-block-animator");
 
@@ -44,8 +45,8 @@ interface BlockLocation {
   pos: number;
 }
 
-const TURN_INTO_DURATION_MS = 210;
-const TURN_INTO_EASING = "cubic-bezier(0.2, 1, 0.4, 1)";
+const TURN_INTO_DURATION_MS = MOTION_EMPHASIS_MS;
+const TURN_INTO_EASING = EASE_OUT;
 const activeAnimations = new WeakMap<HTMLElement, Animation>();
 
 /** Append rather than replace metadata so a multi-selection animates as one transaction. */

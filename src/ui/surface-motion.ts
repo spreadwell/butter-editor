@@ -1,8 +1,10 @@
 import type { Menu } from "obsidian";
+import { MOTION_INSTANT_MS } from "./motion-tokens";
 
 export type SurfaceMotionKind = "menu" | "submenu" | "popover";
 
-const EXIT_FALLBACK_MS = 140;
+// Backstop for a leaving animation that never reports its end.
+const EXIT_FALLBACK_MS = MOTION_INSTANT_MS + 60;
 const patchedMenus = new WeakSet<Menu>();
 const immediateMenuClosers = new WeakMap<Menu, () => void>();
 

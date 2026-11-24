@@ -1,6 +1,7 @@
 import type { Node as PMNode } from "prosemirror-model";
 import type { EditorView } from "prosemirror-view";
 import { HANDLE_HEIGHT, HANDLE_OFFSET_TOP } from "./constants";
+import { TopLevelBlockScan } from "../top-level-block-scan";
 import type { BlockHit, DragContext, SiblingInfo } from "./types";
 
 export function listItemHandleInset(node: PMNode, dom: HTMLElement): number {
@@ -92,10 +93,6 @@ export function collectSiblings(
   return siblings;
 }
 
-export function collectTopLevelSiblings(view: EditorView): SiblingInfo[] {
-  return collectSiblings(view, view.state.doc, 0);
-}
-
 export function isContainer(node: PMNode): boolean {
   return node.type.name === "obsidian_callout" || node.type.name === "blockquote";
 }
@@ -159,26 +156,24 @@ function blockAtY(
   return nearest;
 }
 
-function pickNearestSibling(
-  siblings: SiblingInfo[],
-  clientY: number,
-  context: DragContext | null,
-): BlockHit | null {
-  for (const sibling of siblings) {
-    if (clientY >= sibling.rect.top && clientY <= sibling.rect.bottom) {
-      return { ...sibling, context };
+/** The top-level block at `clientY`, or failing that the one whose centre is
+ * closest. Reads only the blocks around the pointer: measuring every block in
+ * the note on a pointer move stalls hovering in a long one. */
+function nearestTopLevelBlock(view: EditorView, clientY: number): BlockHit | null {
+  const scan = new TopLevelBlockScan(view, view.state.doc, (rect) => rect.height > 0);
+  const below = scan.first((rect) => rect.bottom >= clientY);
+  let closest = below;
+  if (!below || below.rect.top > clientY) {
+    const above = scan.before(below ? below.index : scan.count);
+    const centreDistance = (block: { rect: DOMRect }): number =>
+      Math.abs(clientY - (block.rect.top + block.rect.height / 2));
+    if (above && (!below || centreDistance(above) <= centreDistance(below))) {
+      closest = above;
     }
   }
-  let closest: SiblingInfo | null = null;
-  let closestDistance = Infinity;
-  for (const sibling of siblings) {
-    const distance = Math.abs(clientY - (sibling.rect.top + sibling.rect.height / 2));
-    if (distance < closestDistance) {
-      closestDistance = distance;
-      closest = sibling;
-    }
-  }
-  return closest ? { ...closest, context } : null;
+  if (!closest) return null;
+  const { pos, node, dom, rect } = closest;
+  return { pos, node, dom, rect, context: null };
 }
 
 function resolveHandleTarget(
@@ -238,7 +233,7 @@ export function findBlockUnderPointer(
   }
 
   if (!topHit) {
-    return pickNearestSibling(collectTopLevelSiblings(view), clientY, null);
+    return nearestTopLevelBlock(view, clientY);
   }
   return isContainer(topHit.node)
     ? resolveHandleTarget(view, topHit, clientY)

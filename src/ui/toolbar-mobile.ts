@@ -44,6 +44,7 @@ import {
   closeMobileInsertDrawer,
 } from "./insert-drawer";
 import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
+import { EASE_OUT, MOTION_EMPHASIS_MS } from "./motion-tokens";
 import { tx, txKnown, type MessageKey } from "../i18n";
 import { isFormattingActionAllowed } from "./rich-formatting-actions";
 import { openUnifiedLinkEditor } from "./link-editor";
@@ -1044,7 +1045,7 @@ function renderButterMain(
 export function installOverscrollRubberBand(el: HTMLElement): void {
   const MAX_PULL = 80; // px - asymptotic max overdrag
   const RESIST = 0.55; // higher = more resistance, less drag
-  const SNAP_MS = 280;
+  const SNAP_MS = MOTION_EMPHASIS_MS;
 
   // Damping curve - small overdrag → small offset; grows
   // sub-linearly toward the asymptote so the bar never escapes
@@ -1106,7 +1107,7 @@ export function installOverscrollRubberBand(el: HTMLElement): void {
 
   const release = () => {
     if (overdrag === 0) return;
-    el.style.transition = `transform ${SNAP_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1)`;
+    el.style.transition = `transform ${SNAP_MS}ms ${EASE_OUT}`;
     el.style.removeProperty("transform");
     overdrag = 0;
     snapTimeout = window.setTimeout(() => {

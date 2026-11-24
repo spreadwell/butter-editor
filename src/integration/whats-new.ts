@@ -30,6 +30,26 @@ export interface WhatsNewState {
 
 export const WHATS_NEW_RELEASES: readonly WhatsNewRelease[] = [
   {
+    version: "0.14.1",
+    headline: "Typing, drag and speed fixes",
+    summary: "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.",
+    demos: [],
+    improvements: [
+      "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.",
+    ],
+    fixed: [
+      "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.",
+      "Typing and moving the cursor are faster in long notes.",
+      "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.",
+      "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.",
+      "The first block keeps its spacing after you drag a block to or from the top of a note.",
+      "Obsidian's word count stays correct after you view or close a note in Butter.",
+      "The table picker stays under the toolbar when opened from a toolbar menu.",
+      "Butter menus no longer cover Obsidian tooltips.",
+      "A line that holds only spaces or a tab stays visible.",
+    ],
+  },
+  {
     version: "0.14.0",
     headline: "Works with more of your plugins",
     summary: "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.",

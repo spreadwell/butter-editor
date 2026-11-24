@@ -65,6 +65,8 @@ import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorView } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
 import { HANDLE_OFFSET_LEFT } from "./drag-handles/constants";
+import { MOTION_STANDARD_MS } from "../ui/motion-tokens";
+import { TopLevelBlockScan } from "./top-level-block-scan";
 
 interface EphemeralState {
   /** PM position of the ephemeral paragraph's NODE START (inclusive).
@@ -81,7 +83,7 @@ interface EphemeralState {
 /** Time the OUT animation plays before the actual delete transaction
  *  is dispatched. Must match the `butter-spawn-out` keyframe duration
  *  in styles.css - keep these in lockstep. */
-const LEAVE_ANIMATION_MS = 160;
+const LEAVE_ANIMATION_MS = MOTION_STANDARD_MS;
 
 const key = new PluginKey<EphemeralState>("butter-click-to-spawn");
 
@@ -163,60 +165,54 @@ export interface InterBlockGap {
   gapIdx: number;
 }
 
+/** Blocks that take layout space. A `display: none` block reports an all-zero
+ * rect, and counting it would stretch "the gap between two blocks" from the
+ * top of the page down to the next visible block. */
+function takesLayoutSpace(rect: DOMRect): boolean {
+  return rect.width !== 0 || rect.height !== 0;
+}
+
 export function resolveInterBlockGap(
   view: EditorView,
   clientY: number,
 ): InterBlockGap | null {
   const doc = view.state.doc;
   if (doc.childCount < 2) return null;
-  let posCursor = 0;
-  const blocks: Array<{
-    endPos: number;
-    rect: DOMRect;
-    visualLeft: number;
-    node: PMNode;
-  }> = [];
-  for (let i = 0; i < doc.childCount; i++) {
-    const node = doc.child(i);
-    const dom = view.nodeDOM(posCursor);
-    if (dom?.instanceOf(HTMLElement)) {
-      const rect = dom.getBoundingClientRect();
-      if (rect.width !== 0 || rect.height !== 0) {
-        const marginLeft = parseFloat(getComputedStyle(dom).marginLeft) || 0;
-        blocks.push({
-          endPos: posCursor + node.nodeSize,
-          rect,
-          visualLeft: rect.left - Math.min(0, marginLeft),
-          node,
-        });
-      }
-    }
-    posCursor += node.nodeSize;
+  // This runs on pointer moves, so it reads only the blocks around the
+  // pointer rather than measuring the whole note.
+  const scan = new TopLevelBlockScan(view, doc, takesLayoutSpace);
+  let after = scan.first((rect) => rect.top >= clientY);
+  if (!after) return null;
+  let before = scan.before(after.index);
+  while (!before || clientY < before.rect.bottom) {
+    // The pointer is inside `before`, or above the first block. The only
+    // gap left to consider is one that starts at a block with no height
+    // sitting exactly on the pointer's line.
+    if (after.rect.bottom > clientY) return null;
+    before = after;
+    after = scan.from(after.index + 1);
+    if (!after) return null;
   }
-  if (blocks.length < 2) return null;
-
-  for (let i = 0; i < blocks.length - 1; i++) {
-    const before = blocks[i];
-    const after = blocks[i + 1];
-    if (clientY < before.rect.bottom || clientY > after.rect.top) continue;
-    if (isEmptyParagraph(before.node) || isEmptyParagraph(after.node)) return null;
-    const visualLeft = Math.min(before.visualLeft, after.visualLeft);
-    const pane = view.dom.closest(".workspace-leaf");
-    const paneLeft = pane?.instanceOf(HTMLElement)
-      ? pane.getBoundingClientRect().left
-      : 0;
-    const left = Math.max(visualLeft - HANDLE_OFFSET_LEFT, paneLeft);
-    const right = Math.max(before.rect.right, after.rect.right);
-    return {
-      insertPos: before.endPos,
-      midY: (before.rect.bottom + after.rect.top) / 2,
-      left,
-      width: right - left,
-      gutterWidth: visualLeft - left,
-      gapIdx: i,
-    };
-  }
-  return null;
+  if (isEmptyParagraph(before.node) || isEmptyParagraph(after.node)) return null;
+  const visualLeftOf = (block: { dom: HTMLElement; rect: DOMRect }): number => {
+    const marginLeft = parseFloat(getComputedStyle(block.dom).marginLeft) || 0;
+    return block.rect.left - Math.min(0, marginLeft);
+  };
+  const visualLeft = Math.min(visualLeftOf(before), visualLeftOf(after));
+  const pane = view.dom.closest(".workspace-leaf");
+  const paneLeft = pane?.instanceOf(HTMLElement)
+    ? pane.getBoundingClientRect().left
+    : 0;
+  const left = Math.max(visualLeft - HANDLE_OFFSET_LEFT, paneLeft);
+  const right = Math.max(before.rect.right, after.rect.right);
+  return {
+    insertPos: before.pos + before.node.nodeSize,
+    midY: (before.rect.bottom + after.rect.top) / 2,
+    left,
+    width: right - left,
+    gutterWidth: visualLeft - left,
+    gapIdx: before.index,
+  };
 }
 
 function hitTestInterBlockGap(view: EditorView, event: MouseEvent): GapHit | null {
@@ -236,49 +232,18 @@ function hitTestInterBlockGap(view: EditorView, event: MouseEvent): GapHit | nul
   }
 
   const doc = view.state.doc;
-  const n = doc.childCount;
-  if (n === 0) return null;
+  if (doc.childCount === 0) return null;
 
   const clickY = event.clientY;
 
-  // Walk top-level blocks, collecting their DOM rects. Skip blocks
-  // whose DOM isn't rendered (shouldn't normally happen for top-level
-  // children; defensive).
-  //
-  // PM position math: at the doc root, child[i] starts at the offset
-  // equal to the sum of preceding children's nodeSizes. position = 0
-  // is "before child[0]" and is a valid insertion slot.
-  let posCursor = 0;
-  const blocks: Array<{ startPos: number; endPos: number; rect: DOMRect; node: PMNode }> = [];
-  for (let i = 0; i < n; i++) {
-    const child = doc.child(i);
-    const dom = view.nodeDOM(posCursor);
-    if (dom?.instanceOf(HTMLElement)) {
-      const rect = dom.getBoundingClientRect();
-      // Skip blocks that don't take layout space. `display:none` nodes
-      // return an all-zero rect, and including them would extend
-      // "gap between blocks" to "anywhere from the
-      // top of the page down to the next visible block" - the gap-
-      // detect check below would mis-fire on cursor positions far
-      // above the actual visible gap.
-      if (rect.width !== 0 || rect.height !== 0) {
-        blocks.push({
-          startPos: posCursor,
-          endPos: posCursor + child.nodeSize,
-          rect,
-          node: child,
-        });
-      }
-    }
-    posCursor += child.nodeSize;
-  }
-
-  if (blocks.length === 0) return null;
+  const scan = new TopLevelBlockScan(view, doc, takesLayoutSpace);
+  const first = scan.from(0);
+  if (!first) return null;
 
   // Above the first block: ignored. The note's first block is the
   // anchor; spawning a paragraph above it would push the rest of the
   // doc down on every stray click in the header gutter.
-  if (clickY < blocks[0].rect.top) {
+  if (clickY < first.rect.top) {
     return null;
   }
 
@@ -287,13 +252,13 @@ function hitTestInterBlockGap(view: EditorView, event: MouseEvent): GapHit | nul
   if (sharedGap) return { insertPos: sharedGap.insertPos };
 
   // Below the last block
-  const last = blocks[blocks.length - 1];
+  const last = scan.before(scan.count) ?? first;
   if (clickY > last.rect.bottom) {
     // A new/empty note already owns one editable paragraph. Likewise, an
     // authored or ephemeral trailing blank is already the correct insertion
     // target. Never manufacture a second consecutive blank merely because
     // the user clicked lower in the editor background.
-    return canSpawnAfterLastBlock(doc) ? { insertPos: last.endPos } : null;
+    return canSpawnAfterLastBlock(doc) ? { insertPos: last.pos + last.node.nodeSize } : null;
   }
 
   // Click fell inside some block's rect → not a gap hit.

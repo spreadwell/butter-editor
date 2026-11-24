@@ -158,6 +158,9 @@ declare module "obsidian" {
     ): Menu;
     /** Set the parent element used as positioning anchor. */
     setParentElement?(el: HTMLElement): Menu;
+    /** Items in display order. A section submenu's host item exists
+     *  once the menu has been shown. */
+    items?: Array<MenuItem | MenuSeparator>;
     /** DOM element this menu renders into. */
     dom?: HTMLElement;
   }
@@ -170,6 +173,8 @@ declare module "obsidian" {
      *  the call may silently throw if removed. Callers should treat
      *  this as best-effort. */
     setSubmenu(): Menu;
+    /** The submenu this item hosts, if any. */
+    submenu?: Menu;
     /** Visually highlight as destructive (red). */
     setWarning?(warning: boolean): MenuItem;
     /** DOM node hosting the item — used for adding extra classes. */

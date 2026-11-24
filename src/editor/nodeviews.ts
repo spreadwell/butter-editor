@@ -681,14 +681,25 @@ export function codeBlockView(
     // the toolbar to be in-flow (adding 34px to the block's top
     // content) and would rely on an ancestor being the scroll
     // container - not a given across Obsidian's layout.
+    //
+    // Classes are written only when they change. Writing a class back
+    // to the value it already has still counts as a change to anything
+    // observing the editor, and a block drag reads an unexpected change
+    // as the document moving under it: it used to cancel the moment it
+    // started scrolling a note that held a rendered code block.
     let repositionFrame: number | null = null;
+    const setToolbarClass = (name: string, on: boolean) => {
+      if (editToolbar && editToolbar.classList.contains(name) !== on) {
+        editToolbar.classList.toggle(name, on);
+      }
+    };
     const repositionToolbar = () => {
       if (destroyed || !editToolbar) return;
       if (mode !== "edit") {
         // CSS default (absolute top:-42px) takes over when the
         // toolbar isn't being shown.
-        editToolbar.addClass("butter-hidden");
-        editToolbar.removeClass("butter-code-edit-toolbar-pinned");
+        setToolbarClass("butter-hidden", true);
+        setToolbarClass("butter-code-edit-toolbar-pinned", false);
         return;
       }
       const rect = editWrap.getBoundingClientRect();
@@ -699,27 +710,31 @@ export function codeBlockView(
       // Hide toolbar if the block is entirely out of view
       // there's nothing to anchor to.
       if (rect.bottom < 0 || rect.top > viewportH) {
-        editToolbar.addClass("butter-hidden");
+        setToolbarClass("butter-hidden", true);
         return;
       }
-      editToolbar.removeClass("butter-hidden");
+      setToolbarClass("butter-hidden", false);
 
       // If the shell's top is above (or within toolbar-height of)
       // the viewport top, pin the toolbar to the viewport. Else
       // restore the default absolute positioning above the block.
       if (rect.top < toolbarH + viewportMargin + 6) {
-        editToolbar.addClass("butter-code-edit-toolbar-pinned");
-        editToolbar.setCssProps({
+        setToolbarClass("butter-code-edit-toolbar-pinned", true);
+        const position: Record<string, string> = {
           "--butter-pos-top": `${viewportMargin}px`,
           "--butter-pos-left": `${rect.left}px`,
           "--butter-pos-width": `${rect.width}px`,
-        });
+        };
+        if (Object.entries(position).some(([name, value]) => editToolbar.style.getPropertyValue(name) !== value)) {
+          editToolbar.setCssProps(position);
+        }
       } else {
-        editToolbar.removeClass("butter-code-edit-toolbar-pinned");
+        setToolbarClass("butter-code-edit-toolbar-pinned", false);
       }
     };
     const scheduleReposition = () => {
-      if (destroyed || repositionFrame !== null) return;
+      // Outside edit mode the toolbar is already hidden; nothing to track.
+      if (destroyed || mode !== "edit" || repositionFrame !== null) return;
       repositionFrame = window.requestAnimationFrame(() => {
         repositionFrame = null;
         repositionToolbar();

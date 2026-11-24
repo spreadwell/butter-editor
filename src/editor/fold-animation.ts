@@ -1,5 +1,7 @@
-const FOLD_DURATION_MS = 150;
-const FOLD_EASING = "cubic-bezier(0.2, 0, 0, 1)";
+import { EASE_OUT, MOTION_STANDARD_MS } from "../ui/motion-tokens";
+
+const FOLD_DURATION_MS = MOTION_STANDARD_MS;
+const FOLD_EASING = EASE_OUT;
 
 export type VerticalFoldDirection = "expand" | "collapse";
 

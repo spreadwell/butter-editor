@@ -5,14 +5,20 @@ import { Decoration, DecorationSet } from "prosemirror-view";
 function isCommentOnlyParagraph(node: PMNode, commentMark: MarkType): boolean {
   if (node.type.name !== "paragraph" || node.childCount === 0) return false;
 
+  // A paragraph of only spaces or tabs holds no comment. Hiding it would take
+  // the caret's own line away while the user is typing in it.
+  let hasComment = false;
   let hasVisibleContent = false;
   node.forEach((child) => {
-    if (child.marks.some((mark) => mark.type === commentMark)) return;
+    if (child.marks.some((mark) => mark.type === commentMark)) {
+      hasComment = true;
+      return;
+    }
     if (child.isText && !child.text?.trim()) return;
     hasVisibleContent = true;
   });
 
-  return !hasVisibleContent;
+  return hasComment && !hasVisibleContent;
 }
 
 function buildCommentOnlyParagraphDecorations(state: EditorState): DecorationSet {

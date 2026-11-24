@@ -94,6 +94,27 @@ export function renderEditor(this: ButterSettingTab, root: HTMLElement) {
     const formatting = this.createSettingGroup(root, tx("Formatting"));
     renderRichFormattingSetting(this, formatting);
 
+    // The description states what the keys do for the current choice, so
+    // nobody has to work out which key is "the other one".
+    const enterKeys = (): string =>
+      this.plugin.settings.enterKeyInParagraph === "lineBreak"
+        ? tx("Enter makes a new line. Press Enter twice or Shift+Enter for a new paragraph.")
+        : tx("Enter starts a new paragraph. Shift+Enter makes a new line.");
+    const enterSetting = new Setting(formatting)
+      .setName(tx("Enter in a paragraph"))
+      .setDesc(enterKeys())
+      .addDropdown((d) =>
+        d
+          .addOption("paragraph", tx("New paragraph"))
+          .addOption("lineBreak", tx("New line"))
+          .setValue(this.plugin.settings.enterKeyInParagraph)
+          .onChange(async (v) => {
+            this.plugin.settings.enterKeyInParagraph = v === "lineBreak" ? "lineBreak" : "paragraph";
+            enterSetting.setDesc(enterKeys());
+            await this.plugin.saveSettings();
+          }),
+      );
+
     const display = this.createSettingGroup(root, tx("Display"));
     new Setting(display)
       .setName(tx("Animations"))

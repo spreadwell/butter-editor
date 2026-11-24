@@ -35,6 +35,13 @@ import {
 } from "prosemirror-inputrules";
 import type { Mark, MarkType } from "prosemirror-model";
 import { exitCalloutFromTrailingEmptyParagraph } from "./callout-enter";
+import {
+  caretAfterLineBreak,
+  enterBreaksLineHere,
+  insertTabInParagraph,
+  removeTabInParagraph,
+  selectionInFreeParagraph,
+} from "./typing-keys";
 import { textAlignment } from "../core/text-alignment";
 import {
   EditorState,
@@ -563,6 +570,9 @@ const splitBlockAfterSelection: Command = (state, dispatch) => {
 
 export interface ButterKeymapOptions {
   markdownShortcuts?: () => MarkdownShortcutSettings;
+  /** True when Enter makes a new line in a paragraph and Shift+Enter a new
+   *  paragraph. Read on every keypress, so a settings change applies at once. */
+  enterInsertsLineBreak?: () => boolean;
 }
 
 export function buildKeymap(
@@ -648,7 +658,7 @@ export function buildKeymap(
   // Source-authored soft line wraps remain represented by `softbreak`; this
   // command represents the deliberate rich-editor line-break action.
   if (schema.nodes.hard_break) {
-    keys["Shift-Enter"] = (state, dispatch) => {
+    const insertHardBreak: Command = (state, dispatch) => {
       const { $from, $to } = state.selection;
       const hardBreak = schema.nodes.hard_break;
       if (
@@ -668,7 +678,44 @@ export function buildKeymap(
       }
       return true;
     };
+
+    // Optional swap for people who expect Obsidian's Enter: in a paragraph
+    // Enter makes a new line and Shift+Enter a new paragraph. A second Enter
+    // on the fresh line turns the break into a paragraph boundary, the way a
+    // blank line does in Markdown. Lists, tables, headings and code keep
+    // their own Enter, and so does a paragraph that is about to become a
+    // code fence.
+    const newParagraph = keys["Enter"];
+    const swapped = (state: EditorState): boolean =>
+      options.enterInsertsLineBreak?.() === true && selectionInFreeParagraph(state);
+    const breakIntoParagraph: Command = (state, dispatch) => {
+      const { $from } = state.selection;
+      const tr = state.tr.delete($from.pos - 1, $from.pos);
+      const afterDeletion = EditorState.create({ schema: state.schema, doc: tr.doc, selection: tr.selection, storedMarks: continuationMarks(state) });
+      return splitParagraphKeepingAlignment(afterDeletion, dispatch && (split => {
+        for (const step of split.steps) tr.step(step);
+        tr.setSelection(Selection.fromJSON(tr.doc, split.selection.toJSON()));
+        tr.setStoredMarks(split.storedMarks);
+        dispatch(tr.scrollIntoView());
+      }));
+    };
+    keys["Enter"] = (state, dispatch, view) => {
+      if (!swapped(state) || !enterBreaksLineHere(state) || codeFenceShortcut(state)) {
+        return newParagraph(state, dispatch, view);
+      }
+      return caretAfterLineBreak(state)
+        ? breakIntoParagraph(state, dispatch, view)
+        : insertHardBreak(state, dispatch, view);
+    };
+    keys["Shift-Enter"] = (state, dispatch, view) =>
+      swapped(state) ? newParagraph(state, dispatch, view) : insertHardBreak(state, dispatch, view);
   }
+
+  // Tab types a tab in a paragraph instead of moving focus out of the note.
+  // Lists and tables handle their own Tab in the keymaps registered after
+  // this one; these two decline there.
+  keys["Tab"] = insertTabInParagraph;
+  keys["Shift-Tab"] = removeTabInParagraph;
 
   // Heading shortcuts Mod-Alt-1 through Mod-Alt-6
   for (let level = 1; level <= 6; level++) {

@@ -726,6 +726,8 @@ export interface ButterSettings {
   enableSuggestBridge: boolean;
   /** Enable rich paste + file drop. */
   enablePasteDrop: boolean;
+  /** What Enter does in a paragraph. Shift+Enter does the other. */
+  enterKeyInParagraph: "paragraph" | "lineBreak";
   /** Independently control which typed Markdown patterns become formatting. */
   markdownShortcuts: MarkdownShortcutSettings;
   /** Open .md files in Butter automatically. When ON, any markdown
@@ -1143,6 +1145,7 @@ const DEFAULT_SETTINGS: ButterSettings = {
   presetHighlightColors: [...DEFAULT_PRESET_HIGHLIGHT_COLORS],
   enableSuggestBridge: true,
   enablePasteDrop: true,
+  enterKeyInParagraph: "paragraph",
   markdownShortcuts: { ...DEFAULT_MARKDOWN_SHORTCUT_SETTINGS },
   openNewFilesInButter: true,
   disableAnimations: false,

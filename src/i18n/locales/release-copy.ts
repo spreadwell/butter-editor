@@ -1,5 +1,17 @@
 // Release-discovery copy, grouped here so every supported locale stays in lockstep.
 export const recentDe = {
+  "Typing, drag and speed fixes": "Korrekturen für Tippen, Ziehen und Geschwindigkeit",
+  "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.": "Mit Butter Editor 0.14.1 legen Sie fest, was die Eingabetaste bewirkt. Die Tabulatortaste fügt einen Tabulator ein, und Ziehen, das Einklappen von Überschriften sowie die Geschwindigkeit in langen Notizen wurden korrigiert.",
+  "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.": "Legen Sie unter „Formatierung“ in den Editor-Einstellungen fest, ob die Eingabetaste einen neuen Absatz oder eine neue Zeile beginnt.",
+  "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.": "Die Tabulatortaste fügt in einem Absatz einen Tabulator ein, statt den Fokus aus der Notiz zu bewegen. Umschalt+Tab entfernt ihn wieder.",
+  "Typing and moving the cursor are faster in long notes.": "Tippen und Cursorbewegungen sind in langen Notizen schneller.",
+  "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.": "Wenn Sie einen Block an den oberen oder unteren Rand ziehen, scrollen jetzt auch Notizen mit Mermaid-, Dataview-, Tasks- oder Diagrammblöcken.",
+  "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.": "Die Einklapp-Pfeile neben Überschriften lassen sich auf dem Desktop wieder anklicken, und die Ecke zum Ändern der Bildgröße wird nicht mehr abgeschnitten.",
+  "The first block keeps its spacing after you drag a block to or from the top of a note.": "Der erste Block behält seinen Abstand, nachdem Sie einen Block an den Anfang einer Notiz oder von dort weg gezogen haben.",
+  "Obsidian's word count stays correct after you view or close a note in Butter.": "Die Wortzählung von Obsidian bleibt korrekt, nachdem Sie eine Notiz in Butter angesehen oder geschlossen haben.",
+  "The table picker stays under the toolbar when opened from a toolbar menu.": "Die Tabellenauswahl bleibt unter der Symbolleiste, wenn sie aus einem Menü der Symbolleiste geöffnet wird.",
+  "Butter menus no longer cover Obsidian tooltips.": "Menüs von Butter verdecken keine Tooltips von Obsidian mehr.",
+  "A line that holds only spaces or a tab stays visible.": "Eine Zeile, die nur Leerzeichen oder einen Tabulator enthält, bleibt sichtbar.",
   "Works with more of your plugins": "Funktioniert mit mehr Ihrer Plugins",
   "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Mit Butter Editor 0.14.0 funktionieren Plugins, die Text einfügen oder Vorschläge anzeigen, auch in Butter, und Text, den Sie nicht bearbeitet haben, bleibt exakt erhalten.",
   "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Übernehmen Sie Vorschläge zur automatischen Vervollständigung anderer Plugins, etwa für Datumsangaben oder Wörter, mit Enter oder per Klick.",
@@ -140,6 +152,18 @@ export const recentDe = {
 } as const;
 
 export const recentEs = {
+  "Typing, drag and speed fixes": "Correcciones de escritura, arrastre y velocidad",
+  "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.": "Butter Editor 0.14.1 te permite elegir qué hace Enter, hace que Tab escriba una tabulación y corrige el arrastre, el plegado de encabezados y la velocidad en notas largas.",
+  "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.": "Elige si Enter inicia un párrafo nuevo o una línea nueva, en Formato dentro de los ajustes del Editor.",
+  "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.": "Tab escribe una tabulación en un párrafo en lugar de sacar el foco de la nota. Mayús+Tab la quita.",
+  "Typing and moving the cursor are faster in long notes.": "Escribir y mover el cursor es más rápido en notas largas.",
+  "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.": "Arrastrar un bloque hasta el borde superior o inferior desplaza las notas que contienen bloques de Mermaid, Dataview, Tasks o gráficos.",
+  "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.": "Las flechas de plegado de los encabezados vuelven a responder al clic en el escritorio, y la esquina para redimensionar imágenes ya no se recorta.",
+  "The first block keeps its spacing after you drag a block to or from the top of a note.": "El primer bloque conserva su espaciado después de arrastrar un bloque hacia el principio de una nota o desde él.",
+  "Obsidian's word count stays correct after you view or close a note in Butter.": "El recuento de palabras de Obsidian sigue siendo correcto después de ver o cerrar una nota en Butter.",
+  "The table picker stays under the toolbar when opened from a toolbar menu.": "El selector de tablas se mantiene bajo la barra de herramientas cuando se abre desde un menú de la barra.",
+  "Butter menus no longer cover Obsidian tooltips.": "Los menús de Butter ya no tapan la información emergente de Obsidian.",
+  "A line that holds only spaces or a tab stays visible.": "Una línea que solo contiene espacios o una tabulación sigue siendo visible.",
   "Works with more of your plugins": "Funciona con más de tus complementos",
   "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0 permite que los complementos que insertan texto o muestran sugerencias funcionen dentro de Butter, y conserva exactamente el texto que no editaste.",
   "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Acepta sugerencias de autocompletar de otros complementos, como fechas o palabras, con Enter o con un clic.",
@@ -280,6 +304,18 @@ export const recentEs = {
 } as const;
 
 export const recentFr = {
+  "Typing, drag and speed fixes": "Corrections pour la saisie, le glissement et la vitesse",
+  "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.": "Butter Editor 0.14.1 vous laisse choisir l’effet de la touche Entrée, fait en sorte que Tab insère une tabulation et corrige le glissement, le repli des titres et la vitesse dans les longues notes.",
+  "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.": "Choisissez si Entrée commence un nouveau paragraphe ou une nouvelle ligne, sous Formatage dans les réglages de l’Éditeur.",
+  "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.": "Tab insère une tabulation dans un paragraphe au lieu de faire sortir le focus de la note. Maj+Tab la retire.",
+  "Typing and moving the cursor are faster in long notes.": "La saisie et le déplacement du curseur sont plus rapides dans les longues notes.",
+  "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.": "Faire glisser un bloc vers le bord supérieur ou inférieur fait défiler les notes qui contiennent des blocs Mermaid, Dataview, Tasks ou de graphiques.",
+  "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.": "Les flèches de repli des titres sont de nouveau cliquables sur ordinateur, et le coin de redimensionnement des images n’est plus rogné.",
+  "The first block keeps its spacing after you drag a block to or from the top of a note.": "Le premier bloc conserve son espacement après le glissement d’un bloc vers le haut d’une note ou depuis celui-ci.",
+  "Obsidian's word count stays correct after you view or close a note in Butter.": "Le nombre de mots d’Obsidian reste correct après l’affichage ou la fermeture d’une note dans Butter.",
+  "The table picker stays under the toolbar when opened from a toolbar menu.": "Le sélecteur de tableau reste sous la barre d’outils lorsqu’il est ouvert depuis un menu de la barre.",
+  "Butter menus no longer cover Obsidian tooltips.": "Les menus de Butter ne recouvrent plus les infobulles d’Obsidian.",
+  "A line that holds only spaces or a tab stays visible.": "Une ligne qui ne contient que des espaces ou une tabulation reste visible.",
   "Works with more of your plugins": "Compatible avec davantage de vos plugins",
   "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0 permet aux plugins qui insèrent du texte ou affichent des suggestions de fonctionner dans Butter, et conserve exactement le texte que vous n’avez pas modifié.",
   "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Acceptez les suggestions de saisie semi-automatique d’autres plugins, comme les dates ou les mots, avec la touche Entrée ou d’un clic.",
@@ -420,6 +456,18 @@ export const recentFr = {
 } as const;
 
 export const recentJa = {
+  "Typing, drag and speed fixes": "入力、ドラッグ、速度の修正",
+  "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.": "Butter Editor 0.14.1 では、Enter キーの動作を選べるようになり、Tab キーでタブを入力できます。ドラッグ、見出しの折りたたみ、長いノートでの速度も修正しました。",
+  "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.": "エディタ設定の「書式設定」で、Enter キーで新しい段落を始めるか改行するかを選べます。",
+  "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.": "段落で Tab キーを押すと、フォーカスがノートの外に移動せず、タブが入力されます。Shift+Tab で削除できます。",
+  "Typing and moving the cursor are faster in long notes.": "長いノートでの入力とカーソル移動が速くなりました。",
+  "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.": "Mermaid、Dataview、Tasks、チャートのブロックを含むノートでも、ブロックを上端または下端までドラッグするとスクロールします。",
+  "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.": "デスクトップで見出しの折りたたみ矢印を再びクリックできるようになり、画像のサイズ変更用の角が切れなくなりました。",
+  "The first block keeps its spacing after you drag a block to or from the top of a note.": "ノートの先頭へ、または先頭からブロックをドラッグしても、最初のブロックの間隔が保たれます。",
+  "Obsidian's word count stays correct after you view or close a note in Butter.": "Butter でノートを表示したり閉じたりした後も、Obsidian の単語数が正しく表示されます。",
+  "The table picker stays under the toolbar when opened from a toolbar menu.": "ツールバーのメニューから開いたテーブルピッカーが、ツールバーの下に留まります。",
+  "Butter menus no longer cover Obsidian tooltips.": "Butter のメニューが Obsidian のツールチップを覆わなくなりました。",
+  "A line that holds only spaces or a tab stays visible.": "スペースまたはタブだけの行も表示されたままになります。",
   "Works with more of your plugins": "より多くのプラグインと連携",
   "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0 では、テキストを挿入したり候補を表示したりするプラグインが Butter 内で動作し、編集していないテキストは元のまま正確に保持されます。",
   "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "日付や単語補完など、他のプラグインのオートコンプリート候補を Enter またはクリックで確定できます。",
@@ -560,6 +608,18 @@ export const recentJa = {
 } as const;
 
 export const recentKo = {
+  "Typing, drag and speed fixes": "입력, 드래그, 속도 수정",
+  "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.": "Butter Editor 0.14.1에서는 Enter 키의 동작을 선택할 수 있고, Tab 키로 탭을 입력할 수 있습니다. 드래그, 제목 접기, 긴 노트에서의 속도도 수정했습니다.",
+  "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.": "편집기 설정의 서식 지정에서 Enter 키가 새 문단을 시작할지 줄바꿈을 할지 선택할 수 있습니다.",
+  "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.": "문단에서 Tab 키를 누르면 포커스가 노트 밖으로 이동하지 않고 탭이 입력됩니다. Shift+Tab으로 지울 수 있습니다.",
+  "Typing and moving the cursor are faster in long notes.": "긴 노트에서 입력과 커서 이동이 더 빨라졌습니다.",
+  "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.": "Mermaid, Dataview, Tasks 또는 차트 블록이 있는 노트에서도 블록을 위쪽이나 아래쪽 가장자리로 드래그하면 스크롤됩니다.",
+  "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.": "데스크톱에서 제목의 접기 화살표를 다시 클릭할 수 있고, 이미지 크기 조절 모서리가 더 이상 잘리지 않습니다.",
+  "The first block keeps its spacing after you drag a block to or from the top of a note.": "노트 맨 위로 또는 맨 위에서 블록을 드래그한 뒤에도 첫 번째 블록의 간격이 유지됩니다.",
+  "Obsidian's word count stays correct after you view or close a note in Butter.": "Butter 안에서 노트를 보거나 닫은 뒤에도 Obsidian 단어 수가 올바르게 표시됩니다.",
+  "The table picker stays under the toolbar when opened from a toolbar menu.": "툴바 메뉴에서 연 표 선택기가 툴바 아래에 그대로 있습니다.",
+  "Butter menus no longer cover Obsidian tooltips.": "Butter 메뉴가 더 이상 Obsidian 툴팁을 가리지 않습니다.",
+  "A line that holds only spaces or a tab stays visible.": "공백이나 탭만 있는 줄도 계속 표시됩니다.",
   "Works with more of your plugins": "더 많은 플러그인과 함께 작동",
   "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0에서는 텍스트를 삽입하거나 제안을 표시하는 플러그인이 Butter 안에서 작동하며, 편집하지 않은 텍스트는 원래대로 정확히 유지됩니다.",
   "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "날짜나 단어 완성 등 다른 플러그인의 자동 완성 제안을 Enter 또는 클릭으로 적용할 수 있습니다.",
@@ -700,6 +760,18 @@ export const recentKo = {
 } as const;
 
 export const recentPt = {
+  "Typing, drag and speed fixes": "Correções de escrita, arrasto e velocidade",
+  "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.": "O Butter Editor 0.14.1 permite escolher o que a tecla Enter faz, faz com que Tab escreva uma tabulação e corrige o arrasto, o recolher de títulos e a velocidade em notas longas.",
+  "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.": "Escolha se Enter inicia um novo parágrafo ou uma nova linha, em Formatação nas definições do Editor.",
+  "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.": "Tab escreve uma tabulação num parágrafo em vez de tirar o foco da nota. Shift+Tab remove-a.",
+  "Typing and moving the cursor are faster in long notes.": "Escrever e mover o cursor é mais rápido em notas longas.",
+  "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.": "Arrastar um bloco até à margem superior ou inferior desloca as notas que contêm blocos Mermaid, Dataview, Tasks ou de gráficos.",
+  "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.": "As setas de recolher dos títulos voltam a responder ao clique no computador, e o canto de redimensionamento das imagens já não é cortado.",
+  "The first block keeps its spacing after you drag a block to or from the top of a note.": "O primeiro bloco mantém o espaçamento depois de arrastar um bloco para o topo de uma nota ou a partir dele.",
+  "Obsidian's word count stays correct after you view or close a note in Butter.": "A contagem de palavras do Obsidian mantém-se correta depois de ver ou fechar uma nota no Butter.",
+  "The table picker stays under the toolbar when opened from a toolbar menu.": "O seletor de tabelas mantém-se sob a barra de ferramentas quando é aberto a partir de um menu da barra.",
+  "Butter menus no longer cover Obsidian tooltips.": "Os menus do Butter já não tapam as dicas do Obsidian.",
+  "A line that holds only spaces or a tab stays visible.": "Uma linha que contém apenas espaços ou uma tabulação mantém-se visível.",
   "Works with more of your plugins": "Funciona com mais dos seus plug-ins",
   "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "O Butter Editor 0.14.0 permite que os plug-ins que inserem texto ou mostram sugestões funcionem dentro do Butter e mantém exatamente o texto que não editou.",
   "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Aceite sugestões de preenchimento automático de outros plug-ins, como datas ou palavras, com Enter ou com um clique.",
@@ -840,6 +912,18 @@ export const recentPt = {
 } as const;
 
 export const recentPtBR = {
+  "Typing, drag and speed fixes": "Correções de digitação, arrasto e velocidade",
+  "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.": "O Butter Editor 0.14.1 permite escolher o que a tecla Enter faz, faz com que Tab digite uma tabulação e corrige o arrasto, o recolhimento de títulos e a velocidade em notas longas.",
+  "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.": "Escolha se Enter inicia um novo parágrafo ou uma nova linha, em Formatação nas configurações do Editor.",
+  "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.": "Tab digita uma tabulação em um parágrafo em vez de tirar o foco da nota. Shift+Tab a remove.",
+  "Typing and moving the cursor are faster in long notes.": "Digitar e mover o cursor ficou mais rápido em notas longas.",
+  "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.": "Arrastar um bloco até a borda superior ou inferior rola as notas que contêm blocos Mermaid, Dataview, Tasks ou de gráficos.",
+  "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.": "As setas de recolhimento dos títulos voltaram a ser clicáveis no computador, e o canto de redimensionamento das imagens não é mais cortado.",
+  "The first block keeps its spacing after you drag a block to or from the top of a note.": "O primeiro bloco mantém o espaçamento depois que você arrasta um bloco para o topo de uma nota ou a partir dele.",
+  "Obsidian's word count stays correct after you view or close a note in Butter.": "A contagem de palavras do Obsidian continua correta depois de você ver ou fechar uma nota no Butter.",
+  "The table picker stays under the toolbar when opened from a toolbar menu.": "O seletor de tabelas permanece sob a barra de ferramentas quando aberto por um menu da barra.",
+  "Butter menus no longer cover Obsidian tooltips.": "Os menus do Butter não cobrem mais as dicas do Obsidian.",
+  "A line that holds only spaces or a tab stays visible.": "Uma linha que contém apenas espaços ou uma tabulação permanece visível.",
   "Works with more of your plugins": "Funciona com mais dos seus plug-ins",
   "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "O Butter Editor 0.14.0 permite que plug-ins que inserem texto ou mostram sugestões funcionem dentro do Butter e mantém exatamente o texto que você não editou.",
   "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Aceite sugestões de preenchimento automático de outros plug-ins, como datas ou palavras, com Enter ou um clique.",
@@ -980,6 +1064,18 @@ export const recentPtBR = {
 } as const;
 
 export const recentRu = {
+  "Typing, drag and speed fixes": "Исправления ввода, перетаскивания и скорости",
+  "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.": "В Butter Editor 0.14.1 можно выбрать, что делает клавиша Enter, клавиша Tab вводит табуляцию, а перетаскивание, сворачивание заголовков и скорость в длинных заметках исправлены.",
+  "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.": "Выберите, начинает ли Enter новый абзац или новую строку, в разделе «Форматирование» настроек редактора.",
+  "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.": "Tab вводит табуляцию в абзаце, а не переносит фокус за пределы заметки. Shift+Tab её удаляет.",
+  "Typing and moving the cursor are faster in long notes.": "Ввод текста и перемещение курсора в длинных заметках стали быстрее.",
+  "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.": "Перетаскивание блока к верхнему или нижнему краю прокручивает заметки с блоками Mermaid, Dataview, Tasks или диаграмм.",
+  "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.": "Стрелки сворачивания заголовков снова нажимаются на компьютере, а угол изменения размера изображения больше не обрезается.",
+  "The first block keeps its spacing after you drag a block to or from the top of a note.": "Первый блок сохраняет отступ после перетаскивания блока в начало заметки или из него.",
+  "Obsidian's word count stays correct after you view or close a note in Butter.": "Счётчик слов Obsidian остаётся верным после просмотра или закрытия заметки в Butter.",
+  "The table picker stays under the toolbar when opened from a toolbar menu.": "Выбор таблицы остаётся под панелью инструментов, когда открыт из меню панели.",
+  "Butter menus no longer cover Obsidian tooltips.": "Меню Butter больше не перекрывают подсказки Obsidian.",
+  "A line that holds only spaces or a tab stays visible.": "Строка, содержащая только пробелы или табуляцию, остаётся видимой.",
   "Works with more of your plugins": "Работает с большим числом ваших плагинов",
   "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "В Butter Editor 0.14.0 плагины, которые вставляют текст или показывают подсказки, работают внутри Butter, а текст, который вы не редактировали, сохраняется в точности как был.",
   "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "Принимайте подсказки автозаполнения из других плагинов, например даты или слова, клавишей Enter или щелчком.",
@@ -1120,6 +1216,18 @@ export const recentRu = {
 } as const;
 
 export const recentZhCN = {
+  "Typing, drag and speed fixes": "输入、拖动和速度修复",
+  "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.": "Butter Editor 0.14.1 让你可以选择 Enter 键的作用，让 Tab 键输入制表符，并修复了拖动、标题折叠和长笔记中的速度问题。",
+  "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.": "在编辑器设置的“格式”中，选择 Enter 键是开始新段落还是换行。",
+  "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.": "在段落中按 Tab 键会输入制表符，而不是把焦点移出笔记。按 Shift+Tab 可将其删除。",
+  "Typing and moving the cursor are faster in long notes.": "在长笔记中输入和移动光标更快了。",
+  "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.": "将块拖到顶部或底部边缘时，包含 Mermaid、Dataview、Tasks 或图表块的笔记也会滚动。",
+  "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.": "在桌面端可以再次点击标题的折叠箭头，图片的缩放角也不再被裁切。",
+  "The first block keeps its spacing after you drag a block to or from the top of a note.": "将块拖到笔记顶部或从顶部拖走后，第一个块的间距保持不变。",
+  "Obsidian's word count stays correct after you view or close a note in Butter.": "在 Butter 中查看或关闭笔记后，Obsidian 的字数统计仍然正确。",
+  "The table picker stays under the toolbar when opened from a toolbar menu.": "从工具栏菜单打开的表格选择器会停留在工具栏下方。",
+  "Butter menus no longer cover Obsidian tooltips.": "Butter 的菜单不再遮挡 Obsidian 的工具提示。",
+  "A line that holds only spaces or a tab stays visible.": "只包含空格或制表符的行会保持可见。",
   "Works with more of your plugins": "兼容更多插件",
   "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0 让插入文本或显示建议的插件可以在 Butter 中使用，并按原样保留你未编辑的文本。",
   "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "按 Enter 或点击即可接受其他插件的自动补全建议，例如日期或单词补全。",
@@ -1260,6 +1368,18 @@ export const recentZhCN = {
 } as const;
 
 export const recentZhTW = {
+  "Typing, drag and speed fixes": "輸入、拖曳與速度修正",
+  "Butter Editor 0.14.1 lets you choose what Enter does, makes Tab type a tab, and fixes dragging, heading folds, and speed in long notes.": "Butter Editor 0.14.1 讓你可以選擇 Enter 鍵的作用，讓 Tab 鍵輸入定位字元，並修正了拖曳、標題摺疊與長筆記中的速度問題。",
+  "Choose whether Enter starts a new paragraph or a new line, under Formatting in Editor settings.": "在編輯器設定的「格式」中，選擇 Enter 鍵是開始新段落還是換行。",
+  "Tab types a tab in a paragraph instead of moving focus out of the note. Shift+Tab removes it.": "在段落中按 Tab 鍵會輸入定位字元，而不是把焦點移出筆記。按 Shift+Tab 可將其刪除。",
+  "Typing and moving the cursor are faster in long notes.": "在長筆記中輸入和移動游標更快了。",
+  "Dragging a block to the top or bottom edge scrolls notes that contain Mermaid, Dataview, Tasks, or chart blocks.": "將區塊拖曳到頂端或底端邊緣時，包含 Mermaid、Dataview、Tasks 或圖表區塊的筆記也會捲動。",
+  "Heading fold arrows can be clicked on desktop again, and image resize corners are no longer clipped.": "在桌面版可以再次點按標題的摺疊箭頭，圖片的縮放角也不再被裁切。",
+  "The first block keeps its spacing after you drag a block to or from the top of a note.": "將區塊拖曳到筆記頂端或從頂端拖走後，第一個區塊的間距維持不變。",
+  "Obsidian's word count stays correct after you view or close a note in Butter.": "在 Butter 中檢視或關閉筆記後，Obsidian 的字數統計仍然正確。",
+  "The table picker stays under the toolbar when opened from a toolbar menu.": "從工具列選單開啟的表格選擇器會停留在工具列下方。",
+  "Butter menus no longer cover Obsidian tooltips.": "Butter 的選單不再遮住 Obsidian 的工具提示。",
+  "A line that holds only spaces or a tab stays visible.": "只包含空格或定位字元的行會保持可見。",
   "Works with more of your plugins": "相容更多外掛程式",
   "Butter Editor 0.14.0 lets plugins that insert text or show suggestions work inside Butter, and keeps text you didn't edit exactly as written.": "Butter Editor 0.14.0 讓插入文字或顯示建議的外掛程式可以在 Butter 中運作，並依原樣保留你未編輯的文字。",
   "Accept autocomplete suggestions from other plugins, such as dates and word completion, with Enter or a click.": "按 Enter 或點按即可接受其他外掛程式的自動完成建議，例如日期或單字補全。",

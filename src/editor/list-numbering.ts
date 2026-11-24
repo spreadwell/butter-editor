@@ -7,18 +7,20 @@
  * `kind="ordered"` items at the same depth, anchored at the run's
  * first item's `start` attr (default 1).
  *
- * This plugin walks the doc on every document change, computes ordered markers,
+ * This plugin walks the doc on every structural change, computes ordered markers,
  * and restores the list/listitem accessibility relationship that the flat DOM
  * cannot express structurally. Node and widget decorations keep both concerns
  * inside ProseMirror's owned rendering path. The walk is one pass and stable
- * block IDs let ProseMirror retain unaffected DOM.
+ * block IDs let ProseMirror retain unaffected DOM. Edits that stay inside one
+ * textblock cannot change a marker, a depth or a run, so they only remap.
  *
  * Same-depth runs are detected by walking back through siblings,
  * skipping deeper-nested items (which are CHILDREN of an earlier
  * shallower item visually, so they don't break the parent's run).
  * This matches how the markdown serializer counts numbers.
  */
-import { Plugin as PMPlugin, PluginKey, type EditorState } from "prosemirror-state";
+import { Plugin as PMPlugin, PluginKey, type EditorState, type Transaction } from "prosemirror-state";
+import { AddMarkStep, AttrStep, RemoveMarkStep, ReplaceStep } from "prosemirror-transform";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
 import { flatListLayoutFor } from "../core/list-layout";
@@ -153,6 +155,25 @@ function buildDecorations(
   return DecorationSet.create(state.doc, decos);
 }
 
+/**
+ * True when no step can change which blocks exist, their order, or a
+ * list_item attribute. Markers, levels and runs depend on nothing else.
+ */
+function keepsListStructure(tr: Transaction): boolean {
+  return tr.steps.every((step, index) => {
+    if (step instanceof AddMarkStep || step instanceof RemoveMarkStep) return true;
+    const before = tr.docs[index];
+    if (step instanceof AttrStep) return before.nodeAt(step.pos)?.type.name !== "list_item";
+    if (!(step instanceof ReplaceStep) || step.slice.openStart || step.slice.openEnd) return false;
+    const $from = before.resolve(step.from);
+    if (!$from.parent.isTextblock || step.to > $from.end()) return false;
+    for (let child = 0; child < step.slice.content.childCount; child++) {
+      if (!step.slice.content.child(child).isInline) return false;
+    }
+    return true;
+  });
+}
+
 export function listNumberingPlugin(): PMPlugin {
   const accessibilityScope = `butter-list-${++nextAccessibilityScope}`;
   return new PMPlugin<DecorationSet>({
@@ -163,11 +184,10 @@ export function listNumberingPlugin(): PMPlugin {
       },
       apply(tr, old, _oldState, newState) {
         if (!tr.docChanged) return old;
-        // Cheap path: no list_items in the changed ranges → just remap.
-        // For now, rebuild on every doc change. Numbering is a global
-        // computation anyway (an edit elsewhere can shift numbers in
-        // an ordered run via insertion/deletion of items), and the
-        // walk is O(N).
+        // Numbering is a global computation (an edit elsewhere can shift
+        // numbers in an ordered run), so a structural change rebuilds.
+        // Typing only moves positions.
+        if (keepsListStructure(tr)) return old.map(tr.mapping, tr.doc);
         return buildDecorations(newState, accessibilityScope);
       },
     },

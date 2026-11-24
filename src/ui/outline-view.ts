@@ -25,6 +25,7 @@ import {
   Editor,
 } from "obsidian";
 import { scrollHost, scrollHostTop } from "../util/dom-utils";
+import { MOTION_BEAT_MS } from "./motion-tokens";
 import type { Node as PMNode } from "prosemirror-model";
 import { Selection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
@@ -594,7 +595,7 @@ export class ButterOutlineView extends ItemView {
     );
 
     if (activeIdx >= 0) {
-      const STAGGER_MS = 25;
+      const STAGGER_MS = MOTION_BEAT_MS;
       const STAGGER_CAP = 300;
 
       let curIdx = activeIdx;

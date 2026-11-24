@@ -5,6 +5,7 @@ import { resolveDragAutoscrollDelta } from "../drag-handles/constants";
 import { beginObserverSuppression } from "./dom-observer";
 import { multiBlockKey } from "../multi-block-select";
 import { scrollHost } from "../../util/dom-utils";
+import { MOTION_EMPHASIS_MS, MOTION_INSTANT_MS } from "../../ui/motion-tokens";
 import {
   buildDragSceneMoveTransaction,
   committedGeometryIsExact,
@@ -22,7 +23,10 @@ import {
   unionVisibleSceneRects,
 } from "./geometry";
 import { ChromiumDragLayoutOracle } from "./layout-oracle";
-import { dragSceneClassMutationIsTransient } from "./invalidation";
+import {
+  dragSceneClassMutationIsTransient,
+  dragSceneMutationTargetIsOutOfFlowChrome,
+} from "./invalidation";
 import {
   createBrowserSceneClock,
   createBrowserSceneFrameScheduler,
@@ -139,7 +143,7 @@ interface CommitConvergenceSample {
 const COMMIT_STABILITY_CONFIRMATIONS = 2;
 const COMMIT_MEDIA_READY_TIMEOUT_MS = 5_000;
 const COMMIT_MEDIA_GEOMETRY_GRACE_MS = 180;
-const FINAL_REVEAL_DURATION_MS = 90;
+const FINAL_REVEAL_DURATION_MS = MOTION_INSTANT_MS;
 
 const MOTION_CONFIGS: Record<DragSceneMotionPreset, Omit<SceneMotionConfig, "positionTolerance">> = {
   // Preserve the established pre-v2 live-reflow curves while running them on
@@ -148,25 +152,25 @@ const MOTION_CONFIGS: Record<DragSceneMotionPreset, Omit<SceneMotionConfig, "pos
   springy: {
     omega: 20,
     velocityTolerance: 1,
-    sceneDurationMs: 240,
+    sceneDurationMs: MOTION_EMPHASIS_MS,
     sceneEasing: [0.2, 1.2, 0.4, 1],
   },
   snappy: {
     omega: 28,
     velocityTolerance: 1,
-    sceneDurationMs: 240,
+    sceneDurationMs: MOTION_EMPHASIS_MS,
     sceneEasing: [0.2, 0.8, 0.2, 1],
   },
   smooth: {
     omega: 17,
     velocityTolerance: 0.75,
-    sceneDurationMs: 240,
+    sceneDurationMs: MOTION_EMPHASIS_MS,
     sceneEasing: [0.4, 0, 0.2, 1],
   },
 };
 
 const CONTAINER_HANDOFF_MOTION = {
-  sceneDurationMs: 240,
+  sceneDurationMs: MOTION_EMPHASIS_MS,
   sceneEasing: [0.2, 0.7, 0.2, 1] as const,
   // A lane change can preserve every numerical block endpoint while changing
   // semantic ownership and filler geometry. Rebase any in-flight Springy
@@ -525,9 +529,11 @@ export class DragSceneRuntime {
     const editorRoot = this.view.dom;
     const HTMLElementCtor = this.ownerWindow.HTMLElement;
     const isTransientHostMutation = (mutation: MutationRecord): boolean => {
-      if (mutation.type !== "attributes" || mutation.attributeName !== "class" ||
-          mutation.oldValue == null ||
+      if (mutation.type !== "attributes" ||
           !mutation.target.instanceOf(HTMLElementCtor)) return false;
+      if (mutation.attributeName !== "src" &&
+          dragSceneMutationTargetIsOutOfFlowChrome(mutation.target)) return true;
+      if (mutation.attributeName !== "class" || mutation.oldValue == null) return false;
       return dragSceneClassMutationIsTransient(
         mutation.oldValue,
         Array.from(mutation.target.classList),

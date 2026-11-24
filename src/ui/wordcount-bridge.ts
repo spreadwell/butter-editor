@@ -4,12 +4,12 @@
  * user types — instead of only refreshing when Butter saves to disk.
  *
  * Strategy:
- *   1. Try `wcInstance.updateLineCount(text)` first — if Obsidian
- *      exposes a callable update method on the plugin instance,
- *      that's the cleanest path (no DOM hunting).
- *   2. Fall back to finding the word-count status bar element by its
- *      content pattern (`123 words 456 characters`) and writing
- *      directly to it.
+ *   1. Hand the text to the built-in with `wcInstance.updateCount(text)`.
+ *      It counts off the main thread and shows the result its own way
+ *      (the user's language, the mobile file info), and its status bar
+ *      item stays its own, so it goes on working for every other note.
+ *   2. If this Obsidian has no such method, fall back to finding the
+ *      word-count status bar item and writing to it directly.
  *
  * Either way, polling honors selection: if the user has a range
  * selected, the count switches to the selection — same behavior as
@@ -23,8 +23,12 @@ import type { App, Plugin } from "obsidian";
 import type { EditorView } from "prosemirror-view";
 
 interface WordCountInstance {
-  updateLineCount?: (text?: string) => void;
+  updateCount?: (text: string) => void;
+  /** Length of the text the built-in counted last. */
+  charCount?: number;
 }
+
+type CountingInstance = WordCountInstance & { updateCount: (text: string) => void };
 
 interface InternalPluginEntry {
   enabled?: boolean;
@@ -40,15 +44,24 @@ function getWordCountInstance(app: App): WordCountInstance | null {
   return entry.instance ?? null;
 }
 
+function canCount(inst: WordCountInstance | null): inst is CountingInstance {
+  return typeof inst?.updateCount === "function";
+}
+
 const WORDCOUNT_PATTERN = /\d[\d,]*\s+words?\b|\d[\d,]*\s+characters?\b/i;
 
 let cachedStatusEl: HTMLElement | null = null;
 function findWordCountStatusEl(): HTMLElement | null {
   if (cachedStatusEl && cachedStatusEl.isConnected) return cachedStatusEl;
+  const statusBarEl = activeDocument.querySelector(".status-bar");
+  const own = statusBarEl?.querySelector<HTMLElement>(".status-bar-item.plugin-word-count");
+  if (own) {
+    cachedStatusEl = own;
+    return cachedStatusEl;
+  }
   // Walk every status bar item — Butter is itself a status-bar
   // contributor so we can't assume a single status bar; pick the one
   // whose text matches the built-in's `N words M characters` shape.
-  const statusBarEl = activeDocument.querySelector(".status-bar");
   const items = (statusBarEl ?? activeDocument).querySelectorAll<HTMLElement>(
     ".status-bar-item",
   );
@@ -68,9 +81,32 @@ function countText(text: string): { words: number; chars: number } {
   return { words, chars };
 }
 
-function format(words: number, chars: number): string {
+function format(words: number, chars: number): { words: string; chars: string } {
   const fmt = (n: number) => n.toLocaleString();
-  return `${fmt(words)} words ${fmt(chars)} characters`;
+  return { words: `${fmt(words)} words`, chars: `${fmt(chars)} characters` };
+}
+
+function showInStatusBar(el: HTMLElement, label: { words: string; chars: string }) {
+  // The built-in keeps a span for each number. Writing into them, not
+  // over them, leaves it able to show its own count for other notes.
+  const segments = el.querySelectorAll<HTMLElement>(".status-bar-item-segment");
+  if (segments.length === 2) {
+    if (segments[0].textContent !== label.words) segments[0].setText(label.words);
+    if (segments[1].textContent !== label.chars) segments[1].setText(label.chars);
+    return;
+  }
+  const text = `${label.words} ${label.chars}`;
+  if (el.textContent !== text) el.setText(text);
+}
+
+/** What the status bar was last given, and for which text. */
+interface ShownCount {
+  doc: unknown;
+  start: number;
+  end: number;
+  /** The built-in's `charCount` once it had been handed the text. */
+  handedOver?: number;
+  label?: { words: string; chars: string };
 }
 
 export function installWordCountBridge(
@@ -82,10 +118,18 @@ export function installWordCountBridge(
   let lastTo = -1;
   let stableSince = 0;
   let lastPushedAt = 0;
+  // While what was shown still holds, a tick has nothing to do. Reading a
+  // long note's text on every tick was a constant drain with the note
+  // merely open: 3ms four times a second at 75,000 characters.
+  let shown: ShownCount | null = null;
+  let handOverFailed = false;
 
   const tick = () => {
     const pm = getActivePM();
-    if (!pm) return;
+    if (!pm) {
+      shown = null;
+      return;
+    }
 
     const doc = pm.state.doc;
     const { from, to } = pm.state.selection;
@@ -107,31 +151,51 @@ export function installWordCountBridge(
       return;
     }
 
-    const selecting = from !== to;
-    const text = selecting
-      ? doc.textBetween(from, to, "\n", "\n")
-      : doc.textBetween(0, doc.content.size, "\n", "\n");
-    const { words, chars } = countText(text);
-
-    // Try the plugin instance method first — if Obsidian exposes one,
-    // it's the cleanest path (the plugin will reformat as it likes).
     const inst = getWordCountInstance(plugin.app);
-    if (inst && typeof inst.updateLineCount === "function") {
+    const counter = !handOverFailed && canCount(inst) ? inst : null;
+    const el = counter ? null : findWordCountStatusEl();
+    if (!counter && !el) {
+      // Word Count is off, or has no status bar item to write to.
+      shown = null;
+      return;
+    }
+
+    // A caret has no text of its own, so moving it leaves the count alone.
+    const selecting = from !== to;
+    const start = selecting ? from : 0;
+    const end = selecting ? to : doc.content.size;
+    const current = shown && shown.doc === doc && shown.start === start && shown.end === end
+      ? shown
+      : null;
+
+    if (counter) {
+      // The built-in counts the file on disk whenever one is opened, which
+      // replaces what it was handed. Its `charCount` tells the two apart.
+      if (current && counter.charCount === current.handedOver) return;
+      const text = doc.textBetween(start, end, "\n", "\n");
       try {
-        inst.updateLineCount(text);
+        counter.updateCount(text);
+        shown = { doc, start, end, handedOver: counter.charCount };
         lastPushedAt = now;
-        return;
       } catch {
-        // Fall through to DOM update.
+        // The next tick writes to the status bar item instead.
+        handOverFailed = true;
+        shown = null;
       }
+      return;
     }
 
     // DOM fallback: write directly to the built-in's status bar item.
     // Brief flicker possible if the built-in races us with a save-
     // driven update, but typing is the dominant flow.
-    const el = findWordCountStatusEl();
     if (!el) return;
-    el.setText(format(words, chars));
+    let label = current?.label;
+    if (!label) {
+      const { words, chars } = countText(doc.textBetween(start, end, "\n", "\n"));
+      label = format(words, chars);
+      shown = { doc, start, end, label };
+    }
+    showInStatusBar(el, label);
     lastPushedAt = now;
   };
 

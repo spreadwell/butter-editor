@@ -4,6 +4,7 @@ import { MAIN_TOOLBAR_BUTTON_DEFS, openMobilePresetColorSheet, createPresetColor
 import { TABLE_TOOLBAR_BUTTON_DEFS } from "../../editor/table-toolbar";
 import { defaultTableLayout, mainLayoutDefault, mainLayoutFull, mainLayoutSimple, mobileLayoutDefault, mobileLayoutSimple, mobileTableLayoutDefault, cloneLayout, countButtonPlacements, groupActionDefinitions, layoutItemKey, locate, removeItem, newId } from "../toolbar-layout";
 import { commandActionIcon, commandActionLabel } from "../command-actions";
+import { MOTION_STANDARD_MS } from "../motion-tokens";
 import type { ToolbarLayoutItem } from "../../main";
 import { tx, txKnown, tv } from "../../i18n";
 import {
@@ -733,7 +734,7 @@ export function renderLayoutEditor(this: ButterSettingTab, root: HTMLElement, ti
         removeToastTimer = window.setTimeout(() => {
           toast?.remove();
           removeToastTimer = null;
-        }, 220);
+        }, MOTION_STANDARD_MS + 60);
       }, 1600);
     };
 

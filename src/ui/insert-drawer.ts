@@ -45,6 +45,7 @@ import {
   type BlockSubItem,
 } from "../editor/block-menu-spec";
 import { suppressNativeMobileToolbar } from "./mobile-native-toolbar";
+import { MOTION_EMPHASIS_MS } from "./motion-tokens";
 import { tx, txKnown, tv } from "../i18n";
 import { captureDeferredUiOwnership } from "../editor/deferred-ui-ownership";
 
@@ -56,7 +57,7 @@ const KEYBOARD_ALIGNING_CLASS = "butter-mobile-drawer-keyboard-aligning";
 const HEIGHT_VAR = "--butter-mobile-drawer-height";
 const RETURN_KEYBOARD_HEIGHT_VAR = "--butter-mobile-return-keyboard-height";
 const FALLBACK_HEIGHT = 320; // px - typical phone keyboard
-export const DRAWER_TRANSITION_MS = 220;
+export const DRAWER_TRANSITION_MS = MOTION_EMPHASIS_MS;
 const RETURNING_KEYBOARD_MS = 900;
 
 export type DrawerMode = "insert" | "turn-into" | "block-actions";
@@ -806,7 +807,7 @@ export function closeMobileInsertDrawer(options: { returningKeyboard?: boolean; 
  *  `transform`; on release we either animate it the rest of the way
  *  out (then let `onDismiss` tear it down - its removal timeout
  *  matches the slide) or drop the inline overrides so the drawer's
- *  own `.is-open` 220ms transition snaps it back open.
+ *  own `.is-open` transition snaps it back open.
  *
  *  `onDismiss` is the caller's close routine - for the color drawer
  *  that's Cancel semantics (restore the pre-open color + refocus).
@@ -864,7 +865,7 @@ export function installDrawerDismissGestures(
     dragging = false;
     pointerId = null;
     const dy = Math.max(0, e.clientY - startY);
-    // Drop the drag's own styles so the drawer's 220ms transition runs
+    // Drop the drag's own styles so the drawer's transition runs
     // from where the finger let go.
     drawer.removeClass("butter-drawer-dragging");
     drawer.style.removeProperty("transform");

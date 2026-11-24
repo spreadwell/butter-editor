@@ -65,6 +65,8 @@ import { normalizeDocForSave } from "../core/doc-normalize";
 import { checkboxPlugin } from "../editor/checkbox-plugin";
 import { commentOnlyParagraphPlugin } from "../editor/comment-only-paragraph";
 import { listNumberingPlugin } from "../editor/list-numbering";
+import { firstVisibleBlockPlugin } from "../editor/first-visible-block";
+import { stageBlockEntrance, type BlockEntrance } from "../editor/entrance-animation";
 import { headingFoldPlugin } from "../editor/heading-folding";
 import { selectionOverlayPlugin } from "../editor/selection-overlay";
 import { multiBlockSelectPlugin } from "../editor/multi-block-select";
@@ -79,6 +81,7 @@ import { codeEditContainmentPlugin } from "../editor/code-edit-containment";
 import { imageView } from "../editor/image-view";
 import { PMEditorShim } from "../util/editor-shim";
 import { toggleTaskWithAPI } from "../util/task-toggle";
+import { announceClosedView } from "../util/closed-view-announcement";
 import { editorSourceText, editorSourceDocumentsEqual, type EditorSourceHost, type EditorSourceSnapshot } from "../core/editor-source-edit";
 import {
   type SaveState,
@@ -149,6 +152,8 @@ import {
 } from "../editor/nodeviews";
 import { parsePropertyTextWikilinks } from "../ui/property-wikilinks";
 import { dismissMenuOnScroll } from "../ui/menu-scroll-dismiss";
+import { MOTION_STANDARD_MS } from "../ui/motion-tokens";
+import { attachMenuSurfaceMotion } from "../ui/surface-motion";
 import { linkEditorKeyboardPlugin } from "../ui/link-editor";
 import { applyPropertyKeySuggest } from "../ui/property-key-suggest";
 import { footnotePresentationPlugin } from "../editor/footnote-presentation";
@@ -277,6 +282,8 @@ export class ButterEditorView extends TextFileView {
   private originalDoc: PMNode | null = null;
   private preserveSource = false;
   private suppressChange = false;
+  /** Entrance of the note being opened, until its reveal has started. */
+  private blockEntrance: BlockEntrance | null = null;
   private destroyed = false;
   /** Mobile keyboard-down lock. When false, PM's `editable` prop
    *  returns false so the contenteditable is non-editable - Android's
@@ -822,7 +829,7 @@ export class ButterEditorView extends TextFileView {
         }
         breadcrumb.classList.remove("butter-header-breadcrumb-animated");
         breadcrumb.style.removeProperty("--butter-header-breadcrumb-width");
-      }, 160);
+      }, MOTION_STANDARD_MS);
     };
 
     const finishEditing = (): void => {
@@ -1756,6 +1763,7 @@ export class ButterEditorView extends TextFileView {
         const clipboardTarget = capturePropertyClipboardTarget(e, prop);
         e.preventDefault();
         const menu = new Menu();
+        if (!Platform.isMobile) attachMenuSurfaceMotion(menu, "menu");
         const mgr = this.app.metadataTypeManager;
         const widgets = mgr?.registeredTypeWidgets;
         menu.addSections?.([
@@ -1831,6 +1839,14 @@ export class ButterEditorView extends TextFileView {
         menu.setParentElement?.(prop);
         menu.showAtMouseEvent(e);
         dismissMenuOnScroll(menu, prop.ownerDocument);
+        // Obsidian builds the "Property type" submenu while it shows the menu.
+        const typeMenu = menu.items
+          ?.find((item): item is MenuItem => "submenu" in item && !!item.submenu)
+          ?.submenu;
+        if (typeMenu && !Platform.isMobile) {
+          typeMenu.setUseNativeMenu(false);
+          attachMenuSurfaceMotion(typeMenu, "submenu");
+        }
       };
       prop.addEventListener("contextmenu", showPropertyMenu);
 
@@ -2455,6 +2471,7 @@ export class ButterEditorView extends TextFileView {
       ] ?? null) as ButterEditorPlugin | null;
       if (!plugin) return;
       const menu = new Menu();
+      if (!Platform.isMobile) attachMenuSurfaceMotion(menu, "menu");
       // Mobile toolbar is body-attached above the keyboard - Position
       // and Style settings don't apply there, so just expose Settings.
       if (!Platform.isMobile) {
@@ -2477,6 +2494,8 @@ export class ButterEditorView extends TextFileView {
           item.setIcon("move-vertical");
           item.setDisabled(plugin.settings.toolbarStyle === "integrated");
           const sub = item.setSubmenu();
+          sub.setUseNativeMenu(false);
+          attachMenuSurfaceMotion(sub, "submenu");
           sub.addItem((s) => {
             s.setTitle(tx("Top"));
             s.setIcon("arrow-up-to-line");
@@ -2494,6 +2513,8 @@ export class ButterEditorView extends TextFileView {
           item.setTitle(tx("Style"));
           item.setIcon("layers");
           const sub = item.setSubmenu();
+          sub.setUseNativeMenu(false);
+          attachMenuSurfaceMotion(sub, "submenu");
           sub.addItem((s) => {
             s.setTitle(tx("Attached"));
             s.setIcon("rectangle-horizontal");
@@ -2620,6 +2641,7 @@ export class ButterEditorView extends TextFileView {
       }),
       buildKeymap(schema, {
         markdownShortcuts: () => this.settings.markdownShortcuts,
+        enterInsertsLineBreak: () => this.settings.enterKeyInParagraph === "lineBreak",
       }),
       linkEditorKeyboardPlugin(this.app, getSourcePath),
       internalClipboardPlugin((candidate) => this.preflightCurrent(candidate)?.ok === true, () => {
@@ -2659,6 +2681,7 @@ export class ButterEditorView extends TextFileView {
       commentOnlyParagraphPlugin(),
       checkboxPlugin((_view, position) => { this.toggleTaskCheckbox(position); }),
       listNumberingPlugin(),
+      firstVisibleBlockPlugin(),
       footnotePresentationPlugin((content, container) => {
         const component = new Component();
         component.load();
@@ -2983,6 +3006,9 @@ export class ButterEditorView extends TextFileView {
       this.pmView.destroy();
       this.pmView = null;
     }
+    // Closing into an empty tab, or deleting the open note, keeps the tab.
+    // Without this the status bar and sidebar go on showing the closed note.
+    announceClosedView(this.app?.workspace, this, ButterEditorView);
   }
 
   private canonicalSaveOptions() {
@@ -4304,7 +4330,7 @@ export class ButterEditorView extends TextFileView {
     this.captureSourceState(body, newDoc);
 
     // Pre-stage the entrance animation BEFORE the PM dispatch so
-    // the first paint already has the first 15 children at the
+    // the first paint already has the inline title at the
     // animation's `from` visuals (opacity:0 + 8px translate). Without
     // this, content paints at full opacity for ~2 frames before the
     // double-rAF below adds `.butter-just-loaded` and snaps it to
@@ -4314,6 +4340,12 @@ export class ButterEditorView extends TextFileView {
     // place rather than opening the note again.
     const animsOff = this.plugin.settings.disableAnimations;
     const animEl = animsOff || !clear ? null : this.contentEl;
+    if (clear) {
+      // Opening another note before the reveal started must not leave the
+      // replaced blocks' entrance waiting on a frame that plays the new one.
+      this.blockEntrance?.cancel();
+      this.blockEntrance = null;
+    }
     if (animEl) {
       animEl.classList.remove("butter-just-loaded");
       animEl.classList.add("butter-anim-prepped");
@@ -4366,15 +4398,21 @@ export class ButterEditorView extends TextFileView {
       this.suppressChange = false;
     }
 
+    // The blocks exist now. Hold the leading ones at the entrance's first
+    // frame within this task, so they never paint at full opacity first.
+    const entrance = animEl ? stageBlockEntrance(this.pmView.dom) : null;
+    this.blockEntrance = entrance;
+
     // New property controls must capture the new source generation. A focused
     // old control may defer rebuilding; its old generation then refuses writes.
     this.renderProperties();
 
     // Run the entrance animation after PM has dispatched. The prep
-    // class set above is holding the first 15 children at opacity:0
-    // through this rAF window; on the second frame we swap to the
-    // animation class, which shares the same `from` visuals so the
-    // transition is seamless. Double-rAF rather than single because
+    // class set above is holding the inline title at opacity:0, and the
+    // staged entrance the first 15 blocks, through this rAF window; on
+    // the second frame we swap to the animation class, which shares the
+    // same `from` visuals so the transition is seamless, and release the
+    // blocks with it. Double-rAF rather than single because
     // class removal needs a paint cycle before the re-add to count
     // as a fresh animation start (a single-rAF swap collapses to a
     // no-op in the browser's animation diffing).
@@ -4383,6 +4421,8 @@ export class ButterEditorView extends TextFileView {
         window.requestAnimationFrame(() => {
           animEl.classList.remove("butter-anim-prepped");
           animEl.classList.add("butter-just-loaded");
+          entrance?.play();
+          if (this.blockEntrance === entrance) this.blockEntrance = null;
           window.setTimeout(() => animEl.classList.remove("butter-just-loaded"), 1100);
         });
       });

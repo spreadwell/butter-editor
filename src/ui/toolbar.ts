@@ -3279,6 +3279,8 @@ export function createToolbar(
   let activePopover: HTMLElement | null = null;
   let activePopoverAnchor: HTMLElement | null = null;
   let popoverCleanup: (() => void) | null = null;
+  // The toolbar button each popover hangs from.
+  const popoverAnchors = new WeakMap<HTMLElement, HTMLElement>();
 
   const closePopover = () => {
     const closingPopover = activePopover;
@@ -3303,9 +3305,14 @@ export function createToolbar(
 
   const setPopover = (
     popup: HTMLElement,
-    anchor: HTMLElement,
+    requestedAnchor: HTMLElement,
     options: { closeOnLeave?: boolean } = {},
   ) => {
+    // A button inside a dropdown is removed with it as its own popover opens,
+    // so that popover hangs from the toolbar button that opened the dropdown.
+    const dropdown = requestedAnchor.closest<HTMLElement>(".butter-toolbar-submenu-popup");
+    const anchor = (dropdown && popoverAnchors.get(dropdown)) ?? requestedAnchor;
+    popoverAnchors.set(popup, anchor);
     const shouldPlace = !popup.style.position && !popup.classList.contains("butter-pos-fixed")
       && !popup.classList.contains("butter-pos-fixed-popover")
       && !popup.classList.contains("butter-mobile-popup-placed");

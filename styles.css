@@ -1,3 +1,50 @@
+/* ── Butter shared motion and layer scale ──
+   Every transition, animation and z-index in this file draws from this
+   block, so the editor moves and stacks the same way everywhere. Declared
+   on `body` because menus, popovers and drag ghosts attach there, outside
+   the view. `src/ui/motion-tokens.ts` mirrors the motion values for
+   script-driven animation and `test-motion-layer-contract.mjs` holds the
+   two together.
+
+   Durations: instant for press and hover feedback and for anything
+   leaving; quick for state changes and menus; standard for surfaces that
+   slide, fold or resize; emphasis for layout moves (drag, drawers, a note
+   arriving). Delays and staggers are whole beats.
+
+   Easings: out for anything arriving or settling, in for anything
+   leaving, standard for a state change in place.
+
+   Kept apart on purpose: the ambient loops (spinner, carets, the license
+   skeleton pulse), the footnote flash and the input shake, which are not
+   transitions between two states, and the drag-feel curves, which are a
+   user setting. */
+body {
+  --butter-motion-instant: 80ms;
+  --butter-motion-quick: 120ms;
+  --butter-motion-standard: 160ms;
+  --butter-motion-emphasis: 240ms;
+  --butter-motion-beat: 30ms;
+  --butter-ease-out: cubic-bezier(0.2, 0.85, 0.3, 1);
+  --butter-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --butter-ease-standard: ease;
+
+  /* Layers inside a view, where each leaf isolates its own stacking:
+     aids over the note (hints, table handles, drop lines), then bars
+     (header, toolbars, block handles), then chips that float over bars.
+     0-4 stay literal for ordering inside one component. */
+  --butter-layer-aid: 5;
+  --butter-layer-bar: 10;
+  --butter-layer-float: 20;
+  /* Editor chrome attached to the window: selection frames and mobile
+     bars, then mobile sheets. */
+  --butter-layer-frame: 50;
+  --butter-layer-sheet: 70;
+  /* Everything above that uses Obsidian's own scale: `--layer-popover`
+     for suggestion surfaces, `--layer-menu` for menus and toolbar
+     dropdowns, `--layer-dragged-item` for drag ghosts and drop
+     indicators. */
+}
+
 /* ── Butter locked-file view ──
    Replaces a leaf whose file failed to open with a permission error.
    Uses Obsidian's native `.empty-state` + `.empty-state-action`
@@ -39,49 +86,33 @@
 
 /* ── Butter Editor - Live Preview–matching styles ── */
 
-/* Subtle entrance animation - fade + small slide-up - for the first
-   ~15 top-level blocks when a note loads in Butter. The class
-   `.butter-just-loaded` is toggled on `.butter-editor-view` by the
-   view's `setViewData` (and removed ~1.1s later). GPU-only properties
-   (`opacity` + `transform`), so cost is negligible even with many
-   blocks. Respects `prefers-reduced-motion`. */
+/* Subtle entrance animation - fade + small slide-up - when a note loads in
+   Butter. The view's `setViewData` toggles `.butter-anim-prepped` and then
+   `.butter-just-loaded` on `.butter-editor-view` (removed ~1.1s later); these
+   rules animate the inline title. The first 15 top-level blocks get the same
+   keyframes, staggered a beat apart, from `src/editor/entrance-animation.ts`.
+
+   The blocks are deliberately not styled here. A stagger needs one
+   `:nth-child()` rule per block, and once any positional selector has been
+   evaluated against the children of `.ProseMirror`, Chromium restyles every
+   block of the note on each block insertion or removal for as long as the
+   editor lives. Respects `prefers-reduced-motion`. */
 @media (prefers-reduced-motion: no-preference) {
   @keyframes butter-block-in {
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
   }
   /* Pre-animation hidden state. Applied synchronously by setViewData
-     BEFORE the PM dispatch, so the first paint already has the
-     first 15 children at the animation's `from` visuals. Swapping
-     to `.butter-just-loaded` then starts the staggered fade-in with
-     no visual seam - both classes share the same initial state, so
-     there's no flash of full-opacity content in the rAF gap between
-     PM dispatch and animation start. */
-  .butter-editor-view.butter-anim-prepped > .inline-title,
-  .butter-editor-view.butter-anim-prepped .ProseMirror > :nth-child(-n+15 of :not(.butter-list-a11y-owner)) {
+     BEFORE the PM dispatch, so the first paint already has the title at
+     the animation's `from` visuals. Swapping to `.butter-just-loaded`
+     then starts the fade-in with no visual seam. */
+  .butter-editor-view.butter-anim-prepped > .inline-title {
     opacity: 0;
     transform: translateY(8px);
   }
-  .butter-editor-view.butter-just-loaded > .inline-title,
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(-n+15 of :not(.butter-list-a11y-owner)) {
-    animation: butter-block-in 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  .butter-editor-view.butter-just-loaded > .inline-title {
+    animation: butter-block-in var(--butter-motion-emphasis) var(--butter-ease-out) both;
   }
-  .butter-editor-view.butter-just-loaded > .inline-title              { animation-delay:   0ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(1 of :not(.butter-list-a11y-owner))  { animation-delay:  30ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(2 of :not(.butter-list-a11y-owner))  { animation-delay:  60ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(3 of :not(.butter-list-a11y-owner))  { animation-delay:  90ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(4 of :not(.butter-list-a11y-owner))  { animation-delay: 120ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(5 of :not(.butter-list-a11y-owner))  { animation-delay: 150ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(6 of :not(.butter-list-a11y-owner))  { animation-delay: 180ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(7 of :not(.butter-list-a11y-owner))  { animation-delay: 210ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(8 of :not(.butter-list-a11y-owner))  { animation-delay: 240ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(9 of :not(.butter-list-a11y-owner))  { animation-delay: 270ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(10 of :not(.butter-list-a11y-owner)) { animation-delay: 300ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(11 of :not(.butter-list-a11y-owner)) { animation-delay: 330ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(12 of :not(.butter-list-a11y-owner)) { animation-delay: 360ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(13 of :not(.butter-list-a11y-owner)) { animation-delay: 390ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(14 of :not(.butter-list-a11y-owner)) { animation-delay: 420ms; }
-  .butter-editor-view.butter-just-loaded .ProseMirror > :nth-child(15 of :not(.butter-list-a11y-owner)) { animation-delay: 450ms; }
 }
 
 /* ── Layout ── */
@@ -187,13 +218,17 @@ body.is-android .butter-editor-view::-webkit-scrollbar {
   --li-pad-top: 8px;
 }
 
-/* `of <selector>` counts visible editor blocks rather than hidden source
-   comments. Chromium 111+ supports this Selectors 4 form. These declarations
-   deliberately follow the type rules so the first visible block always wins. */
-.butter-editor-view .ProseMirror > :nth-child(1 of :not(.butter-block-comment):not(.butter-block-comment-view):not(.butter-list-a11y-owner)) {
+/* The first visible block drops its gap. `first-visible-block.ts` marks it
+   with one node decoration, skipping hidden source comments. Do not select it
+   with `:nth-child()`: a positional selector on the children of `.ProseMirror`
+   makes Chromium restyle the whole note on every block insertion or removal.
+   The `:not()` chain only keeps the specificity the positional form had.
+   These declarations deliberately follow the type rules so the first visible
+   block always wins. */
+.butter-editor-view .ProseMirror > .butter-first-block:not(.butter-block-comment):not(.butter-block-comment-view):not(.butter-list-a11y-owner) {
   margin-top: 0 !important;
 }
-.butter-editor-view .ProseMirror > .butter-list-item:nth-child(1 of :not(.butter-block-comment):not(.butter-block-comment-view):not(.butter-list-a11y-owner)) {
+.butter-editor-view .ProseMirror > .butter-list-item.butter-first-block:not(.butter-block-comment):not(.butter-block-comment-view):not(.butter-list-a11y-owner) {
   padding-top: 0;
   --li-pad-top: 0px;
 }
@@ -216,8 +251,12 @@ body.is-android .butter-editor-view::-webkit-scrollbar {
    aren't typically large enough for the perf savings to matter,
    so the trade-off favors reliable tap-to-edit. Blocks containing an
    active code editor need floating controls outside their paint box.
-   The owning editor marks those top-level blocks explicitly. */
-body:not(.is-mobile) .butter-editor-view .ProseMirror > :not(.butter-list-a11y-owner):not(.butter-code-block-shell[data-butter-mode="edit"]):not([data-butter-code-editing="true"]) {
+   The owning editor marks those top-level blocks explicitly.
+
+   The exemptions sit inside :where() so they add no specificity. Headings
+   and images opt out further down with one class each, and that only works
+   while this rule ranks below them. */
+body:not(.is-mobile) .butter-editor-view .ProseMirror > :where(:not(.butter-list-a11y-owner):not(.butter-code-block-shell[data-butter-mode="edit"]):not([data-butter-code-editing="true"])) {
   content-visibility: auto;
   contain-intrinsic-size: auto 24px;
 }
@@ -288,7 +327,7 @@ body:not(.show-inline-title) .butter-editor-view > .inline-title {
    rules apply unmodified. */
 body:not(.is-mobile) .butter-view-root .view-header {
   position: relative;
-  z-index: 10;
+  z-index: var(--butter-layer-bar);
   border-bottom: 0;
   box-shadow: none;
 }
@@ -380,7 +419,7 @@ body:not(.is-mobile) .butter-view-root::after {
     transparent
   );
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--butter-layer-aid);
 }
 
 /* Toolbar pinned to bottom: bottom fade extends to cover the
@@ -458,7 +497,7 @@ body.is-mobile
   .view-header {
   background-color: transparent;
   border-bottom: none;
-  transition: opacity 200ms ease, transform 200ms ease;
+  transition: opacity var(--butter-motion-standard) var(--butter-ease-standard), transform var(--butter-motion-standard) var(--butter-ease-standard);
 }
 
 /* Padding-top on the scroller so at scroll-top, content isn't
@@ -488,7 +527,7 @@ body.is-mobile.butter-scroll-hide
    class is only set when scrolling a Butter view, so it doesn't
    leak into native views. */
 body.is-mobile .mobile-navbar {
-  transition: opacity 200ms ease, transform 200ms ease;
+  transition: opacity var(--butter-motion-standard) var(--butter-ease-standard), transform var(--butter-motion-standard) var(--butter-ease-standard);
 }
 body.is-mobile.butter-scroll-hide .mobile-navbar {
   opacity: 0;
@@ -617,7 +656,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
 .butter-selection-overlay {
   position: fixed;
   pointer-events: none;
-  z-index: 50;
+  z-index: var(--butter-layer-frame);
   border: 1px solid var(--text-faint);
   border-radius: var(--menu-radius, 8px);
   box-sizing: border-box;
@@ -625,9 +664,9 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   /* Begin as the same quiet line shown by the handle-hover preview.
      Selection strengthens that footprint in place. */
   transition:
-    opacity 150ms cubic-bezier(0.2, 0.85, 0.3, 1),
-    border-color 150ms cubic-bezier(0.2, 0.85, 0.3, 1),
-    border-width 150ms cubic-bezier(0.2, 0.85, 0.3, 1);
+    opacity var(--butter-motion-standard) var(--butter-ease-out),
+    border-color var(--butter-motion-standard) var(--butter-ease-out),
+    border-width var(--butter-motion-standard) var(--butter-ease-out);
   will-change: opacity;
 }
 .butter-selection-overlay.is-visible {
@@ -640,7 +679,7 @@ body.is-mobile.butter-scroll-hide .mobile-navbar {
   .butter-selection-overlay,
   .butter-selection-overlay.is-visible {
     /* Keep only the fade cue; border strengthening snaps immediately. */
-    transition: opacity 150ms cubic-bezier(0.2, 0.85, 0.3, 1);
+    transition: opacity var(--butter-motion-standard) var(--butter-ease-out);
     will-change: opacity;
   }
 }
@@ -1409,8 +1448,15 @@ body:not(.is-mobile) .butter-editor-view .ProseMirror > .butter-heading-foldable
   100% { background-color: transparent; }
 }
 
-/* ── Footnote definitions section ── */
-.butter-editor-view .butter-footnote-def-view:first-of-type {
+/* ── Footnote definitions section ──
+   A rule separates each run of definitions from the text above it. The run
+   start is the definition that does not directly follow another one, the same
+   test the root flow uses for its gap. Do not use `:first-of-type` here: it
+   counts every earlier `div` block (list item, callout, code block), so the
+   rule vanished from most notes, and as a positional selector on a child of
+   `.ProseMirror` it made Chromium restyle the whole note on every block
+   insertion or removal. */
+.butter-editor-view .butter-footnote-def-view:not(.butter-footnote-def-view + *) {
   border-top: 2px solid var(--background-modifier-border);
   margin-top: var(--heading-spacing, 1.5em);
   padding-top: var(--p-spacing, 0.75em);
@@ -1535,7 +1581,7 @@ body:not(.is-mobile) .butter-editor-view .ProseMirror > .butter-heading-foldable
 .butter-spawn-hint {
   position: fixed;
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--butter-layer-aid);
   /* Match the drag-handle button's 22×22 footprint so the `+`
      glyph sits in an identical box. -11px margin-top + JS-set top
      centers the parent (and therefore the line at top:50%) on the
@@ -1543,7 +1589,7 @@ body:not(.is-mobile) .butter-editor-view .ProseMirror > .butter-heading-foldable
   height: 22px;
   margin-top: -11px;
   opacity: 0;
-  transition: opacity 100ms ease-out;
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-out);
 }
 /* Plus glyph - fills the 22×22 drag-handle column, exactly the
    same box the handle occupies on a hovered block. Drawn as an
@@ -1591,7 +1637,7 @@ body:not(.is-mobile) .butter-editor-view .ProseMirror > .butter-heading-foldable
 /* Direct image placement. Block destinations deliberately inherit the
    ordinary click-to-spawn line and plus; the image glyph names the payload. */
 .butter-image-block-drop-indicator {
-  z-index: 1002;
+  z-index: var(--layer-dragged-item);
   opacity: 0;
 }
 .butter-image-block-drop-indicator.is-visible {
@@ -1616,7 +1662,7 @@ body:not(.is-mobile) .butter-editor-view .ProseMirror > .butter-heading-foldable
 
 .butter-image-inline-drop-indicator {
   position: fixed;
-  z-index: 1002;
+  z-index: var(--layer-dragged-item);
   width: 2px;
   min-height: 18px;
   border-radius: 2px;
@@ -1649,7 +1695,7 @@ body:not(.is-mobile) .butter-editor-view .ProseMirror > .butter-heading-foldable
 
 .butter-image-move-ghost {
   position: fixed;
-  z-index: 1003;
+  z-index: calc(var(--layer-dragged-item) + 1);
   max-width: 220px;
   max-height: 160px;
   overflow: hidden;
@@ -1703,7 +1749,7 @@ body.butter-is-image-dragging * {
    whose theme geometry extends just outside the paragraph bounds. Opacity
    hides it while the footprint is near zero.
 
-   Durations: in 180ms, out 160ms. The OUT keyframe uses `forwards`
+   Both directions run at the standard duration. The OUT keyframe uses `forwards`
    so the paragraph stays at opacity 0 / height 0 after the keyframe ends;
    the JS timer in click-to-spawn.ts then dispatches the actual delete tr. */
 @keyframes butter-spawn-in {
@@ -1742,11 +1788,11 @@ body:not(.butter-no-anim) .butter-editor-view .ProseMirror > p.butter-spawn-ephe
   /* Important only isolates this one interaction from the higher-specificity
      staggered note-load animation. `body:not(.butter-no-anim)` keeps the
      master animation preference authoritative. */
-  animation: butter-spawn-in 180ms cubic-bezier(0.2, 0.85, 0.3, 1) !important;
+  animation: butter-spawn-in var(--butter-motion-standard) var(--butter-ease-out) !important;
   overflow: visible;
 }
 body:not(.butter-no-anim) .butter-editor-view .ProseMirror > p.butter-spawn-leaving {
-  animation: butter-spawn-out 160ms cubic-bezier(0.4, 0, 1, 1) forwards !important;
+  animation: butter-spawn-out var(--butter-motion-standard) var(--butter-ease-in) forwards !important;
   overflow: visible;
 }
 /* The animation preference removes motion, not endpoint geometry. Keeping the
@@ -1804,7 +1850,7 @@ body:not(.is-mobile) .butter-toolbar {
      header and (later in document order) paints OVER the fade
      instead of letting the gradient bleed through the toolbar. */
   position: relative;
-  z-index: 10;
+  z-index: var(--butter-layer-bar);
   /* Bar spans full pane width (chrome continuation); button group
      stays centered within it as a single horizontal cluster.
      Vertical padding sized so 30px buttons + 1px bottom border land
@@ -1852,7 +1898,7 @@ body:not(.is-mobile) .butter-toolbar-overflow-indicator {
   opacity: 0;
   pointer-events: none;
   user-select: none;
-  transition: opacity 0.15s ease, color 0.15s ease;
+  transition: opacity var(--butter-motion-standard) var(--butter-ease-standard), color var(--butter-motion-standard) var(--butter-ease-standard);
   z-index: 2;
 }
 body:not(.is-mobile) .butter-toolbar-overflow-indicator.is-visible {
@@ -1969,7 +2015,7 @@ body:not(.is-mobile) .view-header.butter-integrated-header
 body:not(.is-mobile) .view-header.butter-integrated-header
   > :is(.view-header-left, .view-actions) {
   position: relative;
-  z-index: 11;
+  z-index: calc(var(--butter-layer-bar) + 1);
   flex: 0 0 auto;
 }
 
@@ -2004,7 +2050,7 @@ body:not(.is-mobile) .view-header.butter-integrated-header
    positioning anchors to it. */
 body:not(.is-mobile) .butter-toolbar-stack {
   position: relative;
-  z-index: 10;
+  z-index: var(--butter-layer-bar);
   width: 100%;
   box-sizing: border-box;
 }
@@ -2099,7 +2145,7 @@ body:not(.is-mobile) .butter-toolbar-separator {
   color: var(--text-muted);
   cursor: pointer;
   user-select: none;
-  transition: background 120ms ease, color 120ms ease, transform 80ms ease;
+  transition: background var(--butter-motion-quick) var(--butter-ease-standard), color var(--butter-motion-quick) var(--butter-ease-standard), transform var(--butter-motion-instant) var(--butter-ease-standard);
   background: transparent;
   border: none;
   padding: 0;
@@ -2218,8 +2264,8 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   border-radius: var(--radius-m, 6px);
   box-shadow: var(--shadow-l, 0 12px 32px rgba(0,0,0,0.12));
   padding: var(--size-4-2, 10px);
-  z-index: 100;
-  animation: butter-dropdown-in 140ms ease;
+  z-index: var(--layer-menu);
+  animation: butter-dropdown-in var(--butter-motion-quick) var(--butter-ease-out);
 }
 .butter-table-picker .grid {
   display: grid;
@@ -2303,11 +2349,11 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   background-image: var(--butter-alpha-pattern);
   color: var(--text-muted);
   transition:
-    background 120ms ease,
-    color 120ms ease,
-    border-color 90ms ease,
-    box-shadow 90ms ease,
-    transform 90ms ease;
+    background var(--butter-motion-quick) var(--butter-ease-standard),
+    color var(--butter-motion-quick) var(--butter-ease-standard),
+    border-color var(--butter-motion-instant) var(--butter-ease-standard),
+    box-shadow var(--butter-motion-instant) var(--butter-ease-standard),
+    transform var(--butter-motion-instant) var(--butter-ease-standard);
 }
 .butter-color-default,
 .butter-color-custom.is-empty {
@@ -2563,7 +2609,7 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   color: var(--text-normal);
   font-family: var(--font-monospace);
   font-size: var(--font-ui-smaller, 12px);
-  transition: border-color 90ms ease, background-color 90ms ease;
+  transition: border-color var(--butter-motion-instant) var(--butter-ease-standard), background-color var(--butter-motion-instant) var(--butter-ease-standard);
 }
 .butter-color-hex-input.is-invalid {
   border-color: var(--text-error, #ed4b55);
@@ -2648,7 +2694,7 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   left: 0;
   right: 0;
   bottom: var(--keyboard-height, 0px);
-  z-index: 50;
+  z-index: var(--butter-layer-frame);
   /* Safe-area insets for iOS notch / Android display cutouts.
      Native does this too - without them, a portion of the bar
      can fall under the home-indicator gesture area. */
@@ -2683,8 +2729,8 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   will-change: transform, opacity;
   backface-visibility: hidden;
   transition:
-    opacity 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    opacity var(--butter-motion-emphasis) var(--butter-ease-out),
+    transform var(--butter-motion-emphasis) var(--butter-ease-out);
 }
 .butter-mobile-toolbar.butter-mobile-toolbar-visible {
   opacity: 1;
@@ -2805,7 +2851,7 @@ body:not(.is-mobile) .butter-toolbar[data-active-style="underline"] .butter-btn.
   opacity: 0;
   pointer-events: none;
   user-select: none;
-  transition: opacity 0.15s ease, color 0.15s ease;
+  transition: opacity var(--butter-motion-standard) var(--butter-ease-standard), color var(--butter-motion-standard) var(--butter-ease-standard);
   z-index: 3;
 }
 .butter-mobile-bar .butter-mobile-overflow-indicator.is-visible {
@@ -3114,7 +3160,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
   border-radius: var(--radius-m, 8px);
   box-shadow: var(--shadow-l, 0 6px 16px rgba(0, 0, 0, 0.18));
   padding: 4px;
-  z-index: 60;
+  z-index: var(--layer-menu);
   min-width: 180px;
 }
 .butter-mobile-variant-row {
@@ -3160,10 +3206,10 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
 .butter-mobile-sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 70;
+  z-index: var(--butter-layer-sheet);
   background: rgba(0, 0, 0, 0.32);
   opacity: 0;
-  transition: opacity 200ms ease-out;
+  transition: opacity var(--butter-motion-standard) var(--butter-ease-out);
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -3178,7 +3224,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
   border-radius: 16px 16px 0 0;
   padding: 8px 0 calc(env(safe-area-inset-bottom, 8px) + 8px);
   transform: translateY(100%);
-  transition: transform 200ms ease-out;
+  transition: transform var(--butter-motion-standard) var(--butter-ease-out);
   display: flex;
   flex-direction: column;
 }
@@ -3357,7 +3403,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
      edges all around. */
   border-radius: calc(var(--radius-l, 12px) - 4px);
   transform: translateX(0);
-  transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: transform var(--butter-motion-emphasis) var(--butter-ease-out);
   z-index: 0;
 }
 .is-mobile .butter-toolbar-platform-switcher__indicator {
@@ -3426,7 +3472,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
   cursor: pointer;
   /* Slight delay on the color transition so the text-on-accent
      swap doesn't happen before the pill has moved underneath. */
-  transition: color 180ms ease 60ms;
+  transition: color var(--butter-motion-standard) var(--butter-ease-standard) calc(var(--butter-motion-beat) * 2);
 }
 .butter-toolbar-platform-switcher .butter-toolbar-platform-switcher__btn:hover:not(.is-active) {
   color: var(--text-normal);
@@ -3495,7 +3541,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
   flex-direction: row;
   align-items: center;
   cursor: pointer;
-  transition: background-color 100ms ease;
+  transition: background-color var(--butter-motion-quick) var(--butter-ease-standard);
 }
 .setting-item.mod-navigable.butter-settings-page-link > .setting-item-info {
   flex: 1 1 auto;
@@ -3680,7 +3726,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
 .setting-group.butter-settings-license-status-container
   .setting-item.butter-settings-license-status {
   cursor: pointer;
-  transition: background-color 100ms ease;
+  transition: background-color var(--butter-motion-quick) var(--butter-ease-standard);
 }
 .setting-group.butter-settings-license-status-container
   .setting-item.butter-settings-license-status:focus-visible {
@@ -3738,7 +3784,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
 }
 .setting-group.butter-settings-whats-new-container
   .setting-item.butter-settings-whats-new-card {
-  transition: background-color 100ms ease;
+  transition: background-color var(--butter-motion-quick) var(--butter-ease-standard);
 }
 @media (hover: hover) and (pointer: fine) {
   .setting-group.butter-settings-whats-new-container
@@ -3850,7 +3896,7 @@ body.is-tablet .butter-mobile-bar[data-mobile-style="detached"] .mobile-toolbar-
   border-radius: var(--radius-l, 12px);
   background: var(--background-secondary);
   box-shadow: none;
-  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  transition: background-color var(--butter-motion-standard) var(--butter-ease-standard), border-color var(--butter-motion-standard) var(--butter-ease-standard), box-shadow var(--butter-motion-standard) var(--butter-ease-standard);
 }
 .butter-whats-new-preference.is-enabled {
   border-color: color-mix(in srgb, var(--interactive-accent) 72%, var(--background-modifier-border));
@@ -4219,8 +4265,8 @@ body.butter-mobile-drawer-returning-keyboard
 body.butter-mobile-drawer-keyboard-aligning
   .butter-mobile-toolbar.butter-mobile-bar {
   transition:
-    bottom 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    padding-bottom 220ms cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+    bottom var(--butter-motion-emphasis) var(--butter-ease-out),
+    padding-bottom var(--butter-motion-emphasis) var(--butter-ease-out) !important;
 }
 /* While the keyboard is returning, a small drawer can be shorter than
    the keyboard. Attached style must use its normal colored filler again,
@@ -4316,7 +4362,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   left: 0;
   right: 0;
   height: var(--butter-mobile-drawer-height, 320px);
-  z-index: 49;
+  z-index: calc(var(--butter-layer-frame) - 1);
   /* Match the butter bar's surface so the drawer reads as an
      extension of the toolbar rather than a separate dialog. */
   background: var(--background-secondary);
@@ -4336,8 +4382,8 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   backface-visibility: hidden;
   contain: layout paint;
   transition:
-    transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    height 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+    transform var(--butter-motion-emphasis) var(--butter-ease-out),
+    height var(--butter-motion-emphasis) var(--butter-ease-out);
 }
 .butter-mobile-insert-drawer * {
   box-sizing: border-box;
@@ -4353,10 +4399,9 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
 .butter-mobile-insert-drawer.butter-drawer-dismissing {
   transform: translateY(100%);
 }
-/* Opened from the settings modal: one above Obsidian's modal layer (100);
-   the menu layer (65) is below it. */
+/* Opened from the settings modal: one above Obsidian's modal layer. */
 .butter-mobile-insert-drawer.butter-mobile-drawer-elevated {
-  z-index: calc(var(--layer-modal, 100) + 1);
+  z-index: calc(var(--layer-modal) + 1);
 }
 .butter-drawer-grab {
   touch-action: none;
@@ -4839,7 +4884,7 @@ body.butter-mobile-drawer-open .butter-mobile-bar {
   position: fixed;
   width: 2px;
   background: var(--text-normal);
-  z-index: 48;
+  z-index: calc(var(--butter-layer-frame) - 2);
   pointer-events: none;
   animation: butter-fake-cursor-blink 1.06s steps(2) infinite;
 }
@@ -4886,7 +4931,7 @@ body.is-mobile .butter-editor-view .butter-table-toolbar {
    to .markdown-source-view / .markdown-rendered which Butter's view
    doesn't carry, so the rotation never fires without these. */
 .butter-properties-wrapper .collapse-indicator {
-  transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform var(--butter-motion-emphasis) var(--butter-ease-standard);
 }
 .butter-properties-wrapper .is-collapsed .collapse-indicator {
   transform: rotate(-90deg);
@@ -4947,7 +4992,7 @@ body:not(.is-mobile) .butter-view-root[data-filename-pill="true"]
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 0 0 auto;
-  transition: background 120ms ease;
+  transition: background var(--butter-motion-quick) var(--butter-ease-standard);
   pointer-events: auto;
 }
 body:not(.is-mobile) .butter-view-root[data-filename-pill="true"]
@@ -4966,7 +5011,7 @@ body:not(.is-mobile) .butter-view-root
   width: var(--butter-header-breadcrumb-width);
   overflow: hidden;
   opacity: 1;
-  transition: opacity 150ms ease-in-out, width 150ms ease-in-out;
+  transition: opacity var(--butter-motion-standard) var(--butter-ease-standard), width var(--butter-motion-standard) var(--butter-ease-standard);
 }
 body:not(.is-mobile) .butter-view-root
   .view-header-title-parent.butter-header-breadcrumb-animated.is-collapsed {
@@ -5000,7 +5045,7 @@ body:not(.is-mobile) .butter-view-root
   overflow-y: auto;
   z-index: var(--layer-popover);
   font-family: var(--font-interface);
-  animation: butter-dropdown-in 120ms ease;
+  animation: butter-dropdown-in var(--butter-motion-quick) var(--butter-ease-out);
 }
 
 .butter-surface--command {
@@ -5256,7 +5301,7 @@ body:not(.is-mobile) .butter-view-root
 .butter-toolbar-update-toast {
   position: sticky;
   top: var(--size-4-2, 8px);
-  z-index: 20;
+  z-index: var(--butter-layer-float);
   height: 0;
   display: flex;
   justify-content: center;
@@ -5276,8 +5321,8 @@ body:not(.is-mobile) .butter-view-root
   opacity: 0;
   transform: translateY(-8px) scale(0.98);
   transition:
-    opacity 160ms ease,
-    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    opacity var(--butter-motion-standard) var(--butter-ease-standard),
+    transform var(--butter-motion-standard) var(--butter-ease-out);
 }
 .butter-toolbar-update-toast.is-visible .butter-toolbar-update-toast__chip {
   opacity: 1;
@@ -5490,7 +5535,7 @@ body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner-act
 .butter-license-banner-wrapper.is-pill {
   position: sticky;
   top: 6px;
-  z-index: 20;
+  z-index: var(--butter-layer-float);
   display: flex;
   justify-content: center;
   pointer-events: none;
@@ -5553,7 +5598,7 @@ body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner-act
   background: transparent;
   color: var(--text-error);
   cursor: pointer;
-  transition: background 120ms ease;
+  transition: background var(--butter-motion-quick) var(--butter-ease-standard);
   box-shadow: none;
 }
 .butter-license-banner button:hover {
@@ -5647,16 +5692,16 @@ body.is-mobile .butter-license-banner-wrapper.is-pill .butter-license-banner-act
 
    Asymmetric delay: when the rule applies (cursor lands on toolbar)
    the fade-out is instant; when the rule clears (cursor leaves) the
-   fade-in is delayed via the base rule's `transition: ... 150ms`.
+   fade-in is delayed by the base rule's five-beat transition delay.
    Stops the status bar from flickering back-and-forth when the
    cursor brushes past the toolbar edge. */
 body .status-bar {
-  transition: opacity 120ms ease 150ms;
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-standard) calc(var(--butter-motion-beat) * 5);
 }
 body.butter-status-bar-hide .status-bar {
   opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms ease 0ms;
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-standard) 0ms;
 }
 
 /* ── Layout editor (two-list with drag-reorder) ─────────────────
@@ -5695,7 +5740,7 @@ body.butter-status-bar-hide .status-bar {
   cursor: pointer;
   border-radius: var(--radius-s, 4px);
   padding-inline: var(--size-2-2, 4px);
-  transition: background-color 120ms ease, color 120ms ease;
+  transition: background-color var(--butter-motion-quick) var(--butter-ease-standard), color var(--butter-motion-quick) var(--butter-ease-standard);
 }
 .butter-layout-category-summary:hover,
 .butter-layout-category-summary:focus-visible {
@@ -5744,11 +5789,11 @@ body.butter-status-bar-hide .status-bar {
      drag start, reset to defaults on commit/cancel). Same feel as
      the block-drag reflow in the editor. */
   transition:
-    transform 160ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    max-height 150ms ease,
-    padding 150ms ease,
-    border-top-width 150ms ease,
-    opacity 120ms ease;
+    transform var(--butter-motion-standard) var(--butter-ease-out),
+    max-height var(--butter-motion-standard) var(--butter-ease-standard),
+    padding var(--butter-motion-standard) var(--butter-ease-standard),
+    border-top-width var(--butter-motion-standard) var(--butter-ease-standard),
+    opacity var(--butter-motion-quick) var(--butter-ease-standard);
   will-change: transform;
 }
 /* Mobile: drag handle moves to the RIGHT via `order` so action
@@ -5928,7 +5973,7 @@ body.butter-status-bar-hide .status-bar {
   border: var(--border-width, 1px) solid var(--background-modifier-border);
   border-radius: var(--button-radius, var(--radius-s, 4px));
   cursor: pointer;
-  transition: background 80ms ease, border-color 80ms ease;
+  transition: background var(--butter-motion-instant) var(--butter-ease-standard), border-color var(--butter-motion-instant) var(--butter-ease-standard);
 }
 .butter-layout-add-btn:hover {
   background: var(--interactive-hover);
@@ -5953,7 +5998,7 @@ body.butter-status-bar-hide .status-bar {
   background: var(--interactive-accent);
   pointer-events: none;
   border-radius: 1px;
-  z-index: 5;
+  z-index: var(--butter-layer-aid);
 }
 /* "Drop INTO submenu" - accent-tinted background on the submenu
    row to signal that releasing here will append to its children. */
@@ -5976,7 +6021,7 @@ body.butter-status-bar-hide .status-bar {
   border: var(--border-width, 1px) solid var(--background-modifier-border);
   border-radius: var(--radius-s, 4px);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
+  z-index: var(--layer-menu);
   padding: var(--size-2-2, 4px);
 }
 .butter-layout-popup-menu-item {
@@ -6055,7 +6100,7 @@ body.butter-status-bar-hide .status-bar {
   color: var(--text-normal);
   cursor: pointer;
   padding: 0;
-  transition: background 80ms ease, border-color 80ms ease;
+  transition: background var(--butter-motion-instant) var(--butter-ease-standard), border-color var(--butter-motion-instant) var(--butter-ease-standard);
 }
 .butter-icon-picker-tile:hover {
   background: var(--background-modifier-hover);
@@ -6118,7 +6163,7 @@ body.butter-status-bar-hide .status-bar {
   border: var(--border-width, 1px) solid var(--background-modifier-border);
   border-radius: var(--radius-s, 4px);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
+  z-index: var(--layer-menu);
   max-width: 320px;
 }
 .butter-toolbar-submenu-empty {
@@ -6258,7 +6303,7 @@ body.butter-status-bar-hide .status-bar {
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
-  transition: color 120ms ease;
+  transition: color var(--butter-motion-quick) var(--butter-ease-standard);
 }
 .butter-code-lang-tag:hover {
   color: var(--text-normal);
@@ -6279,7 +6324,7 @@ body.butter-status-bar-hide .status-bar {
           + var(--size-4-2, 8px))
   );
   left: 0;
-  z-index: 40;
+  z-index: var(--butter-layer-float);
   display: none;
   align-items: center;
   gap: var(--size-2-1, 2px);
@@ -6327,7 +6372,7 @@ body.butter-status-bar-hide .status-bar {
   border: none;
   cursor: pointer;
   padding: 0;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background var(--butter-motion-quick) var(--butter-ease-standard), color var(--butter-motion-quick) var(--butter-ease-standard);
 }
 .butter-code-edit-toolbar-btn:hover {
   background: var(--background-modifier-hover);
@@ -6355,7 +6400,7 @@ body.butter-status-bar-hide .status-bar {
    default item-list layout. The result sits in the same visual
    register as the drag-handle context menu that spawned the edit. */
 .butter-inline-atom-edit {
-  z-index: 100;
+  z-index: var(--layer-menu);
   min-width: 260px;
   max-width: 360px;
   padding: var(--size-2-2, 4px);
@@ -6406,7 +6451,7 @@ body.butter-status-bar-hide .status-bar {
   border-radius: var(--input-radius, 4px);
   outline: none;
   box-sizing: border-box;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: border-color var(--butter-motion-quick) var(--butter-ease-standard), box-shadow var(--butter-motion-quick) var(--butter-ease-standard);
 }
 .butter-inline-atom-edit-input:focus {
   border-color: var(--interactive-accent);
@@ -6426,7 +6471,7 @@ body.butter-status-bar-hide .status-bar {
 .butter-inline-atom-edit-input-error,
 .butter-inline-atom-edit-input.butter-inline-atom-edit-input-error:focus {
   border-color: var(--text-error, #ed4b55);
-  animation: butter-inline-atom-edit-shake 0.5s ease;
+  animation: butter-inline-atom-edit-shake 0.4s ease;
 }
 @keyframes butter-inline-atom-edit-shake {
   0%, 100% { transform: translateX(0); }
@@ -6469,7 +6514,7 @@ body.butter-status-bar-hide .status-bar {
   border-radius: var(--input-radius, 4px);
   outline: none;
   box-sizing: border-box;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: border-color var(--butter-motion-quick) var(--butter-ease-standard), box-shadow var(--butter-motion-quick) var(--butter-ease-standard);
 }
 .butter-mobile-edit-input:focus {
   border-color: var(--interactive-accent);
@@ -6545,7 +6590,7 @@ body.butter-status-bar-hide .status-bar {
    the legacy edit panel.
    ══════════════════════════════════════════ */
 .menu.butter-rich-menu {
-  z-index: 100;
+  z-index: var(--layer-menu);
   display: flex;
   flex-direction: column;
   /* Outer .menu has padding 0 to match Obsidian's stock .menu rule
@@ -6832,17 +6877,15 @@ body.butter-status-bar-hide .status-bar {
    by Obsidian; we only style the per-item DOM.
 
    z-index gotcha: Obsidian's `.suggestion-container` sits at
-   `var(--layer-notice)` = 60, but `.menu` is `var(--layer-menu)` = 65
-   (and our `.butter-rich-menu` adds an explicit `z-index: 100` on top
-   of that for animation purposes). So a stock-styled suggester
-   renders BEHIND our menu when its input is one of the menu's own
-   fields. Bumping the popup's stacking only when it contains one of
+   `var(--layer-notice)` = 60, but `.menu` is `var(--layer-menu)` = 65.
+   So a stock-styled suggester renders BEHIND our menu when its input is
+   one of the menu's own fields. Bumping the popup's stacking only when it contains one of
    our items keeps the override scoped. The host class
    `.butter-suggest-host-vault` is stamped on by
    `vault-files-suggest.ts` when it renders an item into the
    container, avoiding a parent selector here. */
 .suggestion-container.butter-suggest-host-vault {
-  z-index: 200;
+  z-index: calc(var(--layer-menu) + 1);
 }
 .butter-vault-suggest-item {
   display: flex;
@@ -6880,18 +6923,17 @@ body.butter-status-bar-hide .status-bar {
    geometry fixed: these animations affect only paint, never layout. */
 .butter-surface-motion {
   transform-origin: top left;
-  animation: butter-surface-menu-in 105ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation: butter-surface-menu-in var(--butter-motion-quick) var(--butter-ease-out) both;
 }
 .butter-surface-motion[data-butter-surface-motion="submenu"] {
   animation-name: butter-surface-submenu-in;
-  animation-duration: 85ms;
+  animation-duration: var(--butter-motion-instant);
 }
 .butter-surface-motion[data-butter-surface-motion="popover"] {
   animation-name: butter-surface-popover-in;
-  animation-duration: 120ms;
 }
 .butter-surface-motion.butter-surface-motion-leaving {
-  animation: butter-surface-out 80ms cubic-bezier(0.4, 0, 1, 1) both !important;
+  animation: butter-surface-out var(--butter-motion-instant) var(--butter-ease-in) both !important;
   pointer-events: none !important;
 }
 @keyframes butter-surface-menu-in {
@@ -7335,7 +7377,7 @@ body:not(.is-mobile) .butter-table-toolbar {
      view-header's chrome-fade pseudo so the gradient doesn't bleed
      INTO the toolbar's tinted background. */
   position: relative;
-  z-index: 10;
+  z-index: var(--butter-layer-bar);
   /* Background = document bg (`--background-primary`) tinted 10%
      darker. `color-mix` blends 90% of the base with 10% black so
      the table toolbar reads as a sibling tier of the main toolbar
@@ -7362,10 +7404,10 @@ body:not(.is-mobile) .butter-table-toolbar {
   opacity: 1;
   transform: translateY(0);
   transition:
-    max-height 180ms ease,
-    opacity 140ms ease,
-    transform 140ms ease,
-    border-width 180ms ease;
+    max-height var(--butter-motion-standard) var(--butter-ease-standard),
+    opacity var(--butter-motion-quick) var(--butter-ease-standard),
+    transform var(--butter-motion-quick) var(--butter-ease-standard),
+    border-width var(--butter-motion-standard) var(--butter-ease-standard);
 }
 
 /* Inner row holds the buttons + dividers. `safe center` centers
@@ -7529,7 +7571,7 @@ body:not(.is-mobile) .butter-context-toolbar-btn {
   border: none;
   cursor: pointer;
   padding: 0;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background var(--butter-motion-quick) var(--butter-ease-standard), color var(--butter-motion-quick) var(--butter-ease-standard);
 }
 body:not(.is-mobile) .butter-context-toolbar-btn:hover {
   background: var(--background-modifier-hover);
@@ -7560,7 +7602,7 @@ body:not(.is-mobile) .butter-context-toolbar-btn svg {
   right: 0;
   bottom: 0;
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--butter-layer-aid);
 }
 
 /* Handle shape - three accent-tinted dots inline along the drag
@@ -7601,7 +7643,7 @@ body:not(.is-mobile) .butter-context-toolbar-btn svg {
      to accent below. */
   color: var(--text-faint);
   opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease;
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-standard), color var(--butter-motion-quick) var(--butter-ease-standard);
   -webkit-appearance: none;
   appearance: none;
   user-select: none;
@@ -7707,7 +7749,7 @@ body:not(.is-mobile) .butter-context-toolbar-btn svg {
   border-radius: 2px;
   pointer-events: none;
   display: none;
-  z-index: 6;
+  z-index: calc(var(--butter-layer-aid) + 1);
   box-shadow:
     0 0 0 1px hsla(var(--interactive-accent-hsl), 0.35),
     0 0 6px hsla(var(--interactive-accent-hsl), 0.45);
@@ -7726,7 +7768,7 @@ body:not(.is-mobile) .butter-context-toolbar-btn svg {
   top: 0;
   left: 0;
   pointer-events: none;
-  z-index: 1000;
+  z-index: var(--layer-dragged-item);
   opacity: 0.92;
   /* Soft lift shadow so the ghost reads as "off the page". */
   filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.18))
@@ -7841,7 +7883,7 @@ body.is-mobile.butter-table-drag-active {
    handler. You can put your cursor in a selected cell to edit. */
 .butter-cell-selection-frame {
   position: fixed;
-  z-index: 50;
+  z-index: var(--butter-layer-frame);
   pointer-events: none;
   display: none;
   /* Inset box-shadow draws the accent border WITHOUT taking layout
@@ -7885,7 +7927,7 @@ body.is-mobile.butter-table-drag-active {
    communicates the snap. */
 .butter-cell-dest-outline {
   position: fixed;
-  z-index: 50;
+  z-index: var(--butter-layer-frame);
   pointer-events: none;
   display: none;
   box-shadow: inset 0 0 0 2px var(--interactive-accent);
@@ -7893,8 +7935,8 @@ body.is-mobile.butter-table-drag-active {
   border-radius: 1px;
   /* Slight transition so cell-to-cell snaps glide instead of
      teleport - feels less twitchy on fast pointermoves. */
-  transition: left 80ms ease-out, top 80ms ease-out,
-    width 80ms ease-out, height 80ms ease-out;
+  transition: left var(--butter-motion-instant) var(--butter-ease-out), top var(--butter-motion-instant) var(--butter-ease-out),
+    width var(--butter-motion-instant) var(--butter-ease-out), height var(--butter-motion-instant) var(--butter-ease-out);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -8042,7 +8084,7 @@ body:not(.is-mobile) .butter-table-toolbar-divider {
    rather than living in (and scrolling with) the note. */
 body:not(.is-mobile) .butter-search-toolbar {
   position: relative;
-  z-index: 12;
+  z-index: calc(var(--butter-layer-bar) + 2);
   display: flex;
   width: 100%;
   max-height: 72px;
@@ -8052,10 +8094,10 @@ body:not(.is-mobile) .butter-search-toolbar {
   background: color-mix(in srgb, var(--background-primary) 90%, black 10%);
   border-bottom: var(--border-width, 1px) solid var(--background-modifier-border);
   transition:
-    max-height 180ms ease,
-    opacity 140ms ease,
-    transform 140ms ease,
-    border-width 180ms ease;
+    max-height var(--butter-motion-standard) var(--butter-ease-standard),
+    opacity var(--butter-motion-quick) var(--butter-ease-standard),
+    transform var(--butter-motion-quick) var(--butter-ease-standard),
+    border-width var(--butter-motion-standard) var(--butter-ease-standard);
 }
 body:not(.is-mobile) .butter-search-toolbar.is-hidden {
   max-height: 0;
@@ -8169,7 +8211,7 @@ body:not(.is-mobile) .butter-view-root[data-toolbar-style="detached"][data-toolb
   border: var(--border-width, 1px) solid var(--background-modifier-border);
   border-radius: var(--radius-s, 4px);
   box-sizing: border-box;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: border-color var(--butter-motion-quick) var(--butter-ease-standard), box-shadow var(--butter-motion-quick) var(--butter-ease-standard);
 }
 .butter-search-field:focus-within {
   border-color: var(--interactive-accent);
@@ -8279,9 +8321,9 @@ body:not(.is-mobile) .butter-search-toolbar[data-active-style="underline"]
   transform: translateY(-3px);
   pointer-events: none;
   transition:
-    max-height 150ms ease,
-    opacity 120ms ease,
-    transform 150ms ease;
+    max-height var(--butter-motion-standard) var(--butter-ease-standard),
+    opacity var(--butter-motion-quick) var(--butter-ease-standard),
+    transform var(--butter-motion-standard) var(--butter-ease-standard);
 }
 .butter-search-row-replace.is-visible {
   max-height: var(--input-height, 26px);
@@ -8310,8 +8352,8 @@ body.is-mobile .butter-mobile-search-toolbar {
   border-top: var(--border-width, 1px) solid var(--background-modifier-border);
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
   transition:
-    opacity 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    opacity var(--butter-motion-emphasis) var(--butter-ease-out),
+    transform var(--butter-motion-emphasis) var(--butter-ease-out);
 }
 body.is-mobile .butter-search-toolbar-inner {
   display: flex;
@@ -8453,7 +8495,7 @@ body.is-mobile .butter-search-count {
   border-bottom: 3px solid var(--interactive-accent);
   border-bottom-right-radius: var(--menu-radius, 8px);
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-standard);
 }
 
 /* Inline images live inside a text line rather than an outer block selector.
@@ -8502,7 +8544,7 @@ body.is-mobile .butter-search-count {
   opacity: 0;
   pointer-events: none;
   cursor: pointer !important;
-  transition: opacity 120ms ease, background-color 120ms ease;
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-standard), background-color var(--butter-motion-quick) var(--butter-ease-standard);
 }
 .butter-image-edit-button svg {
   width: 14px;
@@ -8672,7 +8714,7 @@ body.is-mobile .butter-search-count {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background-color 180ms ease, color 180ms ease;
+  transition: background-color var(--butter-motion-standard) var(--butter-ease-standard), color var(--butter-motion-standard) var(--butter-ease-standard);
 }
 /* One of these per ancestor indent on each row. Base state: faint
    border-colored. Lit state (inside active heading's ancestor chain):
@@ -8686,7 +8728,7 @@ body.is-mobile .butter-search-count {
   width: 1px;
   background-color: var(--background-modifier-border);
   pointer-events: none;
-  transition: background-color 240ms ease;
+  transition: background-color var(--butter-motion-emphasis) var(--butter-ease-standard);
 }
 .butter-outline-guide.lit {
   background-color: color-mix(in srgb, var(--text-accent) 55%, transparent);
@@ -8709,8 +8751,8 @@ body.is-mobile .butter-search-count {
   transform: scaleY(0.3);
   transform-origin: center;
   transition:
-    opacity 200ms ease,
-    transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    opacity var(--butter-motion-standard) var(--butter-ease-standard),
+    transform var(--butter-motion-emphasis) var(--butter-ease-out);
   pointer-events: none;
 }
 .butter-outline-item:hover {
@@ -8817,7 +8859,7 @@ body.is-mobile .butter-search-count {
   height: 4px;
   border-radius: 2px;
   background: var(--background-modifier-border);
-  transition: background-color 120ms ease;
+  transition: background-color var(--butter-motion-quick) var(--butter-ease-standard);
 }
 .butter-welcome-progress-step.is-complete {
   background: color-mix(in srgb, var(--interactive-accent) 55%, var(--background-modifier-border));
@@ -9408,7 +9450,7 @@ body.butter-no-anim .ProseMirror *::after {
   left: var(--butter-pos-left, 0);
   top: var(--butter-pos-top, 0);
   pointer-events: none;
-  z-index: 1000;
+  z-index: var(--layer-dragged-item);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
   border-radius: var(--radius-s, 4px);
   background: var(--background-primary);
@@ -9447,7 +9489,7 @@ body.butter-no-anim .ProseMirror *::after {
 
 /* Mobile toolbar transient transition states. */
 .butter-mobile-toolbar-snap-back {
-  transition: transform var(--butter-snap-ms, 240ms) cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: transform var(--butter-motion-emphasis) var(--butter-ease-out);
 }
 .butter-mobile-toolbar-no-transition {
   transition: none !important;
@@ -9533,8 +9575,8 @@ body.butter-no-anim .ProseMirror *::after {
   cursor: grab;
   color: var(--text-faint);
   opacity: 0;
-  transition: opacity 120ms ease;
-  z-index: 10;
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-standard);
+  z-index: var(--butter-layer-bar);
   user-select: none;
   outline: none;
   -webkit-appearance: none;
@@ -9564,7 +9606,7 @@ body.butter-no-anim .ProseMirror *::after {
   opacity: 1;
   color: var(--text-muted);
   background: var(--background-modifier-hover);
-  transition: opacity 120ms ease, background 120ms ease;
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-standard), background var(--butter-motion-quick) var(--butter-ease-standard);
 }
 
 /* A quiet preview of the selector ring's eventual footprint. It appears only
@@ -9572,13 +9614,13 @@ body.butter-no-anim .ProseMirror *::after {
    which full block the compact six-dot control owns before they click. */
 .butter-handle-selector-preview {
   position: fixed;
-  z-index: 49;
+  z-index: calc(var(--butter-layer-frame) - 1);
   box-sizing: border-box;
   border: 1px solid var(--text-faint);
   border-radius: var(--menu-radius, 8px);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 100ms ease-out;
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-out);
 }
 .butter-handle-selector-preview.is-visible {
   opacity: 0.45;
@@ -9643,7 +9685,7 @@ body.is-mobile .butter-callout-title {
   top: 0;
   left: 0;
   pointer-events: none;
-  z-index: 10;
+  z-index: var(--butter-layer-bar);
 }
 .butter-drag-handles-layer .butter-drag-handle.is-visible {
   pointer-events: auto;
@@ -9741,7 +9783,7 @@ body.butter-is-drag-scene-v2
 .butter-drag-scene-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--layer-dragged-item);
   pointer-events: none;
   overflow: hidden;
   contain: strict;
@@ -9850,7 +9892,7 @@ body.butter-is-drag-scene-v2
   border-radius: var(--menu-radius, 8px);
   background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
   opacity: 1;
-  transition: opacity 120ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-out);
   will-change: opacity;
 }
 
@@ -9886,7 +9928,7 @@ body.butter-is-drag-scene-v2
    subpixel origin and make exact geometry appear to jump at teardown. */
 .butter-drag-scene-ghost.is-shadow-exiting {
   box-shadow: 0 8px 18px rgb(0 0 0 / 0%);
-  transition: box-shadow 180ms 40ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: box-shadow var(--butter-motion-standard) var(--butter-motion-beat) var(--butter-ease-out);
 }
 
 /* Ordinary text keeps its full measured drag geometry, but its elevation
@@ -9916,7 +9958,7 @@ body.butter-is-drag-scene-v2
 .butter-drag-scene-ghost.is-shadow-exiting
   .butter-drag-scene-content-shadow {
   box-shadow: 0 8px 18px rgb(0 0 0 / 0%);
-  transition: box-shadow 180ms 40ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: box-shadow var(--butter-motion-standard) var(--butter-motion-beat) var(--butter-ease-out);
 }
 
 /* Single oversized media uses its faithful renderer clone as the compact
@@ -9971,7 +10013,7 @@ body.butter-is-drag-scene-v2
 .butter-drag-scene-ghost.is-shadow-exiting
   .butter-drag-scene-container-backing {
   opacity: 0;
-  transition: opacity 70ms 20ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: opacity var(--butter-motion-instant) var(--butter-motion-beat) var(--butter-ease-out);
 }
 
 .butter-drag-scene-ghost.has-aggregate-preview
@@ -10167,15 +10209,15 @@ body.butter-is-drag-scene-v2
   opacity: 1;
   box-shadow: 0 0 0 rgb(0 0 0 / 0%);
   transition:
-    opacity 110ms cubic-bezier(0.2, 0.85, 0.3, 1),
-    box-shadow 110ms cubic-bezier(0.2, 0.85, 0.3, 1);
+    opacity var(--butter-motion-quick) var(--butter-ease-out),
+    box-shadow var(--butter-motion-quick) var(--butter-ease-out);
 }
 
 .butter-drag-scene-ghost.has-aggregate-preview.is-compact-handoff-ready
   > .butter-drag-scene-ghost-piece {
   visibility: visible !important;
   opacity: 0;
-  transition: opacity 110ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-out);
 }
 
 .butter-drag-scene-ghost.is-compact-handoff-active
@@ -10192,7 +10234,7 @@ body.butter-is-drag-scene-v2
 .butter-drag-scene-ghost.is-compact-handoff-ready
   .butter-drag-scene-aggregate-preview {
   opacity: 1;
-  transition: opacity 110ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-out);
 }
 
 .butter-drag-scene-ghost.is-compact-handoff-active:not(.is-registered-handoff)
@@ -10214,10 +10256,10 @@ body.butter-is-drag-scene-v2
     0
   );
   transition:
-    opacity var(--butter-drag-scene-live-reveal-duration, 240ms)
-      var(--butter-drag-scene-live-reveal-easing, cubic-bezier(0.2, 1, 0.4, 1)),
-    clip-path var(--butter-drag-scene-live-reveal-duration, 240ms)
-      var(--butter-drag-scene-live-reveal-easing, cubic-bezier(0.2, 1, 0.4, 1));
+    opacity var(--butter-drag-scene-live-reveal-duration, var(--butter-motion-emphasis))
+      var(--butter-drag-scene-live-reveal-easing, var(--butter-ease-out)),
+    clip-path var(--butter-drag-scene-live-reveal-duration, var(--butter-motion-emphasis))
+      var(--butter-drag-scene-live-reveal-easing, var(--butter-ease-out));
   will-change: translate, opacity, clip-path !important;
 }
 
@@ -10243,8 +10285,8 @@ body.butter-is-drag-scene-v2
   border-color: transparent;
   background: transparent;
   transition:
-    border-color 110ms cubic-bezier(0.2, 0.85, 0.3, 1),
-    background-color 110ms cubic-bezier(0.2, 0.85, 0.3, 1);
+    border-color var(--butter-motion-quick) var(--butter-ease-out),
+    background-color var(--butter-motion-quick) var(--butter-ease-out);
 }
 
 .butter-drag-scene-ghost.is-compact-handoff-active.is-registered-handoff
@@ -10252,7 +10294,7 @@ body.butter-is-drag-scene-v2
 .butter-drag-scene-ghost.is-compact-handoff-active.is-registered-handoff
   .butter-drag-scene-aggregate-content::after {
   opacity: 0;
-  transition: opacity 110ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: opacity var(--butter-motion-quick) var(--butter-ease-out);
 }
 
 /* The faithful committed clone leaves only after the real renderer has been
@@ -10260,7 +10302,7 @@ body.butter-is-drag-scene-v2
    instead of exposing the final block in a hard one-frame swap. */
 .butter-drag-scene-ghost.is-final-reveal {
   opacity: 0;
-  transition: opacity 90ms cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: opacity var(--butter-motion-instant) var(--butter-ease-out);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -61,8 +61,12 @@ export function bindFixedPopoverToAnchor(
   anchor: HTMLElement,
   options: { gap?: number; margin?: number } = {},
 ): () => void {
-  const reposition = () => placeFixedPopoverAtAnchor(popover, anchor, options);
-  reposition();
+  const reposition = () => {
+    // A removed anchor has no position: leave the popover where it was.
+    if (!anchor.isConnected) return;
+    placeFixedPopoverAtAnchor(popover, anchor, options);
+  };
+  placeFixedPopoverAtAnchor(popover, anchor, options);
   const unbindFloating = bindFloatingSurfaceReposition(reposition);
   const resizeObserver = new ResizeObserver(reposition);
   resizeObserver.observe(popover);

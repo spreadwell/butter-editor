@@ -2,6 +2,7 @@ import type { Node as PMNode } from "prosemirror-model";
 import type { EditorView } from "prosemirror-view";
 import { tv } from "../../i18n";
 import { buildHandleDotsSvg } from "../drag-handles/constants";
+import { EASE_OUT, EASE_OUT_POINTS, MOTION_EMPHASIS_MS } from "../../ui/motion-tokens";
 import {
   copyRect,
   mediaGhostContentOffset,
@@ -618,8 +619,8 @@ export class DragScenePresentation {
   private compactHandoffRect: Pick<SceneRect, "width" | "height"> | null = null;
   private compactLiveRevealStarted = false;
   private compactLiveRevealActivated = false;
-  private compactLiveRevealDurationMs = 240;
-  private compactLiveRevealEasing = "cubic-bezier(0.2, 1, 0.4, 1)";
+  private compactLiveRevealDurationMs = MOTION_EMPHASIS_MS;
+  private compactLiveRevealEasing = EASE_OUT;
   private readonly compactLiveRevealInsets = new Map<
     SceneBlockKey,
     { right: number; bottom: number }
@@ -839,8 +840,8 @@ export class DragScenePresentation {
       width: this.ghostRect.width,
       height: this.ghostRect.height,
     };
-    this.compactLiveRevealDurationMs = motion.sceneDurationMs ?? 240;
-    const easing = motion.sceneEasing ?? [0.2, 1, 0.4, 1];
+    this.compactLiveRevealDurationMs = motion.sceneDurationMs ?? MOTION_EMPHASIS_MS;
+    const easing = motion.sceneEasing ?? EASE_OUT_POINTS;
     this.compactLiveRevealEasing = `cubic-bezier(${easing.join(", ")})`;
     this.ghost.setCssProps({
       "--butter-drag-scene-compact-card-width": `${this.ghostRect.width}px`,
@@ -1095,6 +1096,12 @@ export class DragScenePresentation {
       throw new Error(`Committed live scene resolved ${next.size}/${expected.size} blocks`);
     }
     this.committed = true;
+    // The drop transaction ran against the restored DOM, so what each element
+    // carries now is the renderer's own state. Remember that, not the state
+    // from drag start: ProseMirror reuses elements across the drop, and
+    // putting back an old class would undo what the drop changed, such as
+    // which block is first in the note.
+    for (const dom of this.allManagedDoms) this.originalAttributes.delete(dom);
     this.committedHeightKeys = new Set(
       Array.from(layout.containerRects, ([key, rect]) => [key, rect.height] as const)
         .filter(([key, height]) => {

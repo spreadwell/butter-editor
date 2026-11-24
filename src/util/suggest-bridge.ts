@@ -59,6 +59,8 @@ export function suggestBridgePlugin(
       const ownerWindow = view.dom.ownerDocument.defaultView!;
       let active: Session | null = null, version = 0, destroyed = false, selecting = false;
       let timer: number | null = null;
+      // A cursor move the registered suggests have not observed yet.
+      let navigated = false;
       let published: { doc: EditorView["state"]["doc"]; head: number } | null = null;
       // Like Live Preview, only typing or deleting opens suggestions. Other
       // editor updates publish the context and refresh suggestions already shown.
@@ -237,15 +239,28 @@ export function suggestBridgePlugin(
           retire();
         } catch { if (revision === version) retire(); }
       };
+      // Exact source coordinates require save-policy verification of the
+      // whole note, so large notes wait for a longer rest before probing.
+      const idleDelay = () => view.state.doc.content.size > 20_000 ? 500 : 50;
       const run = (revision: number) => {
         const open = pendingOpen;
         pendingOpen = false;
+        navigated = false;
         void update(revision, open);
       };
       controls.set(view, {
         close,
         focus() { if (selecting) return; close(); void update(version, false); },
-        typed() { typedAt = Date.now(); },
+        typed() {
+          // Navigation publishes once the cursor rests. An edit that arrives
+          // sooner publishes it first, so the two are never coalesced.
+          if (navigated && !selecting) {
+            if (timer !== null) ownerWindow.clearTimeout(timer);
+            timer = null;
+            run(version);
+          }
+          typedAt = Date.now();
+        },
         key(event) {
           const s = active;
           if (!s?.shown) return false;
@@ -268,7 +283,7 @@ export function suggestBridgePlugin(
         // Native lifecycle subscribers may finish their current-file indexing
         // asynchronously. Publish the actual file transition through the same
         // bounded idle query path, without mutating any provider's state.
-        timer = ownerWindow.setTimeout(() => { timer = null; run(revision); }, view.state.doc.content.size > 20_000 ? 500 : 50);
+        timer = ownerWindow.setTimeout(() => { timer = null; run(revision); }, idleDelay());
       };
       const fileEvent = app.workspace.on("file-open", file => { if (file === getFile()) refreshFileContext(); });
       const leafEvent = app.workspace.on("active-leaf-change", leaf => {
@@ -289,7 +304,9 @@ export function suggestBridgePlugin(
           if (!v.editable || !v.hasFocus() || !registered().length) { pendingOpen = false; retire(); return; }
           // Stateful EditorSuggest implementations observe navigation before
           // the next typing burst. Coalescing it into typing can leave their
-          // previous-line cache bound to the editor we just left.
+          // previous-line cache bound to the editor we just left. The probe
+          // waits for the cursor to rest (or for the next edit, see `typed`)
+          // so held arrow keys do not verify the whole note on every line.
           if (!docChanged && v.state.selection.empty) {
             const head = v.state.selection.$head;
             const prior = published?.doc === v.state.doc ? v.state.doc.resolve(published.head) : previous.selection.$head;
@@ -302,17 +319,17 @@ export function suggestBridgePlugin(
                 return !crossedLine;
               });
             }
-            if (crossedLine) { run(revision); return; }
+            if (crossedLine) navigated = true;
           }
           const head = v.state.selection.head;
           // Publish common trigger contexts before the next keystroke. All
           // other characters remain eligible after idle; none are blacklisted.
           const immediate = head > 0 && fastTriggers.has(v.state.doc.textBetween(head - 1, head));
-          if (immediate) { run(revision); return; }
-          // Exact source coordinates require save-policy verification. Keep
-          // that work off continuous large-note typing rather than repeating a
-          // full-file cursor probe on every character.
-          timer = ownerWindow.setTimeout(() => { timer = null; run(revision); }, v.state.doc.content.size > 20_000 ? 500 : 50);
+          if (immediate && docChanged) { run(revision); return; }
+          if (immediate) navigated = true;
+          // Keep the probe off continuous large-note typing rather than
+          // repeating a full-file cursor probe on every character.
+          timer = ownerWindow.setTimeout(() => { timer = null; run(revision); }, idleDelay());
         },
         destroy() {
           destroyed = true; close(); controls.delete(view);
